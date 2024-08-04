@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace rollingraft {
 
@@ -9,6 +10,7 @@ struct LogEntry;
 
 class Log {
 public:
+    Log() = default;
 private:
     std::vector<LogEntry> entries_;
 };
@@ -21,6 +23,7 @@ struct LogEntry {
     uint32_t index_;
     uint32_t term_;
     std::string data_;
+    std::string command_;
 };
 
 } // namespace RollingRaft

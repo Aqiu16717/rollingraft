@@ -8,7 +8,7 @@ namespace rollingraft {
  * RequestVote RPCs are initiated by
  * candidates during elections (Section 5.2),
  */
-struct RequestVote {
+struct RequestVoteRequest {
     // candidate's term
     uint32_t term_;
     // candidate requesting vot
@@ -30,7 +30,7 @@ struct RequestVoteResponse {
  * AppendEntries RPCs are initiated by leaders to replicate log en-
  * tries and to provide a form of heartbeat (Section 5.3)
  */
-struct AppendEntries {
+struct AppendEntriesRequest {
     // leader's term
     uint32_t term_;
     // so follower can redirect clients
@@ -39,9 +39,9 @@ struct AppendEntries {
     uint32_t prev_log_index_;
     // term of prevLogIndex entry
     uint32_t prev_log_term_;
-    // log entries to store (empty for heartbeat; 
+    // log entries to store (empty for heartbeat;
     // may send more than one for efficiency)
-    std::vector<LogEntry> entries_;
+    Log entries_;
     // leader's commitIndex
     uint32_t leader_commit_;
 };
@@ -57,7 +57,7 @@ struct AppendEntriesResponse {
  * Invoked by leader to send chunks of a snapshot to a follower.
  * Leaders always send chunks in order.
  */
-struct InstallSnapshot {
+struct InstallSnapshotRequest {
     // leader's term
     uint32_t term_;
     // so follower can redirect clients
@@ -67,7 +67,7 @@ struct InstallSnapshot {
     uint32_t last_included_index_;
     // term of lastIncludedIndex
     uint32_t last_included_term_;
-    // byte offset where chunk is positioned in the snapshot file 
+    // byte offset where chunk is positioned in the snapshot file
     uint32_t offset_;
     // raw bytes of the snapshot chunk, starting at offset
     std::vector<char> data_;

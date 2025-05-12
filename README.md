@@ -3,3 +3,4 @@
 
 ## TODO
 * [ ] store: sqlite, leveldb
+* [ ] Status

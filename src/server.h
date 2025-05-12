@@ -4,6 +4,7 @@
 
 #include "rpc.h"
 #include "status.h"
+#include "log.h"h
 
 namespace rollingraft {
 
@@ -11,7 +12,7 @@ namespace rollingraft {
  * At any given time each server is in one of three states:
  * leader, follower, or candidate.
  * In normal operation there is exactly one leader and all
- * of the other servers are followers. 
+ * of the other servers are followers.
  * Followers are passive: they issue no requests on
  * their own but simply respond to requests from leaders
  * and candidates.
@@ -22,17 +23,17 @@ namespace rollingraft {
  * their transitions; the transitions are discussed below.
  */
 enum ServerState {
-    LEADER = 0,
-    FOLLOWER = 1,
-    CANDIDATE = 3
+    FOLLOWER = 0,
+    CANDIDATE = 1,
+    LEADER = 2
 };
 
 
 class Server {
 public:
-    Status RequestVote();
-    Status AppendEntries();
-    Status InstallSnapshot();
+    Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
+    Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
+    Status InstallSnapshot(const InstallSnapshotRequest&, InstallSnapshotResponse&);
 private:
     // Persistent state on all servers
     /**
@@ -73,6 +74,11 @@ private:
     // index of highest log entry applied to state machine
     // initialized to 0, increases monotonically
     uint32_t last_applied_;
+
+    std::vector<Server> peers_;
+    Log log_;
+    ServerState state_;
+    uint32_t node_id_;
 };
 
 class LeaderServer: public Server {
@@ -80,7 +86,7 @@ public:
     void heartbeat();
 private:
     // Volatile state on leaders
-    
+
     // for each server, index of the next log entry
     // to send to that server (initialized to leader
     // last log index + 1)

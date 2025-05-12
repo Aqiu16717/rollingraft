@@ -11,6 +11,9 @@ struct LogEntry;
 class Log {
 public:
     Log() = default;
+    Status AppendLogEntry(LogEntry log_entry) {
+        entries_.push_back(log_entry);
+    }
 private:
     std::vector<LogEntry> entries_;
 };

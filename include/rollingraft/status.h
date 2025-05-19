@@ -34,7 +34,10 @@ public:
 
 private:
     enum Code : int8_t {
-        KOk = 0
+        KOk = 0,
+        KRequestVoteError,
+        KAppendEntriesError,
+        KInstallSnapshotErro
     };
 
     Code code() const {

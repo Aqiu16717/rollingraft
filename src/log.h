@@ -14,6 +14,8 @@ public:
     Status AppendLogEntry(LogEntry log_entry) {
         entries_.push_back(log_entry);
     }
+    uint32_t LastLogIndex() const;
+    uint32_t LastLogTerm() const;
 private:
     std::vector<LogEntry> entries_;
 };

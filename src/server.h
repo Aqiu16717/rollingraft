@@ -4,7 +4,7 @@
 
 #include "rpc.h"
 #include "status.h"
-#include "log.h"h
+#include "log.h"
 
 namespace rollingraft {
 
@@ -31,9 +31,14 @@ enum ServerState {
 
 class Server {
 public:
+    Server() = default;
+
     Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
     Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
     Status InstallSnapshot(const InstallSnapshotRequest&, InstallSnapshotResponse&);
+
+    Status BecomeCandidate();
+    Status Election();
 private:
     // Persistent state on all servers
     /**
@@ -63,7 +68,7 @@ private:
      */
     // latest term server has seen (initialized to 0
     // on first boot, increases monotonically)
-    uint32_t current_term_;
+    uint32_t current_term_ = 0;
     ServerState state_;
 
     // Volatile state on all servers
@@ -78,7 +83,8 @@ private:
     std::vector<Server> peers_;
     Log log_;
     ServerState state_;
-    uint32_t node_id_;
+    uint32_t server_id_;
+    uint32_t vote_count_;
 };
 
 class LeaderServer: public Server {

@@ -11,7 +11,7 @@ namespace rollingraft {
 struct RequestVoteRequest {
     // candidate's term
     uint32_t term_;
-    // candidate requesting vot
+    // candidate requesting vote
     uint32_t candidate_id_;
     // index of candidate’s last log entry (§5.4)
     uint32_t last_log_index_;

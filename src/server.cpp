@@ -1,6 +1,7 @@
 #include "server.h"
 #include <thread>
 #include <vector>
+#include <future>
 
 using namespace rollingraft;
 
@@ -28,7 +29,11 @@ Status Server::InstallSnapshot(const InstallSnapshotRequest& install_snapshot_re
 Status Server::BecomeCandidate() {
     ++current_term_;
     ++vote_count_;
-    state_ = CANDIDATE;
+    SetState(ServerState::CANDIDATE);
+}
+
+Status Server::BecomeLeader() {
+    SetState(ServerState::LEADER);
 }
 
 Status Server::Election() {
@@ -38,15 +43,27 @@ Status Server::Election() {
         .last_log_index_ = log_.LastLogIndex(),
         .last_log_term_ = log_.LastLogTerm()
     };
-    RequestVoteResponse res;
 
     // parallel
-    std::vector<std::thread> thds;
+    std::vector<std::future<RequestVoteResponse>> fus;
     for (int i = 0; i < peers_.size(); ++i) {
-        thds.push_back(std::thread([&](){
-            RequestVote(req, res);
-        }));
+        fus.push_back(std::async(std::launch::async,
+            [&]() {
+                RequestVoteResponse res;
+                RequestVote(req, res);
+                return res;
+            }
+        ));
     }
 
-    return Status();
+    for (auto& fu : fus) {
+        RequestVoteResponse res = fu.get();
+        if (res.vote_granted_) {
+            ++vote_count_;
+        }
+    }
+
+    if (vote_count_ > peers_.size() / 2) {
+        return Status();
+    }
 }

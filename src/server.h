@@ -37,8 +37,16 @@ public:
     Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
     Status InstallSnapshot(const InstallSnapshotRequest&, InstallSnapshotResponse&);
 
+    Status BecomeFollower();
     Status BecomeCandidate();
+    Status BecomeLeader();
+
     Status Election();
+
+    inline void SetState(ServerState state) {
+        state_ = state;
+    }
+
 private:
     // Persistent state on all servers
     /**

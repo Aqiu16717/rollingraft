@@ -48,6 +48,9 @@ public:
     }
 
 private:
+    void RandomizeElectionTimeout();
+
+private:
     // Persistent state on all servers
     /**
      * Raft divides time into terms of arbitrary length, as
@@ -93,6 +96,9 @@ private:
     ServerState state_;
     uint32_t server_id_;
     uint32_t vote_count_;
+
+    // amount of time left till timeout
+    int timeout_elapsed_ = 0;
 };
 
 class LeaderServer: public Server {

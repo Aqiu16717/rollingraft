@@ -24,20 +24,28 @@ Status Server::InstallSnapshot(const InstallSnapshotRequest& install_snapshot_re
     return Status();
 }
 
+Status Server::BecomeFollower() {
+    SetState(ServerState::FOLLOWER);
+    RandomizeElectionTimeout();
+    return Status();
+}
+
 // 1. become candidate
 // 2. start election
 Status Server::BecomeCandidate() {
     ++current_term_;
     ++vote_count_;
     SetState(ServerState::CANDIDATE);
+    return Status();
 }
 
 Status Server::BecomeLeader() {
     SetState(ServerState::LEADER);
+    return Status();
 }
 
 Status Server::Election() {
-    RequestVoteRequest req{
+    RequestVoteRequest req {
         .term_ = current_term_,
         .candidate_id_ = server_id_,
         .last_log_index_ = log_.LastLogIndex(),

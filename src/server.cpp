@@ -3,24 +3,70 @@
 #include <asio.hpp>
 #include <cstdint>
 #include <future>
-#include <thread>
+#include <iostream>
+#include <memory>
+#include <ostream>
+#include <system_error>
 #include <vector>
 
 #include "asio/io_context.hpp"
 #include "asio/ip/tcp.hpp"
+#include "asio/write.hpp"
 #include "rollingraft/rpc.h"
 
 using namespace rollingraft;
 
+class Session : public std::enable_shared_from_this<Session> {
+ public:
+  explicit Session(asio::ip::tcp::socket socket)
+   : socket_(std::move(socket)) {}
+
+  void Start() {
+    DoRead();
+  }
+
+ private:
+  void DoRead() {
+    auto slef = shared_from_this();
+    socket_.async_read_some(asio::buffer(data_),[this, slef](std::error_code ec, std::size_t length){
+      if (!ec) {
+        std::string request(data_.data(), length);
+        std::string response;
+        HandleCommand(request, response);
+        DoWrite(response);
+      } else {
+        std::cerr << "Read error: " << ec.message() << std::endl;
+      }
+    });
+  }
+
+  void HandleCommand(const std::string& request, std::string& response) {
+  }
+
+  void DoWrite(const std::string& msg) {
+    auto self = shared_from_this();
+    asio::async_write(socket_, asio::buffer(msg),[this, self](std::error_code ec, std::size_t) {
+      if (!ec) {
+        DoRead();
+      } else {
+        std::cerr << "Write error: " << ec.message() << std::endl;
+      }
+    });
+  }
+
+ private:
+  asio::ip::tcp::socket socket_;
+  std::vector<char> data_;
+};
+
 class Server::ServerImpl {
  public:
-  ServerImpl(uint32_t id, std::vector<uint32_t> peers, uint16_t port,
+  ServerImpl(uint32_t id, const std::vector<uint32_t>& peers, uint16_t port,
              asio::io_context& io_ctx)
       : server_id_(id),
         peers_(peers),
         io_context_(io_ctx),
-        acceptor_(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
-        socket_(io_ctx) {}
+        acceptor_(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)) {}
   void Start();
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
@@ -36,8 +82,13 @@ class Server::ServerImpl {
 
   inline void SetState(const ServerState& state);
  private:
-  void StartAccept() {
-
+  void DoAccept() {
+    acceptor_.async_accept([this](std::error_code ec, asio::ip::tcp::socket socket){
+      if (!ec) {
+        std::make_shared<Session>(std::move(socket))->Start();
+      }
+      DoAccept();
+    });
   }
  private:
   void RandomizeElectionTimeout();
@@ -106,10 +157,18 @@ class Server::ServerImpl {
  private:
   asio::io_context& io_context_;
   asio::ip::tcp::acceptor acceptor_;
-  asio::ip::tcp::socket socket_;
 };
 
+void Server::ServerImpl::Start() {
+}
+
 void Server::ServerImpl::SetState(const ServerState& state) { state_ = state; }
+
+Status Server::ServerImpl::BecomeFollower() {
+  SetState(ServerState::FOLLOWER);
+  RandomizeElectionTimeout();
+  return Status();
+}
 
 // 1. become candidate
 // 2. start election
@@ -175,11 +234,5 @@ Status Server::ServerImpl::AppendEntries(
 Status Server::ServerImpl::InstallSnapshot(
     const InstallSnapshotRequest& install_snapshot_request,
     InstallSnapshotResponse& install_snapshot_response) {
-  return Status();
-}
-
-Status Server::ServerImpl::BecomeFollower() {
-  SetState(ServerState::FOLLOWER);
-  RandomizeElectionTimeout();
   return Status();
 }

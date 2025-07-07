@@ -28,6 +28,7 @@ class Server {
  public:
   Server() = default;
   Server(uint32_t id, int port, std::vector<uint32_t> peers);
+  ~Server();
   void Start();
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);

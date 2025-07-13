@@ -9,11 +9,14 @@ target_include_directories(rollingraft
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
 )
 target_sources(rollingraft
     PRIVATE
     "src/server.cpp"
     "src/status.cpp"
+    "src/raft_node.cpp"
 )
 
 add_library(asio INTERFACE)

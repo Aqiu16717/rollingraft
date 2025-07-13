@@ -12,7 +12,7 @@
 #include "asio/io_context.hpp"
 #include "asio/ip/tcp.hpp"
 #include "asio/write.hpp"
-#include "rollingraft/rpc.h"
+#include "rollingraft/command_handler.h"
 
 using namespace rollingraft;
 

@@ -1,7 +1,7 @@
-#include "rolllingraft/status.h"
+#include "rollingraft/status.h"
 #include <cstdio>
 
-namespace rollingraft {
+using namespace rollingraft;
 
 const char* Status::CopyState(const char* state) {
     uint32_t size;
@@ -18,7 +18,7 @@ std::string Status::ToString() const {
         char tmp[30];
         const char* type;
         switch (code()) {
-            case kOk:
+            case KOk:
                 type = "OK";
                 break;
             default:
@@ -33,4 +33,4 @@ std::string Status::ToString() const {
         result.append(state_ + 5, length);
         return result;
     }
-}  // namespace rollingraft
+}

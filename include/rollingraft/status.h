@@ -67,7 +67,7 @@ inline Status& Status::operator=(const Status& rhs) {
     }
     return *this;
 }
-inline Status& Status::operator=(Status&& rhs) {
+inline Status& Status::operator=(Status&& rhs) noexcept {
     std::swap(state_, rhs.state_);
     return *this;
 }

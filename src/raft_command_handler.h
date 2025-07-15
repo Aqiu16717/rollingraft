@@ -2,17 +2,25 @@
 
 #include <memory>
 #include <string>
+
 #include "rollingraft/command_handler.h"
+#include "rollingraft/protocol.h"
 #include "rollingraft/raft_node.h"
 
 namespace rollingraft {
 
 class RaftCommandHandler : public CommandHandler {
  public:
-  RaftCommandHandler(std::shared_ptr<RaftNode> raft_node) : raft_node_(raft_node) {}
-  void HandleCommand(const std::string& request, std::string& response) override;
+  RaftCommandHandler(std::shared_ptr<RaftNode> raft_node,
+                     std::shared_ptr<Protocol> protocol)
+      : raft_node_(raft_node), protocol_(protocol) {}
+
+  void HandleCommand(const std::string& request,
+                     std::string& response) override;
+
  private:
   std::shared_ptr<RaftNode> raft_node_;
+  std::shared_ptr<Protocol> protocol_;
 };
 
 }  // namespace rollingraft

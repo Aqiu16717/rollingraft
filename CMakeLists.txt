@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
 project(rollingraft LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(rollingraft "")
@@ -21,7 +21,7 @@ target_sources(rollingraft
 
 # add third_party non-boost-asio
 add_library(nonboost_asio INTERFACE)
-target_include_directories(asio
+target_include_directories(nonboost_asio
   INTERFACE 
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nonboost_asio/asio/include
 )

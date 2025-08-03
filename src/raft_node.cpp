@@ -1,16 +1,16 @@
 
 #include "rollingraft/raft_node.h"
-#include "rollingraft/rpc.h"
+
 #include <future>
+
+#include "rollingraft/rpc.h"
 
 using namespace rollingraft;
 
 class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(uint32_t id, const std::vector<uint32_t>& peers)
-      : server_id_(id),
-        peers_(peers)
-        {}
+      : server_id_(id), peers_(peers) {}
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -24,6 +24,7 @@ class RaftNode::RaftNodeImpl {
   Status Election();
 
   inline void SetState(const RaftNodeState& state);
+
  private:
   void RandomizeElectionTimeout();
 
@@ -91,9 +92,9 @@ class RaftNode::RaftNodeImpl {
  private:
 };
 
-
-
-void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) { state_ = state; }
+void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
+  state_ = state;
+}
 
 Status RaftNode::RaftNodeImpl::BecomeFollower() {
   SetState(RaftNodeState::FOLLOWER);
@@ -118,10 +119,8 @@ Status RaftNode::RaftNodeImpl::BecomeLeader() {
 }
 
 Status RaftNode::RaftNodeImpl::Election() {
-  RequestVoteRequest req{.term_ = current_term_,
-                         .candidate_id_ = server_id_,
-                         .last_log_index_ = log_.LastLogIndex(),
-                         .last_log_term_ = log_.LastLogTerm()};
+  RequestVoteRequest req(current_term_, server_id_, log_.LastLogIndex(),
+                         log_.LastLogTerm());
 
   // parallel
   std::vector<std::future<RequestVoteResponse>> fus;

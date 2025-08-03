@@ -1,14 +1,34 @@
 #pragma once
 
-#include "log.h"
+#include <cstdint>
 
-namespace rolingraft {
+#include "rollingraft/log.h"
+
+namespace rollingraft {
+
+enum class RaftMessageType : int8_t {
+  KInvalid = -1,
+  KRequestVoteRequest = 0,
+  KRequestVoteResponse = 1,
+  KAppendEntriesRequest = 2,
+  KAppendEntriesResponse = 3,
+  KInstallSnapshotRequest = 4,
+  KInstallSnapshowResponse = 5
+};
 
 struct RaftRequest {
+  RaftMessageType type_;
+
+  RaftRequest() = delete;
+  explicit RaftRequest(RaftMessageType type) : type_(type) {}
   virtual ~RaftRequest() = default;
 };
 
 struct RaftResponse {
+  RaftMessageType type_;
+
+  RaftResponse() = delete;
+  RaftResponse(RaftMessageType type) : type_(type) {}
   virtual ~RaftResponse() = default;
 };
 
@@ -25,6 +45,15 @@ struct RequestVoteRequest : public RaftRequest {
   uint32_t last_log_index_;
   // term of candidate’s last log entry (§5.4)
   uint32_t last_log_term_;
+
+  RequestVoteRequest() = delete;
+  RequestVoteRequest(uint32_t term, uint32_t candidate_id,
+                     uint32_t last_log_index, uint32_t last_log_term)
+      : RaftRequest(RaftMessageType::KRequestVoteRequest),
+        term_(term),
+        candidate_id_(candidate_id),
+        last_log_index_(last_log_index),
+        last_log_term_(last_log_term) {}
 };
 
 struct RequestVoteResponse : RaftResponse {
@@ -32,6 +61,12 @@ struct RequestVoteResponse : RaftResponse {
   uint32_t term_;
   // true means candidate received vote
   bool vote_granted_;
+
+  RequestVoteResponse() = delete;
+  RequestVoteResponse(uint32_t term, bool vote_granted)
+      : RaftResponse(RaftMessageType::KRequestVoteResponse),
+        term_(term),
+        vote_granted_(vote_granted) {}
 };
 
 /**
@@ -52,6 +87,18 @@ struct AppendEntriesRequest : public RaftRequest {
   Log entries_;
   // leader's commitIndex
   uint32_t leader_commit_;
+
+  AppendEntriesRequest() = delete;
+  AppendEntriesRequest(uint32_t term, uint32_t leader_id,
+                       uint32_t prev_log_index_, uint32_t prev_log_term,
+                       Log entries, uint32_t leader_commit)
+      : RaftRequest(RaftMessageType::KAppendEntriesRequest),
+        term_(term),
+        leader_id_(leader_id),
+        prev_log_index_(prev_log_index_),
+        prev_log_term_(prev_log_term),
+        entries_(entries),
+        leader_commit_(leader_commit) {}
 };
 
 struct AppendEntriesResponse : public RaftResponse {
@@ -59,6 +106,12 @@ struct AppendEntriesResponse : public RaftResponse {
   uint32_t term_;
   // true if follower contained entry matching prevLogIndex and prevLogTerm
   bool success_;
+
+  AppendEntriesResponse() = delete;
+  AppendEntriesResponse(uint32_t term, bool success)
+      : RaftResponse(RaftMessageType::KAppendEntriesResponse),
+        term_(term),
+        success_(success) {}
 };
 
 /**
@@ -81,11 +134,30 @@ struct InstallSnapshotRequest : public RaftRequest {
   std::vector<char> data_;
   // true if this is the last chunk
   bool done_;
+
+  InstallSnapshotRequest() = delete;
+  InstallSnapshotRequest(uint32_t term, uint32_t leader_id,
+                         uint32_t last_included_index,
+                         uint32_t last_included_term, uint32_t offset,
+                         std::vector<char> data, bool done)
+      : RaftRequest(RaftMessageType::KInstallSnapshotRequest),
+
+        term_(term),
+        leader_id_(leader_id),
+        last_included_index_(last_included_index),
+        last_included_term_(last_included_term),
+        offset_(offset),
+        data_(data),
+        done_(done) {}
 };
 
 struct InstallSnapshotResponse : public RaftResponse {
   // currentTerm, for leader to update itself
   uint32_t term_;
+
+  InstallSnapshotResponse() = delete;
+  InstallSnapshotResponse(uint32_t term)
+      : RaftResponse(RaftMessageType::KInstallSnapshowResponse), term_(term) {}
 };
 
-}  // namespace rolingraft
+}  // namespace rollingraft

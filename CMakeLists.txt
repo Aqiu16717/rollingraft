@@ -43,6 +43,17 @@ target_link_libraries(rollingraft
     nlohmann_json
 )
 
+# add third_party spdlog
+add_library(spdlog INTERFACE)
+target_include_directories(spdlog
+  INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include
+)
+target_link_libraries(rollingraft
+  PRIVATE
+    spdlog
+)
+
 
 # This project is tested using GoogleTest
 # add_subdirectory("third_party/googletest")

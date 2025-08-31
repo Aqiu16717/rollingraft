@@ -7,9 +7,9 @@
 
 namespace rollingraft {
 
-struct LogEntry {
-    LogEntry() = default;
-    LogEntry(uint32_t index, uint32_t term, const std::string& command)
+struct RaftLogEntry {
+    RaftLogEntry() = default;
+    RaftLogEntry(uint32_t index, uint32_t term, const std::string& command)
         : index_(index), term_(term), command_(command) {}
 
     uint32_t index_;
@@ -18,17 +18,17 @@ struct LogEntry {
     std::string command_;
 };
 
-class Log {
+class RaftLog {
 public:
-    Log() = default;
-    Status AppendLogEntry(const LogEntry& log_entry) {
+    RaftLog() = default;
+    Status AppendLogEntry(const RaftLogEntry& log_entry) {
         entries_.push_back(log_entry);
         return Status();
     }
     uint32_t LastLogIndex() const;
     uint32_t LastLogTerm() const;
 private:
-    std::vector<LogEntry> entries_;
+    std::vector<RaftLogEntry> entries_;
 };
 
 

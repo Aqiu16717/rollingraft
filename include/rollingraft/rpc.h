@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "rollingraft/log.h"
+#include "rollingraft/raft_log.h"
 
 namespace rollingraft {
 
@@ -84,14 +84,14 @@ struct AppendEntriesRequest : public RaftRequest {
   uint32_t prev_log_term_;
   // log entries to store (empty for heartbeat;
   // may send more than one for efficiency)
-  Log entries_;
+  RaftLog entries_;
   // leader's commitIndex
   uint32_t leader_commit_;
 
   AppendEntriesRequest() = delete;
   AppendEntriesRequest(uint32_t term, uint32_t leader_id,
                        uint32_t prev_log_index_, uint32_t prev_log_term,
-                       Log entries, uint32_t leader_commit)
+                       RaftLog entries, uint32_t leader_commit)
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
         term_(term),
         leader_id_(leader_id),

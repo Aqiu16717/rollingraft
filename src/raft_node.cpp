@@ -70,7 +70,7 @@ class RaftNode::RaftNodeImpl {
   uint32_t last_applied_;
 
   std::vector<uint32_t> peers_;
-  Log log_;
+  RaftLog log_;
   uint32_t server_id_;
   uint32_t vote_count_;
 

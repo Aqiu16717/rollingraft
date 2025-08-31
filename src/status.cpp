@@ -1,4 +1,5 @@
 #include "rollingraft/status.h"
+#include <cassert>
 #include <cstdio>
 
 using namespace rollingraft;
@@ -11,6 +12,23 @@ const char* Status::CopyState(const char* state) {
     return result;
 }
 
+Status::Status(Code code, const std::string& msg, const std::string& msg2) {
+  assert(code != kOk);
+  const uint32_t len1 = static_cast<uint32_t>(msg.size());
+  const uint32_t len2 = static_cast<uint32_t>(msg2.size());
+  const uint32_t size = len1 + (len2 ? (2 + len2) : 0);
+  char* result = new char[size + 5];
+  std::memcpy(result, &size, sizeof(size));
+  result[4] = static_cast<char>(code);
+  std::memcpy(result + 5, msg.data(), len1);
+  if (len2) {
+    result[5 + len1] = ':';
+    result[6 + len1] = ' ';
+    std::memcpy(result + 7 + len1, msg2.data(), len2);
+  }
+  state_ = result;
+}
+
 std::string Status::ToString() const {
     if (state_ == nullptr) {
         return "OK";
@@ -18,8 +36,11 @@ std::string Status::ToString() const {
         char tmp[30];
         const char* type;
         switch (code()) {
-            case KOk:
+            case kOk:
                 type = "OK";
+                break;
+            case kCorruption:
+                type = "Corruption: ";
                 break;
             default:
                 std::snprintf(tmp, sizeof(tmp),

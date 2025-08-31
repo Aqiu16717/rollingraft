@@ -73,7 +73,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
     auto j = nlohmann::json::parse(input);
 
     if (!j.contains("type")) {
-      return Status::ParseError("Missing 'type' field in request");
+      return Status::DeSerializeError("Missing 'type' field in request");
     }
 
     int type_id = j["type"];
@@ -88,7 +88,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
       case RaftMessageType::KRequestVoteRequest: {
         if (!j.contains("term") || !j.contains("candidate_id") ||
             !j.contains("last_log_index") || !j.contains("last_log_term")) {
-          return Status::ParseError("Missing required fields for RequestVote");
+          return Status::DeSerializeError("Missing required fields for RequestVote");
         }
 
         uint32_t term = j["term"];
@@ -107,7 +107,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         if (!j.contains("term") || !j.contains("leader_id") ||
             !j.contains("prev_log_index") || !j.contains("prev_log_term") ||
             !j.contains("leader_commit")) {
-          return Status::ParseError(
+          return Status::DeSerializeError(
               "Missing required fields for AppendEntries");
         }
 
@@ -132,7 +132,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
             !j.contains("last_included_index") ||
             !j.contains("last_included_term") || !j.contains("offset") ||
             !j.contains("data") || !j.contains("done")) {
-          return Status::ParseError(
+          return Status::DeSerializeError(
               "Missing required fields for InstallSnapshot");
         }
 
@@ -162,9 +162,9 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
     return Status::OK();
 
   } catch (const nlohmann::json::parse_error& e) {
-    return Status::ParseError("JSON parse error: " + std::string(e.what()));
+    return Status::DeSerializeError("JSON parse error: " + std::string(e.what()));
   } catch (const std::exception& e) {
-    return Status::ParseError("Deserialization error: " +
+    return Status::DeSerializeError("Deserialization error: " +
                               std::string(e.what()));
   }
 }
@@ -220,7 +220,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     auto j = nlohmann::json::parse(input);
 
     if (!j.contains("type")) {
-      return Status::ParseError("Missing 'type' field in response");
+      return Status::DeSerializeError("Missing 'type' field in response");
     }
 
     int type_id = j["type"];
@@ -234,7 +234,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     switch (message_type) {
       case RaftMessageType::KRequestVoteResponse: {
         if (!j.contains("term") || !j.contains("vote_granted")) {
-          return Status::ParseError(
+          return Status::DeSerializeError(
               "Missing required fields for RequestVoteResponse");
         }
 
@@ -250,7 +250,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
       case RaftMessageType::KAppendEntriesResponse: {
         if (!j.contains("term") || !j.contains("success")) {
-          return Status::ParseError(
+          return Status::DeSerializeError(
               "Missing required fields for AppendEntriesResponse");
         }
 
@@ -266,7 +266,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
       case RaftMessageType::KInstallSnapshowResponse: {
         if (!j.contains("term")) {
-          return Status::ParseError(
+          return Status::DeSerializeError(
               "Missing required fields for InstallSnapshotResponse");
         }
 
@@ -286,9 +286,9 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     return Status::OK();
 
   } catch (const nlohmann::json::parse_error& e) {
-    return Status::ParseError("JSON parse error: " + std::string(e.what()));
+    return Status::DeSerializeError("JSON parse error: " + std::string(e.what()));
   } catch (const std::exception& e) {
-    return Status::ParseError("Deserialization error: " +
+    return Status::DeSerializeError("Deserialization error: " +
                               std::string(e.what()));
   }
 }

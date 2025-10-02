@@ -1,7 +1,10 @@
 
 #include "rollingraft/raft_node.h"
 
+#include <cstdint>
 #include <future>
+#include <iostream>
+#include "rollingraft/logger.h"
 
 #include "rollingraft/rpc.h"
 
@@ -24,6 +27,8 @@ class RaftNode::RaftNodeImpl {
   Status Election();
 
   inline void SetState(const RaftNodeState& state);
+
+  inline uint32_t GetServerId() const { return server_id_; }
 
  private:
   void RandomizeElectionTimeout();
@@ -90,6 +95,7 @@ class RaftNode::RaftNodeImpl {
   std::vector<uint32_t> match_index_;
 
  private:
+  std::mutex mtx_;
 };
 
 void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
@@ -147,8 +153,29 @@ Status RaftNode::RaftNodeImpl::Election() {
 }
 
 Status RaftNode::RaftNodeImpl::RequestVote(
-    const RequestVoteRequest& request_vote_request,
-    RequestVoteResponse& request_vote_reponse) {
+    const RequestVoteRequest& request,
+    RequestVoteResponse& response) {
+  response.term_ = current_term_;
+  LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_, request.candidate_id_, request.term_);
+
+  if (request.term_ < current_term_) {
+    response.vote_granted_ = false;
+    LOG_INFO("Rejecting vote for {}: their term {} is older than mine {}", request.candidate_id_, request.term_, current_term_);
+    return Status::OK();
+  }
+
+  std::lock_guard<std::mutex> lock(mtx_);
+  if (request.term_ > current_term_) {
+    LOG_INFO("Updating term from {} to {}", current_term_, request.term_);
+    BecomeFollower();
+    current_term_ = request.term_;
+  }
+
+  // Each server will vote for at most one candidate in a
+  // given term, on a first-come-first-served basis (note: Sec-
+  // tion 5.4 adds an additional restriction on votes). 
+
+
   return Status();
 }
 

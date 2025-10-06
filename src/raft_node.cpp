@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <future>
 #include <iostream>
-#include "rollingraft/logger.h"
 
+#include "rollingraft/logger.h"
 #include "rollingraft/rpc.h"
 
 using namespace rollingraft;
@@ -13,7 +13,17 @@ using namespace rollingraft;
 class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(uint32_t id, const std::vector<uint32_t>& peers)
-      : server_id_(id), peers_(peers) {}
+      : server_id_(id),
+        peers(peers),
+        current_term_(0),
+        state_(FOLLOWER),
+        commit_index_(0),
+        last_applied_(0),
+        vote_count_(0),
+        timeout_elapsed_(0),
+        next_index_(0),
+        match_index_(0)
+         {}
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -32,6 +42,10 @@ class RaftNode::RaftNodeImpl {
 
  private:
   void RandomizeElectionTimeout();
+
+ private:
+  uint32_t server_id_;
+  std::vector<uint32_t> peers_;
 
  private:
   // Persistent state on all servers
@@ -74,9 +88,7 @@ class RaftNode::RaftNodeImpl {
   // initialized to 0, increases monotonically
   uint32_t last_applied_;
 
-  std::vector<uint32_t> peers_;
   RaftLog log_;
-  uint32_t server_id_;
   uint32_t vote_count_;
 
   // amount of time left till timeout
@@ -103,6 +115,7 @@ void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
 }
 
 Status RaftNode::RaftNodeImpl::BecomeFollower() {
+  LOG_INFO("Node {} become follower.", server_id_);
   SetState(RaftNodeState::FOLLOWER);
   RandomizeElectionTimeout();
   return Status();
@@ -152,15 +165,16 @@ Status RaftNode::RaftNodeImpl::Election() {
   return Status();
 }
 
-Status RaftNode::RaftNodeImpl::RequestVote(
-    const RequestVoteRequest& request,
-    RequestVoteResponse& response) {
+Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
+                                           RequestVoteResponse& response) {
   response.term_ = current_term_;
-  LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_, request.candidate_id_, request.term_);
+  LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_,
+           request.candidate_id_, request.term_);
 
   if (request.term_ < current_term_) {
     response.vote_granted_ = false;
-    LOG_INFO("Rejecting vote for {}: their term {} is older than mine {}", request.candidate_id_, request.term_, current_term_);
+    LOG_INFO("Rejecting vote for {}: their term {} is older than mine {}",
+             request.candidate_id_, request.term_, current_term_);
     return Status::OK();
   }
 
@@ -173,8 +187,7 @@ Status RaftNode::RaftNodeImpl::RequestVote(
 
   // Each server will vote for at most one candidate in a
   // given term, on a first-come-first-served basis (note: Sec-
-  // tion 5.4 adds an additional restriction on votes). 
-
+  // tion 5.4 adds an additional restriction on votes).
 
   return Status();
 }
@@ -192,4 +205,8 @@ Status RaftNode::RaftNodeImpl::InstallSnapshot(
     const InstallSnapshotRequest& install_snapshot_request,
     InstallSnapshotResponse& install_snapshot_response) {
   return Status();
+}
+
+void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
+  timeout_elapsed_ = rand() % kElectionTimeoutMax + kElectionTimeoutMin;
 }

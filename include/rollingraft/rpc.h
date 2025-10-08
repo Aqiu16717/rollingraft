@@ -27,7 +27,7 @@ struct RaftRequest {
 struct RaftResponse {
   RaftMessageType type_;
 
-  RaftResponse() = delete;
+  RaftResponse() = default;
   RaftResponse(RaftMessageType type) : type_(type) {}
   virtual ~RaftResponse() = default;
 };
@@ -62,7 +62,7 @@ struct RequestVoteResponse : RaftResponse {
   // true means candidate received vote
   bool vote_granted_;
 
-  RequestVoteResponse() = delete;
+  RequestVoteResponse() : term_(0), vote_granted_(false) {}
   RequestVoteResponse(uint32_t term, bool vote_granted)
       : RaftResponse(RaftMessageType::KRequestVoteResponse),
         term_(term),

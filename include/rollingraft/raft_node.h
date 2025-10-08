@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 #include "rollingraft/status.h"
 #include "rollingraft/rpc.h"

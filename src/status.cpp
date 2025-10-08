@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdint>
+#include <cstring>
 
 using namespace rollingraft;
 

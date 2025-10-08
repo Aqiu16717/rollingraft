@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <future>
 #include <iostream>
+#include <random>
 
 #include "rollingraft/logger.h"
 #include "rollingraft/rpc.h"
@@ -14,7 +15,7 @@ class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(uint32_t id, const std::vector<uint32_t>& peers)
       : server_id_(id),
-        peers(peers),
+        peers_(peers),
         current_term_(0),
         state_(FOLLOWER),
         commit_index_(0),
@@ -22,8 +23,7 @@ class RaftNode::RaftNodeImpl {
         vote_count_(0),
         timeout_elapsed_(0),
         next_index_(0),
-        match_index_(0)
-         {}
+        match_index_(0) {}
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -93,6 +93,7 @@ class RaftNode::RaftNodeImpl {
 
   // amount of time left till timeout
   int timeout_elapsed_ = 0;
+  int election_timeout_ = 0;
 
  private:
   // Volatile state on leaders
@@ -208,5 +209,28 @@ Status RaftNode::RaftNodeImpl::InstallSnapshot(
 }
 
 void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
-  timeout_elapsed_ = rand() % kElectionTimeoutMax + kElectionTimeoutMin;
+  constexpr uint64_t kMinElectionTimeout = 150;
+  constexpr uint64_t kMaxElectionTimeout = 300;
+
+  // Thread-safe random number generator
+  // use static variables to ensure it is initialized only once
+  static std::mt19937_64 rng;
+  // Ensure the random number seed is initialized only once
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() {
+    // Use system time as the seed to ensure that the random sequence is
+    // different each time it is started
+    rng.seed(std::chrono::system_clock::now().time_since_epoch().count());
+  });
+
+  // Generate a random number between [kMinElectionTimeout, kMaxElectionTimeout)
+  std::uniform_int_distribution<uint64_t> dist(kMinElectionTimeout,
+                                               kMaxElectionTimeout);
+  election_timeout_ = dist(rng);
+
+  // Reset the elapsed time
+  timeout_elapsed_ = 0;
+
+  LOG_INFO("Node {} randomized election timeout to {}ms (state: {})",
+           server_id_, election_timeout_, state_);
 }

@@ -1,11 +1,12 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "rollingraft/status.h"
 #include "rollingraft/rpc.h"
+#include "rollingraft/status.h"
 
 namespace rollingraft {
 
@@ -23,7 +24,19 @@ namespace rollingraft {
  * as described in Section 5.2. Figure 4 shows the states and
  * their transitions; the transitions are discussed below.
  */
-enum RaftNodeState { FOLLOWER = 0, CANDIDATE = 1, LEADER = 2 };
+enum RaftNodeState {
+  FOLLOWER = 0,
+  CANDIDATE = 1,
+  LEADER = 2,
+  RaftNodeStateEnd
+};
+
+inline const char* RaftNodeStateToString(RaftNodeState state) {
+  constexpr static const char* state_str[RaftNodeStateEnd] = {
+      "Follower", "Candidate", "Leader"};
+  assert(state >= FOLLOWER && state < RaftNodeStateEnd);
+  return state_str[state];
+}
 
 class RaftNode {
  public:

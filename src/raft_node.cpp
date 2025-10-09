@@ -232,5 +232,5 @@ void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
   timeout_elapsed_ = 0;
 
   LOG_INFO("Node {} randomized election timeout to {}ms (state: {})",
-           server_id_, election_timeout_, state_);
+           server_id_, election_timeout_, RaftNodeStateToString(state_));
 }

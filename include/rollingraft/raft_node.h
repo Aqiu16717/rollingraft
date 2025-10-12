@@ -31,6 +31,11 @@ enum RaftNodeState {
   RaftNodeStateEnd
 };
 
+/**
+ * Unique node identifier.
+ */
+using RaftNodeId = int32_t;
+
 inline const char* RaftNodeStateToString(RaftNodeState state) {
   constexpr static const char* state_str[RaftNodeStateEnd] = {
       "Follower", "Candidate", "Leader"};

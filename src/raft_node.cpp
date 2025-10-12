@@ -11,11 +11,13 @@
 using namespace rollingraft;
 
 class RaftNode::RaftNodeImpl {
+ using RaftNodeId = int32_t;
  public:
-  RaftNodeImpl(uint32_t id, const std::vector<uint32_t>& peers)
+  RaftNodeImpl(uint32_t id, const std::vector<RaftNodeId>& peers)
       : server_id_(id),
         peers_(peers),
         current_term_(0),
+        voted_for_(-1),
         state_(FOLLOWER),
         commit_index_(0),
         last_applied_(0),
@@ -43,8 +45,8 @@ class RaftNode::RaftNodeImpl {
   void RandomizeElectionTimeout();
 
  private:
-  uint32_t server_id_;
-  std::vector<uint32_t> peers_;
+  RaftNodeId server_id_;
+  std::vector<RaftNodeId> peers_;
 
  private:
   // Persistent state on all servers
@@ -76,6 +78,9 @@ class RaftNode::RaftNodeImpl {
   // latest term server has seen (initialized to 0
   // on first boot, increases monotonically)
   uint32_t current_term_ = 0;
+  // candidate id that received vote in current term
+  // initialized to -1 (null)
+  RaftNodeId voted_for_;
   RaftNodeState state_;
 
   // Volatile state on all servers
@@ -167,10 +172,16 @@ Status RaftNode::RaftNodeImpl::Election() {
 
 Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
                                            RequestVoteResponse& response) {
+  // lock for thread safety
+  std::lock_guard<std::mutex> lock(mtx_);
+  
+  // always set response.term_ to current_term_
   response.term_ = current_term_;
+
   LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_,
            request.candidate_id_, request.term_);
-
+  
+  // refuse vote if candidate's term is older than my term
   if (request.term_ < current_term_) {
     response.vote_granted_ = false;
     LOG_INFO("Rejecting vote for {}: their term {} is older than mine {}",
@@ -178,11 +189,15 @@ Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
     return Status::OK();
   }
 
-  std::lock_guard<std::mutex> lock(mtx_);
+  // if cnadidate's term is newer, become follower whatever my state is
   if (request.term_ > current_term_) {
     LOG_INFO("Updating term from {} to {}", current_term_, request.term_);
-    BecomeFollower();
+    // reset voted_for_
+    voted_for_ = -1;
     current_term_ = request.term_;
+    //todo
+    //persister_->
+    BecomeFollower();
   }
 
   // Each server will vote for at most one candidate in a

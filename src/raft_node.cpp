@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <future>
-#include <iostream>
 #include <random>
 
 #include "rollingraft/logger.h"

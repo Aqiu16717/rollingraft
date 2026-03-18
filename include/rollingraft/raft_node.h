@@ -10,6 +10,13 @@
 
 namespace rollingraft {
 
+struct RaftNodeConfig {
+  int node_id;
+  std::string listen_addr_;
+  std::vector<std::string> peers_;
+  std::string data_dir_;
+};
+
 /**
  * At any given time each server is in one of three states:
  * leader, follower, or candidate.

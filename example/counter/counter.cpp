@@ -2,7 +2,9 @@
 #include <memory>
 #include <rollingraft/raft_node.h>
 
-class CounterMachine : Public StateMachine {};
+class CounterMachine : Public StateMachine {
+ public:
+};
 
 int main() {
   rollingraft::RaftNodeConfig config;

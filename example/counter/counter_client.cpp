@@ -14,6 +14,14 @@ class CounterClient {
     req.command = cmd;
     req.client_id = client_id_;
     req.seq = seq++;
+    bool success = false;
+    while (!success) {
+      rollingraft::ClientResponse resp;
+      std::string current_addr = servers_[leader_idx_];
+
+      std::cout << "[Client] Sending '" << cmd << "' to Node " << leader_idx_
+                << " (" << current_addr << ")..." << std::endl;
+    }
     rollingraft::ClientResponse resp;
   }
 

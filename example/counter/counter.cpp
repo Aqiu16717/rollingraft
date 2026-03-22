@@ -146,12 +146,12 @@ int main(int argc, char** argv) {
   std::string listen_port = argv[2];
 
   rollingraft::RaftNodeConfig config;
-  config.node_id_ = node_id;
-  config.listen_addr_ = "127.0.0.1:" + listen_port;
-  config.data_dir_ = "./data/node" + std::to_string(node_id);
+  config.node_id = node_id;
+  config.listen_addr = "127.0.0.1:" + listen_port;
+  config.data_dir = "./data/node" + std::to_string(node_id);
 
   for (int i = 3; i < argc; ++i) {
-    config.peers_.push_back("127.0.0.1:" + std::string(argv[i]));
+    config.peers.push_back("127.0.0.1:" + std::string(argv[i]));
   }
 
   // handler ctrl-c

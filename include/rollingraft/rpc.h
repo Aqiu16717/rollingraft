@@ -172,7 +172,8 @@ struct ClientResponse {
   bool success;
   std::string response;
   uint32_t last_applied_index_;
-  RaftNodeId leader_hint;
+  RaftNodeId leader_id;
+  std::string leader_addr;
   Status error_code;
 };
 

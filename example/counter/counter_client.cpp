@@ -72,5 +72,16 @@ int main(int argc, char* argv[]) {
 
   CounterClient client(server_addrs);
 
+  std::string input;
+  while (std::cout >> "> " && std::getline(std::cin, input)) {
+    if (input == "exit") {
+      break;
+    }
+    if (input.empty()) {
+      continue;
+    }
+    client.SendCommand(input);
+  }
+
   return 0;
 }

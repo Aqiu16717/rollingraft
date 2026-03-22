@@ -1,4 +1,3 @@
-
 #include "rollingraft/raft_node.h"
 
 #include <cstdint>
@@ -7,11 +6,13 @@
 
 #include "rollingraft/logger.h"
 #include "rollingraft/rpc.h"
+#include "rollingraft/server.h"
 
 using namespace rollingraft;
 
 class RaftNode::RaftNodeImpl {
- using RaftNodeId = int32_t;
+  using RaftNodeId = int32_t;
+
  public:
   RaftNodeImpl(uint32_t id, const std::vector<RaftNodeId>& peers)
       : server_id_(id),
@@ -113,6 +114,9 @@ class RaftNode::RaftNodeImpl {
 
  private:
   std::mutex mtx_;
+
+ private:
+  std::unique_ptr<Server> server_;
 };
 
 void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
@@ -174,13 +178,13 @@ Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
                                            RequestVoteResponse& response) {
   // lock for thread safety
   std::lock_guard<std::mutex> lock(mtx_);
-  
+
   // always set response.term_ to current_term_
   response.term_ = current_term_;
 
   LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_,
            request.candidate_id_, request.term_);
-  
+
   // refuse vote if candidate's term is older than my term
   if (request.term_ < current_term_) {
     response.vote_granted_ = false;
@@ -195,8 +199,8 @@ Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
     // reset voted_for_
     voted_for_ = -1;
     current_term_ = request.term_;
-    //todo
-    //persister_->
+    // todo
+    // persister_->
     BecomeFollower();
   }
 

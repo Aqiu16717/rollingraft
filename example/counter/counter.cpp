@@ -131,9 +131,12 @@ void PrintUsage(const char* prog) {
   std::cout << "  " << prog << " 1 8001 8002 8003\n";
 }
 
+std::atomic<bool> g_running{true};
+
 void SignalHandler(int signum) {
   std::cout << "\nInterrupt singal (" << signum
             << ") received. Shuting dow...\n";
+  g_running = false;
 }
 
 int main(int argc, char** argv) {
@@ -162,13 +165,22 @@ int main(int argc, char** argv) {
   try {
     auto sm = std::make_unique<CounterMachine>();
     rollingraft::RaftNode node(config, sm);
-    node->Start();
 
     std::cout << "-------------------------------------------\n";
     std::cout << " Raft Counter Node " << node_id << " Started\n";
     std::cout << " Listening on: " << config.listen_addr << "\n";
     std::cout << " Storage: " << config.data_dir << "\n";
     std::cout << "-------------------------------------------\n";
+
+    node->Start();
+
+    while (g_running) {
+      std::this_thread::sleep_for(std::chrono::seconds(3));
+      if (node->IsLeader() {
+        std::cout << "Current count value: " << sm->GetValue();
+        << std::endl;
+      }
+    }
 
     std::cout << "Stopping Raft node..." << std::endl;
     node->Stop();

@@ -161,6 +161,17 @@ int main(int argc, char** argv) {
 
   try {
     auto sm = std::make_unique<CounterMachine>();
+    rollingraft::RaftNode node(config, sm);
+    node->Start();
+
+    std::cout << "-------------------------------------------\n";
+    std::cout << " Raft Counter Node " << node_id << " Started\n";
+    std::cout << " Listening on: " << config.listen_addr << "\n";
+    std::cout << " Storage: " << config.data_dir << "\n";
+    std::cout << "-------------------------------------------\n";
+
+    std::cout << "Stopping Raft node..." << std::endl;
+    node->Stop();
   } catch (const std::exception& e) {
     std::cerr << "Uncaught exception: " << e.what() << std::endl;
     return 1;

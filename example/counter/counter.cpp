@@ -124,7 +124,22 @@ class CounterMachine : public rollingraft::StateMachine {
   std::multimap<uint64_t, std::function<void()>> waiters_;
 };
 
-int main() {
+void PrintUsage(const char* prog) {
+  std::cout << "Usage: " << prog
+            << " <node_id> <listen_port> <peer1_port> [peer2_port ...]\n";
+  std::cout << "Example:\n";
+  std::cout << "  " << prog << " 1 8001 8002 8003\n";
+}
+
+int main(int argc, char** argv) {
+  if (argc < 4) {
+    PrintUsage(argv[0]);
+    return 1;
+  }
+
+  uint64_t node_id = std::stoll(argv[1]);
+  std::string listen_port = argv[2];
+
   rollingraft::RaftNodeConfig config;
   config.node_id = 1;
   config.listen_addr_ = "127.0.0.1:9527";

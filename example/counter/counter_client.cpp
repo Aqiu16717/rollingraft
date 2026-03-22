@@ -2,12 +2,26 @@
 #include <string>
 #include <vector>
 
-clas CounterClient {
+#include "rollingraft/rpc.h"
+
+class CounterClient {
  public:
-  CounterClient() {}
+  explicit CounterClient(const std::vector<std::string>& servers)
+      : servers_(servers), leader_idx_(0), client_id_(12345), seq(1) {}
+
+  void SendCommand(const std::string& cmd) {
+    rollingraft::ClientRequest req;
+    req.command = cmd;
+    req.client_id = client_id_;
+    req.seq = seq++;
+    rollingraft::ClientResponse resp;
+  }
 
  private:
   std::vector<std::string> servers_;
+  size_t leader_idx_;
+  uint64_t client_id_;
+  uint64_t seq_;
 };
 
 void PrintClientUsage(const char* prog) {

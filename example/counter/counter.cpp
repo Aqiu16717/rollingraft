@@ -145,9 +145,8 @@ int main(int argc, char** argv) {
   config.listen_addr_ = "127.0.0.1:" + listen_port;
   config.data_dir_ = "./data/node" + std::to_string(node_id);
 
-  std::vector<uint32_t> peers;
   for (int i = 3; i < argc; ++i) {
-    peers.push_back(std::stoi(argv[i]));
+    config.peers_.push_back("127.0.0.1:" + std::string(argv[i]));
   }
 
   rollingraft::RaftNode node(node_id, port, peers);
@@ -162,8 +161,6 @@ int main(int argc, char** argv) {
   std::cout << "\n";
 
   auto sm = std::make_unique<CounterMachine>();
-
-  std::this_thread::sleep_for(std::chrono::seconds(60));
 
   return 0;
 }

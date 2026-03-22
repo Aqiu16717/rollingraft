@@ -141,12 +141,29 @@ int main(int argc, char** argv) {
   std::string listen_port = argv[2];
 
   rollingraft::RaftNodeConfig config;
-  config.node_id = 1;
-  config.listen_addr_ = "127.0.0.1:9527";
-  config.listen_addr_ = {"127.0.0.1:9528", "127.0.0.1:9529"};
-  config.data_dir_ = "./data/node1";
+  config.node_id_ = node_id;
+  config.listen_addr_ = "127.0.0.1:" + listen_port;
+  config.data_dir_ = "./data/node" + std::to_string(node_id);
+
+  std::vector<uint32_t> peers;
+  for (int i = 3; i < argc; ++i) {
+    peers.push_back(std::stoi(argv[i]));
+  }
+
+  rollingraft::RaftNode node(node_id, port, peers);
+  node.BecomeFollower();
+
+  std::cout << "Counter node " << node_id << " started on port " << port
+            << "\n";
+  std::cout << "Peers: ";
+  for (auto p : peers) {
+    std::cout << p << " ";
+  }
+  std::cout << "\n";
 
   auto sm = std::make_unique<CounterMachine>();
+
+  std::this_thread::sleep_for(std::chrono::seconds(60));
 
   return 0;
 }

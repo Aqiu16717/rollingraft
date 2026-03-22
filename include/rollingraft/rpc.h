@@ -176,4 +176,7 @@ struct ClientResponse {
   Status error_code;
 };
 
+Status RpcCall(const std::string& addr, const ClientRequest& req,
+               ClientResponse& resp);
+
 }  // namespace rollingraft

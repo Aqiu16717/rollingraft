@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "rollingraft/raft_log.h"
+#include "rollingraft/raft_node.h"
 
 namespace rollingraft {
 
@@ -158,6 +159,20 @@ struct InstallSnapshotResponse : public RaftResponse {
   InstallSnapshotResponse() = delete;
   InstallSnapshotResponse(uint32_t term)
       : RaftResponse(RaftMessageType::KInstallSnapshowResponse), term_(term) {}
+};
+
+struct ClientRequest {
+  std::string command;
+  uint64_t client_id;
+  uint64_t seq;
+  bool read_only = false;
+};
+
+struct ClientReponse {
+  bool success;
+  std::string reponse;
+  RaftNodeId leader_hint;
+  Status error_code;
 };
 
 }  // namespace rollingraft

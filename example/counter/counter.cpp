@@ -159,7 +159,14 @@ int main(int argc, char** argv) {
   // handler kill
   std::signal(SIGTERM, SignalHadler);
 
-  auto sm = std::make_unique<CounterMachine>();
+  try {
+    auto sm = std::make_unique<CounterMachine>();
+  } catch (const std::exception& e) {
+    std::cerr << "Uncaught exception: " << e.what() << std::endl;
+    return 1;
+  }
+
+  std::cout << "Node exited safely" << std::endl;
 
   return 0;
 }

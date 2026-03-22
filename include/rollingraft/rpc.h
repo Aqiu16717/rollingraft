@@ -14,7 +14,7 @@ enum class RaftMessageType : int8_t {
   KAppendEntriesRequest = 2,
   KAppendEntriesResponse = 3,
   KInstallSnapshotRequest = 4,
-  KInstallSnapshowResponse = 5
+  KInstallSnapshotResponse = 5
 };
 
 struct RaftRequest {
@@ -158,7 +158,7 @@ struct InstallSnapshotResponse : public RaftResponse {
 
   InstallSnapshotResponse() = delete;
   InstallSnapshotResponse(uint32_t term)
-      : RaftResponse(RaftMessageType::KInstallSnapshowResponse), term_(term) {}
+      : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(term) {}
 };
 
 struct ClientRequest {

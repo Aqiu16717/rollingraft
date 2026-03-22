@@ -58,8 +58,12 @@ class RaftNode {
   RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm);
   ~RaftNode();
 
+  // copy is not allowed
   RaftNode(const RaftNode&) = delete;
   RaftNode& operator=(const RaftNode&) = delete;
+
+  Status Start();
+  Status Stop();
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);

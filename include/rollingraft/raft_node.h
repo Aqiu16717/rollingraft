@@ -64,14 +64,6 @@ class RaftNode {
   Status InstallSnapshot(const InstallSnapshotRequest&,
                          InstallSnapshotResponse&);
 
-  Status BecomeFollower();
-  Status BecomeCandidate();
-  Status BecomeLeader();
-
-  Status Election();
-
-  inline void SetState(RaftNodeState state);
-
  private:
   class RaftNodeImpl;
   std::unique_ptr<RaftNodeImpl> raft_node_impl_;

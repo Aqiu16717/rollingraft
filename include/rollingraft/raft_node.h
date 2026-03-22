@@ -65,6 +65,8 @@ class RaftNode {
   Status Start();
   Status Stop();
 
+  bool IsLeader();
+
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
   Status InstallSnapshot(const InstallSnapshotRequest&,

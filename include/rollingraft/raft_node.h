@@ -41,6 +41,9 @@ struct RaftNodeConfig {
   std::string listen_addr;
   std::vector<std::string> peers;
   std::string data_dir;
+
+  uint32_t election_timeout_ms = 300;
+  uint32_t heartbeat_interval_ms = 100;
 };
 
 inline const char* RaftNodeStateToString(RaftNodeState state) {

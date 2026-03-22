@@ -168,9 +168,9 @@ struct ClientRequest {
   bool read_only = false;
 };
 
-struct ClientReponse {
+struct ClientResponse {
   bool success;
-  std::string reponse;
+  std::string response;
   RaftNodeId leader_hint;
   Status error_code;
 };

@@ -11,7 +11,7 @@
 namespace rollingraft {
 
 struct RaftNodeConfig {
-  int node_id;
+  int node_id_;
   std::string listen_addr_;
   std::vector<std::string> peers_;
   std::string data_dir_;

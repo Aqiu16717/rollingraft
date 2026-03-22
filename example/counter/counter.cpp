@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  uint64_t node_id = std::stoll(argv[1]);
+  rollingraft::RaftNodeId node_id = std::stoll(argv[1]);
   std::string listen_port = argv[2];
 
   rollingraft::RaftNodeConfig config;

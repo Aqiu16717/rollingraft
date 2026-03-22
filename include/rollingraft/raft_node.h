@@ -10,12 +10,10 @@
 
 namespace rollingraft {
 
-struct RaftNodeConfig {
-  int node_id;
-  std::string listen_addr;
-  std::vector<std::string> peers;
-  std::string data_dir;
-};
+/**
+ * Unique node identifier.
+ */
+using RaftNodeId = int32_t;
 
 /**
  * At any given time each server is in one of three states:
@@ -38,10 +36,12 @@ enum RaftNodeState {
   RaftNodeStateEnd
 };
 
-/**
- * Unique node identifier.
- */
-using RaftNodeId = int32_t;
+struct RaftNodeConfig {
+  RaftNodeId node_id;
+  std::string listen_addr;
+  std::vector<std::string> peers;
+  std::string data_dir;
+};
 
 inline const char* RaftNodeStateToString(RaftNodeState state) {
   constexpr static const char* state_str[RaftNodeStateEnd] = {
@@ -53,7 +53,7 @@ inline const char* RaftNodeStateToString(RaftNodeState state) {
 class RaftNode {
  public:
   RaftNode() = default;
-  RaftNode(uint32_t id, int port, std::vector<uint32_t> peers);
+  RaftNode(RaftNodeId id, int port, std::vector<uint32_t> peers);
   ~RaftNode();
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);

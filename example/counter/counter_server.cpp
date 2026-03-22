@@ -179,8 +179,7 @@ int main(int argc, char** argv) {
     while (g_running) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
       if (node.IsLeader()) {
-        std::cout << "Current count value: " << sm->GetValue()
-                  << std::endl;
+        std::cout << "Current count value: " << sm->GetValue() << std::endl;
       }
     }
 

@@ -41,14 +41,14 @@ struct RequestVoteRequest : public RaftRequest {
   // candidate's term
   uint32_t term_;
   // candidate requesting vote
-  uint32_t candidate_id_;
+  RaftNodeId candidate_id_;
   // index of candidate’s last log entry (§5.4)
   uint32_t last_log_index_;
   // term of candidate’s last log entry (§5.4)
   uint32_t last_log_term_;
 
   RequestVoteRequest() = delete;
-  RequestVoteRequest(uint32_t term, uint32_t candidate_id,
+  RequestVoteRequest(uint32_t term, RaftNodeId candidate_id,
                      uint32_t last_log_index, uint32_t last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),
         term_(term),
@@ -78,7 +78,7 @@ struct AppendEntriesRequest : public RaftRequest {
   // leader's term
   uint32_t term_;
   // so follower can redirect clients
-  uint32_t leader_id_;
+  RaftNodeId leader_id_;
   // index of log entry immediately preceding new ones
   uint32_t prev_log_index_;
   // term of prevLogIndex entry
@@ -90,7 +90,7 @@ struct AppendEntriesRequest : public RaftRequest {
   uint32_t leader_commit_;
 
   AppendEntriesRequest() = delete;
-  AppendEntriesRequest(uint32_t term, uint32_t leader_id,
+  AppendEntriesRequest(uint32_t term, RaftNodeId leader_id,
                        uint32_t prev_log_index_, uint32_t prev_log_term,
                        RaftLog entries, uint32_t leader_commit)
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
@@ -123,7 +123,7 @@ struct InstallSnapshotRequest : public RaftRequest {
   // leader's term
   uint32_t term_;
   // so follower can redirect clients
-  uint32_t leader_id_;
+  RaftNodeId leader_id_;
   // the snapshot replaces all entries up through
   // and including this index
   uint32_t last_included_index_;
@@ -137,7 +137,7 @@ struct InstallSnapshotRequest : public RaftRequest {
   bool done_;
 
   InstallSnapshotRequest() = delete;
-  InstallSnapshotRequest(uint32_t term, uint32_t leader_id,
+  InstallSnapshotRequest(uint32_t term, RaftNodeId leader_id,
                          uint32_t last_included_index,
                          uint32_t last_included_term, uint32_t offset,
                          std::vector<char> data, bool done)

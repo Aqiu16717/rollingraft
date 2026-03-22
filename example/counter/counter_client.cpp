@@ -7,27 +7,46 @@
 class CounterClient {
  public:
   explicit CounterClient(const std::vector<std::string>& servers)
-      : servers_(servers), leader_idx_(0), client_id_(12345), seq(1) {}
+      : servers_(servers), connect_idx_(0), client_id_(12345), seq(1) {}
 
   void SendCommand(const std::string& cmd) {
     rollingraft::ClientRequest req;
     req.command = cmd;
     req.client_id = client_id_;
     req.seq = seq++;
+
     bool success = false;
     while (!success) {
       rollingraft::ClientResponse resp;
-      std::string current_addr = servers_[leader_idx_];
+      std::string current_addr = servers_[connect_idx_];
 
-      std::cout << "[Client] Sending '" << cmd << "' to Node " << leader_idx_
+      std::cout << "[Client] Sending '" << cmd << "' to Node " << connect_idx_
                 << " (" << current_addr << ")..." << std::endl;
+      rollingraft::Status status =
+          rollingraft::RpcCall(current_addr, req, resp);
+      if (status.ok()) {
+        if (resp.success) {
+          std::cout << "[Client] Success. Response: " << resp.response
+                    << std::endl;
+          success = true;
+        } else {
+          std::cout << "[Client] Redirected to Node: " << resp.leader_id << "("
+                    << resp.leader_addr << ")" << std::endl;
+          current_addr_ = resp.leader_addr;
+          continue;
+        }
+      } else {
+        std::cerr << "[Client] Connection failed, trying next..." << std::endl;
+        connect_idx_ = (connect_idx_ + 1) % servers_.size();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
     }
     rollingraft::ClientResponse resp;
   }
 
  private:
   std::vector<std::string> servers_;
-  size_t leader_idx_;
+  size_t connect_idx_;
   uint64_t client_id_;
   uint64_t seq_;
 };

@@ -2,7 +2,7 @@
 #include <memory>
 #include <rollingraft/raft_node.h>
 
-class CounterSnapshot : pulic Snapshot {
+class CounterSnapshot : public rollingraft::Snapshot {
  public:
   CounterSnapshot(int64_t value, uint64_t index, uint64_t term)
       : value_(value) {
@@ -15,7 +15,7 @@ class CounterSnapshot : pulic Snapshot {
 
   ~CounterSnapshot() = default;
 
-  const SnapshotMeta& GetMeta() const override { return meta_; }
+  const rollingraft::SnapshotMeta& GetMeta() const override { return meta_; }
 
   size_t Read(uint64_t offset, uint8_t* dest, size_t length) override {
     if (offset > data_.size()) {
@@ -29,7 +29,7 @@ class CounterSnapshot : pulic Snapshot {
   std::string GetPath() const override { return ""; }
 
  private:
-  SnapshotMeta meta_;
+  rollingraft::SnapshotMeta meta_;
   int64_t value_;
   std::vector<uint8_t> data_;
 };

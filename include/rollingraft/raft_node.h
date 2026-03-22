@@ -55,9 +55,11 @@ inline const char* RaftNodeStateToString(RaftNodeState state) {
 
 class RaftNode {
  public:
-  RaftNode() = default;
-  RaftNode(RaftNodeId id, int port, std::vector<uint32_t> peers);
+  RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm);
   ~RaftNode();
+
+  RaftNode(const RaftNode&) = delete;
+  RaftNode& operator=(const RaftNode&) = delete;
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);

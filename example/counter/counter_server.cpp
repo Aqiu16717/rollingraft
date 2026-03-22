@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -135,8 +136,8 @@ void PrintUsage(const char* prog) {
 std::atomic<bool> g_running{true};
 
 void SignalHandler(int signum) {
-  std::cout << "\nInterrupt singal (" << signum
-            << ") received. Shuting dow...\n";
+  std::cout << "\nInterrupt signal (" << signum
+            << ") received. Shutting down...\n";
   g_running = false;
 }
 
@@ -159,9 +160,9 @@ int main(int argc, char** argv) {
   }
 
   // handler ctrl-c
-  std::signal(SIGINT, SignalHadler);
+  std::signal(SIGINT, SignalHandler);
   // handler kill
-  std::signal(SIGTERM, SignalHadler);
+  std::signal(SIGTERM, SignalHandler);
 
   try {
     auto sm = std::make_unique<CounterMachine>();
@@ -177,9 +178,9 @@ int main(int argc, char** argv) {
 
     while (g_running) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
-      if (node->IsLeader() {
-        std::cout << "Current count value: " << sm->GetValue();
-        << std::endl;
+      if (node.IsLeader()) {
+        std::cout << "Current count value: " << sm->GetValue()
+                  << std::endl;
       }
     }
 

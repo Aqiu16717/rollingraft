@@ -21,7 +21,7 @@ class CounterSnapshot : public rollingraft::Snapshot {
     if (offset > data_.size()) {
       return 0;
     }
-    size_t can_read = std::min(data.size() - offset, length);
+    size_t can_read = std::min(data_.size() - offset, length);
     std::memcpy(dest, data_.data() + offset, can_read);
     return can_read;
   }

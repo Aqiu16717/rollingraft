@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
     std::cout << " Storage: " << config.data_dir << "\n";
     std::cout << "-------------------------------------------\n";
 
-    node->Start();
+    node.Start();
 
     while (g_running) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Stopping Raft node..." << std::endl;
-    node->Stop();
+    node.Stop();
   } catch (const std::exception& e) {
     std::cerr << "Uncaught exception: " << e.what() << std::endl;
     return 1;

@@ -3,11 +3,12 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <rollingraft/raft_node.h>
-#include <rollingraft/state_machine.h>
 #include <span>
 #include <string>
 #include <thread>
+
+#include "rollingraft/raft_node.h"
+#include "rollingraft/state_machine.h"
 
 class CounterSnapshot : public rollingraft::Snapshot {
  public:

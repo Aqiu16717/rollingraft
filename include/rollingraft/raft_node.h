@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "rollingraft/rpc.h"
+#include "rollingraft/state_machine.h"
 #include "rollingraft/status.h"
 
 namespace rollingraft {

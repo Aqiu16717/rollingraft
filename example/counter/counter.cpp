@@ -131,6 +131,11 @@ void PrintUsage(const char* prog) {
   std::cout << "  " << prog << " 1 8001 8002 8003\n";
 }
 
+void SignalHandler(int signum) {
+  std::cout << "\nInterrupt singal (" << signum
+            << ") received. Shuting dow...\n";
+}
+
 int main(int argc, char** argv) {
   if (argc < 4) {
     PrintUsage(argv[0]);
@@ -149,16 +154,10 @@ int main(int argc, char** argv) {
     config.peers_.push_back("127.0.0.1:" + std::string(argv[i]));
   }
 
-  rollingraft::RaftNode node(node_id, port, peers);
-  node.BecomeFollower();
-
-  std::cout << "Counter node " << node_id << " started on port " << port
-            << "\n";
-  std::cout << "Peers: ";
-  for (auto p : peers) {
-    std::cout << p << " ";
-  }
-  std::cout << "\n";
+  // handler ctrl-c
+  std::signal(SIGINT, SignalHadler);
+  // handler kill
+  std::signal(SIGTERM, SignalHadler);
 
   auto sm = std::make_unique<CounterMachine>();
 

@@ -1,4 +1,7 @@
 #pragma once
+#include <span>
+#include <string>
+
 namespace rollingraft {
 
 struct SnapshotMeta {

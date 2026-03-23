@@ -14,9 +14,9 @@ class RaftNode::RaftNodeImpl {
   using RaftNodeId = int32_t;
 
  public:
-  RaftNodeImpl(uint32_t id, const std::vector<RaftNodeId>& peers)
-      : server_id_(id),
-        peers_(peers),
+  RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm)
+      : config_(config),
+        state_machine_(sm),
         current_term_(0),
         voted_for_(-1),
         state_(FOLLOWER),
@@ -25,7 +25,8 @@ class RaftNode::RaftNodeImpl {
         vote_count_(0),
         timeout_elapsed_(0),
         next_index_(0),
-        match_index_(0) {}
+        match_index_(0),
+        io_context_() {}
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -41,6 +42,27 @@ class RaftNode::RaftNodeImpl {
   inline void SetState(const RaftNodeState& state);
 
   inline uint32_t GetServerId() const { return server_id_; }
+
+  Status Start() {
+    LOG_INFO("Starting RaftNode {} on {}", config_.node_id,
+             config_.listen_addr);
+    Status status;
+    status = server_->Start();
+    if (!status.ok()) {
+      LOG_ERROR("Failed to start server: {}", status.ToString());
+      return status;
+    }
+    io_thread_ = std::thread([this]() {
+      try {
+        io_context_.run();
+      } catch (const std::exception& e) {
+        LOG_ERROR("io_context error: {}", e.what());
+      }
+    });
+    BecomeFollower();
+    LOG_INFO("Start success: {} on {}", confi_.node_id, config_.listen_addr);
+    return Status::OK();
+  }
 
  private:
   void RandomizeElectionTimeout();
@@ -117,6 +139,12 @@ class RaftNode::RaftNodeImpl {
 
  private:
   std::unique_ptr<Server> server_;
+  asio::io_context io_context_;
+  std::thread io_thread_;
+
+ private:
+  RaftNodeConfig config_;
+  std::shared_ptr<StateMachine> state_machine_;
 };
 
 void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
@@ -241,7 +269,8 @@ void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
     rng.seed(std::chrono::system_clock::now().time_since_epoch().count());
   });
 
-  // Generate a random number between [kMinElectionTimeout, kMaxElectionTimeout)
+  // Generate a random number between [kMinElectionTimeout,
+  // kMaxElectionTimeout)
   std::uniform_int_distribution<uint64_t> dist(kMinElectionTimeout,
                                                kMaxElectionTimeout);
   election_timeout_ = dist(rng);

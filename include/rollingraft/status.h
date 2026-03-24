@@ -49,6 +49,10 @@ class Status {
                               const std::string& msg2 = "") {
     return Status(kProtocolError, msg, msg2);
   }
+  static Status RaftNodeStartError(const std::string& msg,
+                                   const std::string& msg2 = "") {
+    return Status(kRaftNodeStartError, msg, msg2);
+  }
 
   // Returns true iff the status indicates success.
   bool ok() const { return (state_ == nullptr); }
@@ -76,6 +80,9 @@ class Status {
   // Returns true iff the status indicates a Protocol error.
   bool IsProtocolError() const { return code() == kProtocolError; }
 
+  // Returns true iff the status indicates a Protocol error.
+  bool IsRaftNodeStartError() const { return code() == kRaftNodeStartError; }
+
   // Return a string representation of this status suitable of printing.
   // Return the string "OK" for success.
   std::string ToString() const;
@@ -91,7 +98,8 @@ class Status {
     kInstallSnapshotError,
     kSerializeError,
     kDeSerializeError,
-    kProtocolError
+    kProtocolError,
+    kRaftNodeStartError
   };
 
   Code code() const {

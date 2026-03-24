@@ -52,6 +52,7 @@ class RaftNode::RaftNodeImpl {
       LOG_ERROR("Failed to start server: {}", status.ToString());
       return status;
     }
+
     io_thread_ = std::thread([this]() {
       try {
         io_context_.run();
@@ -59,7 +60,13 @@ class RaftNode::RaftNodeImpl {
         LOG_ERROR("io_context error: {}", e.what());
       }
     });
-    BecomeFollower();
+
+    status = BecomeFollower();
+    if (!status.ok()) {
+      LOG_ERROR("Failed to become follower: {}", status.ToString());
+      return status;
+    }
+
     LOG_INFO("Start success: {} on {}", confi_.node_id, config_.listen_addr);
     return Status::OK();
   }

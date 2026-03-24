@@ -46,24 +46,26 @@ class RaftNode::RaftNodeImpl {
   Status Start() {
     LOG_INFO("Starting RaftNode {} on {}", config_.node_id,
              config_.listen_addr);
-    Status status;
-    status = server_->Start();
+
+    Status status = server_->Start();
     if (!status.ok()) {
       LOG_ERROR("Failed to start server: {}", status.ToString());
       return status;
     }
 
-    io_thread_ = std::thread([this]() {
-      try {
-        io_context_.run();
-      } catch (const std::exception& e) {
-        LOG_ERROR("io_context error: {}", e.what());
-      }
-    });
+    work_guard_ =
+        std::make_unique<WorkGuard>(asio::make_work_guard(io_context_));
+
+    if (!work_guard_) {
+      return Status::RaftNodeStartError("Failed to allocate work_guard");
+    }
+
+    io_thread_ = std::thread([this]() { io_context_.run(); });
 
     status = BecomeFollower();
     if (!status.ok()) {
       LOG_ERROR("Failed to become follower: {}", status.ToString());
+      // todo: cleanup or stop
       return status;
     }
 
@@ -145,6 +147,8 @@ class RaftNode::RaftNodeImpl {
   std::mutex mtx_;
 
  private:
+  using WorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
+  std::unique_ptr<WorkGuard> work_guard_;
   std::unique_ptr<Server> server_;
   asio::io_context io_context_;
   std::thread io_thread_;

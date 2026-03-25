@@ -5,7 +5,6 @@
 #include <memory>
 #include <vector>
 
-#include "rollingraft/rpc.h"
 #include "rollingraft/state_machine.h"
 #include "rollingraft/status.h"
 
@@ -53,6 +52,13 @@ inline const char* RaftNodeStateToString(RaftNodeState state) {
   assert(state >= FOLLOWER && state < RaftNodeStateEnd);
   return state_str[state];
 }
+
+struct RequestVoteRequest;
+struct RequestVoteResponse;
+struct AppendEntriesRequest;
+struct AppendEntriesResponse;
+struct InstallSnapshotRequest;
+struct InstallSnapshotResponse;
 
 class RaftNode {
  public:

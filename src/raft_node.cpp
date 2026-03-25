@@ -1,5 +1,6 @@
 #include "rollingraft/raft_node.h"
 
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <random>
@@ -44,6 +45,10 @@ class RaftNode::RaftNodeImpl {
   inline uint32_t GetServerId() const { return server_id_; }
 
   Status Start() {
+    if (is_running_.exchange(true)) {
+      return Status::OK();
+    }
+
     LOG_INFO("Starting RaftNode {} on {}", config_.node_id,
              config_.listen_addr);
 
@@ -69,7 +74,35 @@ class RaftNode::RaftNodeImpl {
       return status;
     }
 
-    LOG_INFO("Start success: {} on {}", confi_.node_id, config_.listen_addr);
+    LOG_INFO("Start success: {} on {}", config_.node_id, config_.listen_addr);
+    return Status::OK();
+  }
+
+  Status Stop() {
+    LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id,
+             config_.listen_addr);
+    if (server_) {
+      server_->Stop();
+    }
+
+    if (work_guard_) {
+      work_guard_.reset();
+    }
+
+    io_context_.stop();
+
+    if (io_thread_.joinable()) {
+      if (std::this_thread::get_id() == io_thread_.get_id()) {
+        LOG_ERROR(
+            "Stop() called from within the IO thread! Deatching instead of "
+            "joining.");
+        io_thread_.detach();
+      } else {
+        io_thread_.join();
+      }
+    }
+
+    LOG_INFO("Stop success: {} on {}", config_.node_id, config_.listen_addr);
     return Status::OK();
   }
 
@@ -152,6 +185,7 @@ class RaftNode::RaftNodeImpl {
   std::unique_ptr<Server> server_;
   asio::io_context io_context_;
   std::thread io_thread_;
+  std::atomic<bool> is_running_;
 
  private:
   RaftNodeConfig config_;

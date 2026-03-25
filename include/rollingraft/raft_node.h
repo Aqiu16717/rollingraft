@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -36,6 +37,11 @@ enum RaftNodeState {
   RaftNodeStateEnd
 };
 
+class NetworkTransport;
+class TimerService;
+class Persister;
+class Protocol;
+
 struct RaftNodeConfig {
   RaftNodeId node_id;
   std::string listen_addr;
@@ -44,6 +50,11 @@ struct RaftNodeConfig {
 
   uint32_t election_timeout_ms = 300;
   uint32_t heartbeat_interval_ms = 100;
+
+  std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
+  std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;
+  std::function<std::unique_ptr<Persister>()> persister_factory = nullptr;
+  std::function<std::unique_ptr<Protocol>()> protocol_factory = nullptr;
 };
 
 inline const char* RaftNodeStateToString(RaftNodeState state) {

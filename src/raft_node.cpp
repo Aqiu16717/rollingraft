@@ -27,7 +27,8 @@ class RaftNode::RaftNodeImpl {
         timeout_elapsed_(0),
         next_index_(0),
         match_index_(0),
-        io_context_() {}
+        io_context_(),
+        is_running_(false) {}
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -79,6 +80,10 @@ class RaftNode::RaftNodeImpl {
   }
 
   Status Stop() {
+    if (!is_running_.exchange(false)) {
+      return Status::OK();
+    }
+
     LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id,
              config_.listen_addr);
     if (server_) {

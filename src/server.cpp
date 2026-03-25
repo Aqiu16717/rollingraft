@@ -8,10 +8,11 @@
 #include <system_error>
 #include <vector>
 
+#include "rollingraft/command_handler.h"
+
 #include "asio/io_context.hpp"
 #include "asio/ip/tcp.hpp"
 #include "asio/write.hpp"
-#include "rollingraft/command_handler.h"
 
 using namespace rollingraft;
 
@@ -63,7 +64,8 @@ class Session : public std::enable_shared_from_this<Session> {
 
 class Server::ServerImpl {
  public:
-  ServerImpl(uint32_t id, uint16_t port, asio::io_context& io_ctx, std::shared_ptr<CommandHandler> command_handler)
+  ServerImpl(uint32_t id, uint16_t port, asio::io_context& io_ctx,
+             std::shared_ptr<CommandHandler> command_handler)
       : server_id_(id),
         io_context_(io_ctx),
         acceptor_(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),

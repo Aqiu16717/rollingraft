@@ -73,17 +73,14 @@ class RaftNode {
 
   // copy is not allowed
   RaftNode(const RaftNode&) = delete;
+  RaftNode(RaftNode&&) = delete;
   RaftNode& operator=(const RaftNode&) = delete;
+  RaftNode& operator=(RaftNode&&) = delete;
 
   Status Start();
   Status Stop();
 
   bool IsLeader();
-
-  Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
-  Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
-  Status InstallSnapshot(const InstallSnapshotRequest&,
-                         InstallSnapshotResponse&);
 
  private:
   class RaftNodeImpl;

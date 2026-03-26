@@ -30,12 +30,7 @@ using RaftNodeId = int32_t;
  * as described in Section 5.2. Figure 4 shows the states and
  * their transitions; the transitions are discussed below.
  */
-enum RaftNodeState {
-  FOLLOWER = 0,
-  CANDIDATE = 1,
-  LEADER = 2,
-  RaftNodeStateEnd
-};
+enum RaftNodeRole { FOLLOWER = 0, CANDIDATE = 1, LEADER = 2, RaftNodeRoleEnd };
 
 class NetworkTransport;
 class TimerService;
@@ -57,11 +52,11 @@ struct RaftNodeConfig {
   std::function<std::unique_ptr<Protocol>()> protocol_factory = nullptr;
 };
 
-inline const char* RaftNodeStateToString(RaftNodeState state) {
-  constexpr static const char* state_str[RaftNodeStateEnd] = {
+inline const char* RaftNodeRoleToString(RaftNodeRole role) {
+  constexpr static const char* role_str[RaftNodeRoleEnd] = {
       "Follower", "Candidate", "Leader"};
-  assert(state >= FOLLOWER && state < RaftNodeStateEnd);
-  return state_str[state];
+  assert(role >= FOLLOWER && role < RaftNodeRoleEnd);
+  return role_str[role];
 }
 
 struct RequestVoteRequest;

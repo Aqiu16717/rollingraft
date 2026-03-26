@@ -20,7 +20,7 @@ class RaftNode::RaftNodeImpl {
         state_machine_(sm),
         current_term_(0),
         voted_for_(-1),
-        state_(FOLLOWER),
+        role_(FOLLOWER),
         commit_index_(0),
         last_applied_(0),
         vote_count_(0),
@@ -41,7 +41,7 @@ class RaftNode::RaftNodeImpl {
 
   Status Election();
 
-  inline void SetState(const RaftNodeState& state);
+  inline void SetRole(const RaftNodeRole& state);
 
   inline uint32_t GetServerId() const { return server_id_; }
 
@@ -151,7 +151,7 @@ class RaftNode::RaftNodeImpl {
   // candidate id that received vote in current term
   // initialized to -1 (null)
   RaftNodeId voted_for_;
-  RaftNodeState state_;
+  RaftNodeRole role_;
 
   // Volatile state on all servers
 
@@ -197,13 +197,11 @@ class RaftNode::RaftNodeImpl {
   std::shared_ptr<StateMachine> state_machine_;
 };
 
-void RaftNode::RaftNodeImpl::SetState(const RaftNodeState& state) {
-  state_ = state;
-}
+void RaftNode::RaftNodeImpl::SetRole(const RaftNodeRole& role) { role_ = role; }
 
 Status RaftNode::RaftNodeImpl::BecomeFollower() {
   LOG_INFO("Node {} become follower.", server_id_);
-  SetState(RaftNodeState::FOLLOWER);
+  SetRole(RaftNodeRole::FOLLOWER);
   RandomizeElectionTimeout();
   return Status();
 }
@@ -213,12 +211,12 @@ Status RaftNode::RaftNodeImpl::BecomeFollower() {
 Status RaftNode::RaftNodeImpl::BecomeCandidate() {
   ++current_term_;
   ++vote_count_;
-  SetState(RaftNodeState::CANDIDATE);
+  SetRole(RaftNodeRole::CANDIDATE);
   return Status();
 }
 
 Status RaftNode::RaftNodeImpl::BecomeLeader() {
-  SetState(RaftNodeState::LEADER);
+  SetRole(RaftNodeRole::LEADER);
   // AppendEntriesRequest req{
   //     .} AppendEntries(req);
   return Status();
@@ -328,6 +326,6 @@ void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
   // Reset the elapsed time
   timeout_elapsed_ = 0;
 
-  LOG_INFO("Node {} randomized election timeout to {}ms (state: {})",
-           server_id_, election_timeout_, RaftNodeStateToString(state_));
+  LOG_INFO("Node {} randomized election timeout to {}ms (role: {})", server_id_,
+           election_timeout_, RaftNodeRoleToString(role_));
 }

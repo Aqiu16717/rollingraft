@@ -73,8 +73,10 @@ class RaftNode {
 
   // copy is not allowed
   RaftNode(const RaftNode&) = delete;
-  RaftNode(RaftNode&&) = delete;
   RaftNode& operator=(const RaftNode&) = delete;
+
+  // move is not allowed
+  RaftNode(RaftNode&&) = delete;
   RaftNode& operator=(RaftNode&&) = delete;
 
   Status Start();

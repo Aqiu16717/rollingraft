@@ -45,6 +45,9 @@ struct RaftNodeConfig {
 
   uint32_t election_timeout_ms = 300;
   uint32_t heartbeat_interval_ms = 100;
+  uint32_t max_entries_per_append = 100;
+  uint32_t snapshot_threshold = 10000;
+  uint32_t rpc_timeout_ms = 1000;
 
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;
@@ -83,6 +86,9 @@ class RaftNode {
   Status Stop();
 
   bool IsLeader();
+  RaftNodeRole GetRole() const;
+  uint64_t CurrentTerm() const;
+  std::string GetLeaderAddr() const;
 
  private:
   class RaftNodeImpl;

@@ -15,20 +15,27 @@ class RaftNode::RaftNodeImpl {
   using RaftNodeId = int32_t;
 
  public:
-  RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm)
-      : config_(config),
-        state_machine_(sm),
-        current_term_(0),
-        voted_for_(-1),
-        role_(FOLLOWER),
-        commit_index_(0),
-        last_applied_(0),
-        vote_count_(0),
-        timeout_elapsed_(0),
-        next_index_(0),
-        match_index_(0),
-        io_context_(),
-        is_running_(false) {}
+  RaftNodeImpl(const RaftNodeConfig& config,
+               std::shared_ptr<StateMachine> state_machine,
+               std::unique_ptr<NetworkTransport> network,
+               std::unique_ptr<TimerService> timer,
+               std::unique_ptr<Persister> persister,
+               std::unique_ptr<Protocol> protocol) {}
+
+  Status Start();
+  Status Stop();
+
+  bool IsLeader() const;
+  RaftNodeRole GetRole() const;
+  uint64_t CurrentTerm() const;
+  std::string GetLeaderAddr() const;
+
+  void SetRoleChangeCallback(std::function<void(RaftNodeRole, uint64_t)> cb);
+  void SetLeaderChangeCallback(std::function<void(RaftNodeId, std::string)> cb);
+
+  Status Propose(const std::string& command,
+                 std::function<void(const ApplyResult&)> callback);
+  Status ReadIndex(std::function<void()> callback);
 
   Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -44,72 +51,6 @@ class RaftNode::RaftNodeImpl {
   inline void SetRole(const RaftNodeRole& state);
 
   inline uint32_t GetServerId() const { return server_id_; }
-
-  Status Start() {
-    if (is_running_.exchange(true)) {
-      return Status::OK();
-    }
-
-    LOG_INFO("Starting RaftNode {} on {}", config_.node_id,
-             config_.listen_addr);
-
-    Status status = server_->Start();
-    if (!status.ok()) {
-      LOG_ERROR("Failed to start server: {}", status.ToString());
-      return status;
-    }
-
-    work_guard_ =
-        std::make_unique<WorkGuard>(asio::make_work_guard(io_context_));
-
-    if (!work_guard_) {
-      return Status::RaftNodeStartError("Failed to allocate work_guard");
-    }
-
-    io_thread_ = std::thread([this]() { io_context_.run(); });
-
-    status = BecomeFollower();
-    if (!status.ok()) {
-      LOG_ERROR("Failed to become follower: {}", status.ToString());
-      // todo: cleanup or stop
-      return status;
-    }
-
-    LOG_INFO("Start success: {} on {}", config_.node_id, config_.listen_addr);
-    return Status::OK();
-  }
-
-  Status Stop() {
-    if (!is_running_.exchange(false)) {
-      return Status::OK();
-    }
-
-    LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id,
-             config_.listen_addr);
-    if (server_) {
-      server_->Stop();
-    }
-
-    if (work_guard_) {
-      work_guard_.reset();
-    }
-
-    io_context_.stop();
-
-    if (io_thread_.joinable()) {
-      if (std::this_thread::get_id() == io_thread_.get_id()) {
-        LOG_ERROR(
-            "Stop() called from within the IO thread! Deatching instead of "
-            "joining.");
-        io_thread_.detach();
-      } else {
-        io_thread_.join();
-      }
-    }
-
-    LOG_INFO("Stop success: {} on {}", config_.node_id, config_.listen_addr);
-    return Status::OK();
-  }
 
  private:
   void RandomizeElectionTimeout();
@@ -328,4 +269,67 @@ void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
 
   LOG_INFO("Node {} randomized election timeout to {}ms (role: {})", server_id_,
            election_timeout_, RaftNodeRoleToString(role_));
+}
+
+Status RaftNode::RaftNodeImpl::Start() {
+  if (is_running_.exchange(true)) {
+    return Status::OK();
+  }
+
+  LOG_INFO("Starting RaftNode {} on {}", config_.node_id, config_.listen_addr);
+
+  Status status = server_->Start();
+  if (!status.ok()) {
+    LOG_ERROR("Failed to start server: {}", status.ToString());
+    return status;
+  }
+
+  work_guard_ = std::make_unique<WorkGuard>(asio::make_work_guard(io_context_));
+
+  if (!work_guard_) {
+    return Status::RaftNodeStartError("Failed to allocate work_guard");
+  }
+
+  io_thread_ = std::thread([this]() { io_context_.run(); });
+
+  status = BecomeFollower();
+  if (!status.ok()) {
+    LOG_ERROR("Failed to become follower: {}", status.ToString());
+    // todo: cleanup or stop
+    return status;
+  }
+
+  LOG_INFO("Start success: {} on {}", config_.node_id, config_.listen_addr);
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::Stop() {
+  if (!is_running_.exchange(false)) {
+    return Status::OK();
+  }
+
+  LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id, config_.listen_addr);
+  if (server_) {
+    server_->Stop();
+  }
+
+  if (work_guard_) {
+    work_guard_.reset();
+  }
+
+  io_context_.stop();
+
+  if (io_thread_.joinable()) {
+    if (std::this_thread::get_id() == io_thread_.get_id()) {
+      LOG_ERROR(
+          "Stop() called from within the IO thread! Deatching instead of "
+          "joining.");
+      io_thread_.detach();
+    } else {
+      io_thread_.join();
+    }
+  }
+
+  LOG_INFO("Stop success: {} on {}", config_.node_id, config_.listen_addr);
+  return Status::OK();
 }

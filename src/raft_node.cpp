@@ -21,6 +21,7 @@ class RaftNode::RaftNodeImpl {
                std::unique_ptr<TimerService> timer,
                std::unique_ptr<Persister> persister,
                std::unique_ptr<Protocol> protocol) {}
+  ~RaftNodeImpl() = default;
 
   Status Start();
   Status Stop();
@@ -42,6 +43,7 @@ class RaftNode::RaftNodeImpl {
   Status InstallSnapshot(const InstallSnapshotRequest&,
                          InstallSnapshotResponse&);
 
+ private:
   Status BecomeFollower();
   Status BecomeCandidate();
   Status BecomeLeader();
@@ -52,7 +54,6 @@ class RaftNode::RaftNodeImpl {
 
   inline uint32_t GetServerId() const { return server_id_; }
 
- private:
   void RandomizeElectionTimeout();
 
  private:
@@ -136,6 +137,10 @@ class RaftNode::RaftNodeImpl {
  private:
   RaftNodeConfig config_;
   std::shared_ptr<StateMachine> state_machine_;
+  std::unique_ptr<NetworkTransport> network_;
+  std::unique_ptr<TimerService> timer_;
+  std::unique_ptr<Persister> persister_;
+  std::unique_ptr<Protocol> protocol_;
 };
 
 void RaftNode::RaftNodeImpl::SetRole(const RaftNodeRole& role) { role_ = role; }

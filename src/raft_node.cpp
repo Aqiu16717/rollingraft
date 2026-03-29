@@ -480,3 +480,13 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   static thread_local std::mt19937 gen(std::random_device{}());
   std::uniform_int_distribution<> dis(config_.election_timeout_ms,
                                       2 * config_.election_timeout_ms);
+
+  uint32_t timeout = dis(gen);
+
+  election_timer_ = timer_->SetTimeout(std::chrono::milliseconds(timeout),
+                                       [this]() { OnElectionTimeout(); });
+
+  LOG_DEBUG("Node {} election timer reset to {}ms", server_id_, timeout);
+}
+
+void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {

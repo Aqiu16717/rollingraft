@@ -25,6 +25,14 @@ class Persister {
 
   // 关闭持久化存储
   virtual void Close() = 0;
+
+  // ==================== 元数据操作 ====================
+
+  // 保存持久化状态
+  virtual Status SaveState(const PersistentState\& state) = 0;
+
+  // 加载持久化状态
+  virtual Status LoadState(PersistentState\& state) = 0;
   virtual Status Write(const std::string& data) = 0;
   virtual Status Read(std::string& data) = 0;
 };

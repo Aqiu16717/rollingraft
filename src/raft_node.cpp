@@ -670,3 +670,13 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
                       HandleAppendEntriesResponse(peer_id, response);
                     });
 }
+
+void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
+    NodeId from, const AppendEntriesResponse& resp) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ != RaftNodeRole::LEADER) return;
+
+  // 如果响应任期更高，转为 Follower
+  if (resp.term_ > current_term_) {

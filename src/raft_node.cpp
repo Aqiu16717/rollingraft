@@ -820,3 +820,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
     // 持久化
     if (persister_) {
+      persister_->SaveState({current_term_, voted_for_});
+    }
+
+    LOG_INFO("Node {} voted for {} at term {}", server_id_, req.candidate_id_,
+             current_term_);
+  }
+}
+
+void RaftNode::RaftNodeImpl::HandleAppendEntries(
+    const AppendEntriesRequest& req, AppendEntriesResponse& resp) {

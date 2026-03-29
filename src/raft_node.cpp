@@ -172,15 +172,15 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
 
   // 构建 peer 映射表
   for (const auto& addr : peer_addrs_) {
- private:
-  RaftNodeConfig config_;
-  std::shared_ptr<StateMachine> state_machine_;
-  std::unique_ptr<NetworkTransport> network_;
-  std::unique_ptr<TimerService> timer_;
-  std::unique_ptr<Persister> persister_;
-  std::unique_ptr<Protocol> protocol_;
-};
+    NodeId peer_id = ParseNodeId(addr);
+    peer_map_[peer_id] = addr;
+  }
 
+  if (!state_machine_) {
+    throw std::invalid_argument("StateMachine cannot be null");
+  }
+  if (!network_) {
+    throw std::invalid_argument("NetworkTransport cannot be null");
 void RaftNode::RaftNodeImpl::SetRole(const RaftNodeRole& role) { role_ = role; }
 
 Status RaftNode::RaftNodeImpl::BecomeFollower() {

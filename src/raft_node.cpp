@@ -230,16 +230,16 @@ Status RaftNode::RaftNodeImpl::Start() {
     HandleIncomingRpc(from, req, resp);
   };
 
+  auto status = network_->Initialize(config_.listen_addr, handler);
+  if (!status.ok()) {
+    if (persister_) persister_->Close();
+    state_ = NodeState::kInitialized;
+    return status;
+  }
 
-  return Status();
-}
-
-Status RaftNode::RaftNodeImpl::RequestVote(const RequestVoteRequest& request,
-                                           RequestVoteResponse& response) {
-  // lock for thread safety
-  std::lock_guard<std::mutex> lock(mtx_);
-
-  // always set response.term_ to current_term_
+  status = network_->Start();
+  if (!status.ok()) {
+    if (persister_) persister_->Close();
   response.term_ = current_term_;
 
   LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_,

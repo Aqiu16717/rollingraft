@@ -949,3 +949,14 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
 RaftNode::~RaftNode() = default;
 
 Status RaftNode::Start() { return raft_node_impl_->Start(); }
+
+Status RaftNode::Stop() { return raft_node_impl_->Stop(); }
+
+bool RaftNode::IsLeader() const { return raft_node_impl_->IsLeader(); }
+
+RaftNodeRole RaftNode::GetRole() const { return raft_node_impl_->GetRole(); }
+
+Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
+
+NodeAddr RaftNode::GetLeaderAddr() const {
+  return raft_node_impl_->GetLeaderAddr();

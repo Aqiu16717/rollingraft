@@ -940,3 +940,12 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
                    std::shared_ptr<StateMachine> sm)
     : raft_node_impl_(std::make_unique<RaftNodeImpl>(
           config, sm,
+          config.network_factory ? config.network_factory()
+                                 : nullptr,  // TODO: 默认实现
+          config.timer_factory ? config.timer_factory() : nullptr,
+          config.persister_factory ? config.persister_factory() : nullptr,
+          config.protocol_factory ? config.protocol_factory() : nullptr)) {}
+
+RaftNode::~RaftNode() = default;
+
+Status RaftNode::Start() { return raft_node_impl_->Start(); }

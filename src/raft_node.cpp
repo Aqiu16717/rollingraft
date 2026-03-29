@@ -809,3 +809,14 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     LOG_DEBUG("Node {} reject vote: candidate log not up-to-date", server_id_);
     return;
   }
+
+  // 检查是否已投票
+  if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
+    voted_for_ = req.candidate_id_;
+    resp.vote_granted_ = true;
+
+    // 重置选举定时器
+    ResetElectionTimerLocked();
+
+    // 持久化
+    if (persister_) {

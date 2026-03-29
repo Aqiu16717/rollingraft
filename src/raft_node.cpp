@@ -389,3 +389,14 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
 
   // 停止 Leader 定时器
   StopHeartbeatTimerLocked();
+
+  // 重置并启动选举定时器
+  ResetElectionTimerLocked();
+
+  // 持久化
+  if (persister_) {
+    persister_->SaveState({current_term_, voted_for_});
+  }
+
+  // 回调
+  if (old_role != role_ && role_change_callback_) {

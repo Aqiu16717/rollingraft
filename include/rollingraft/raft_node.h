@@ -75,6 +75,12 @@ class RaftNode {
   Status Stop();
 
   bool IsLeader() const;
+
+  // set cb befor calling Start()
+  void SetRoleChangeCallback(
+      std::function<void(RaftNodeRole role, Term term)> callback);
+  void SetLeaderChangeCallback(
+      std::function<void(NodeId leader_id, const NodeAddr& addr)> callback);
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   NodeAddr GetLeaderAddr() const;

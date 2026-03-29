@@ -58,9 +58,16 @@ class RaftNode::RaftNodeImpl {
                              InstallSnapshotResponse&);
 
  private:
-  Status BecomeFollower();
-  Status BecomeCandidate();
-  Status BecomeLeader();
+  // 状态转换（调用时必须持有 mtx_）
+  void BecomeFollowerLocked(Term term);
+  void BecomeCandidateLocked();
+  void BecomeLeaderLocked();
+
+  // 定时器管理（调用时必须持有 mtx_）
+  void ResetElectionTimerLocked();
+  void CancelElectionTimerLocked();
+  void StartHeartbeatTimerLocked();
+  void StopHeartbeatTimerLocked();
 
   Status Election();
 

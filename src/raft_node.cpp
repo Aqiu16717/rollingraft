@@ -113,21 +113,21 @@ class RaftNode::RaftNodeImpl {
   Index commit_index_ = 0;
   Index last_applied_ = 0;
   NodeId leader_id_ = -1;
-   * may not observe an election or even entire terms. Terms
-   * act as a logical clock [14] in Raft, and they allow servers
-   * to detect obsolete information such as stale leaders. Each
-   * server stores a current term number, which increases
-   * monotonically over time. Current terms are exchanged
-   * whenever servers communicate; if one server’s current
-   * term is smaller than the other’s, then it updates its current
-   * term to the larger value. If a candidate or leader discovers
-   * that its term is out of date, it immediately reverts to fol-
-   * lower state. If a server receives a request with a stale term
-   * number, it rejects the request.
-   */
-  // latest term server has seen (initialized to 0
-  // on first boot, increases monotonically)
-  uint32_t current_term_ = 0;
+  NodeAddr leader_addr_;
+  RaftNodeRole role_ = RaftNodeRole::FOLLOWER;
+  uint32_t vote_count_ = 0;
+
+  // ========== Leader 状态 ==========
+  std::unordered_map<NodeId, Index> next_index_;
+  std::unordered_map<NodeId, Index> match_index_;
+
+  // ========== 定时器状态 ==========
+  int election_timeout_ = 0;
+  TimerId election_timer_ = 0;
+  TimerId heartbeat_timer_ = 0;
+
+  // ========== 依赖组件 ==========
+  RaftNodeConfig config_;
   // candidate id that received vote in current term
   // initialized to -1 (null)
   RaftNodeId voted_for_;

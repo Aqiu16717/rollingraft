@@ -880,3 +880,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
         LOG_INFO("Node {} truncating log from index {}", server_id_,
                  entry.index_);
         log_.TruncateSuffix(entry.index_);
+        break;
+      }
+    }
+
+    // 追加新条目
+    for (const auto& entry : req.entries_) {
+      auto [idx, status] = log_.Append(entry.term_, entry.data_);
+      (void)idx;
+      if (!status.ok()) {
+        LOG_ERROR("Node {} failed to append entry: {}", server_id_,

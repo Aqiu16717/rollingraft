@@ -780,3 +780,13 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
 
 void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
                                                RequestVoteResponse& resp) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  resp.term_ = current_term_;
+  resp.vote_granted_ = false;
+
+  // 如果请求任期更高，转为 Follower
+  if (req.term_ > current_term_) {
+    BecomeFollowerLocked(req.term_);
+    resp.term_ = current_term_;
+  }

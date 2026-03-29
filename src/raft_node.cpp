@@ -650,3 +650,13 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   // 序列化并发送
   std::string data;
+  // protocol_->SerializeRequest(req, data); // TODO
+
+  auto it_addr = peer_map_.find(peer_id);
+  if (it_addr == peer_map_.end()) return;
+
+  network_->SendRpc(peer_id, it_addr->second, data,
+                    std::chrono::milliseconds(config_.rpc_timeout_ms),
+                    [this, peer_id](const std::string& resp, bool success,
+                                    const std::string& error) {
+                      if (!success) {

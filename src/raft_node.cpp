@@ -2,12 +2,17 @@
 
 #include <atomic>
 #include <cstdint>
-#include <future>
+#include <functional>
 #include <random>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/network_transport.h"
+#include "rollingraft/persister.h"
+#include "rollingraft/protocol.h"
+#include "rollingraft/raft_log.h"
 #include "rollingraft/rpc.h"
-#include "rollingraft/server.h"
+#include "rollingraft/timer_service.h"
+#include "rollingraft/types.h"
 
 using namespace rollingraft;
 

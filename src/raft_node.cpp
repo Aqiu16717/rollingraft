@@ -67,13 +67,11 @@ class RaftNode::RaftNodeImpl {
   void StartHeartbeatTimerLocked();
   void StopHeartbeatTimerLocked();
 
-  Status Election();
-
-  inline void SetRole(const RaftNodeRole& state);
-
-  inline uint32_t GetServerId() const { return server_id_; }
-
-  void RandomizeElectionTimeout();
+  // 选举相关
+  void BroadcastRequestVoteLocked();
+  void SendRequestVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
+  void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp,
+                                 Term original_term);
 
  private:
   RaftNodeId server_id_;

@@ -81,6 +81,10 @@ class RaftNode {
       std::function<void(RaftNodeRole role, Term term)> callback);
   void SetLeaderChangeCallback(
       std::function<void(NodeId leader_id, const NodeAddr& addr)> callback);
+
+  // only for leader
+  Status Propose(const std::string& command,
+                 std::function<void(const ApplyResult& result)> callback);
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   NodeAddr GetLeaderAddr() const;

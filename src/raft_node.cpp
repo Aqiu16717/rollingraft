@@ -890,3 +890,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
       (void)idx;
       if (!status.ok()) {
         LOG_ERROR("Node {} failed to append entry: {}", server_id_,
+                  status.ToString());
+        return;
+      }
+    }
+    resp.entries_count_ = req.entries_.size();
+    LOG_INFO("Node {} appended {} entries", server_id_, req.entries_.size());
+  }
+
+  // 更新 commit_index
+  if (req.leader_commit_ > commit_index_) {

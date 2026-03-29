@@ -290,16 +290,16 @@ Status RaftNode::RaftNodeImpl::AppendEntries(
     persister_->Close();
   }
 
-  // Thread-safe random number generator
-  // use static variables to ensure it is initialized only once
-  static std::mt19937_64 rng;
-  // Ensure the random number seed is initialized only once
-  static std::once_flag init_flag;
-  std::call_once(init_flag, []() {
-    // Use system time as the seed to ensure that the random sequence is
-    // different each time it is started
-    rng.seed(std::chrono::system_clock::now().time_since_epoch().count());
-  });
+  // 5. 清理待处理提案
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& [id, proposal] : pending_proposals_) {
+      ApplyResult result;
+      result.success = false;
+      result.error_message = "Node stopped";
+      proposal.callback(result);
+    }
+    pending_proposals_.clear();
 
   // Generate a random number between [kMinElectionTimeout,
   // kMaxElectionTimeout)

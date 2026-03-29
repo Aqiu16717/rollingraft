@@ -510,3 +510,12 @@ void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
 }
 
 // ========== 选举处理 ==========
+
+void RaftNode::RaftNodeImpl::OnElectionTimeout() {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ == RaftNodeRole::LEADER) return;
+
+  LOG_INFO("Node {} election timeout at term {}, becoming Candidate",
+           server_id_, current_term_);

@@ -74,7 +74,7 @@ class RaftNode {
   Status Start();
   Status Stop();
 
-  bool IsLeader();
+  bool IsLeader() const;
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   NodeAddr GetLeaderAddr() const;

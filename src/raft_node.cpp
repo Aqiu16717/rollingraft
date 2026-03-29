@@ -210,16 +210,16 @@ Status RaftNode::RaftNodeImpl::Start() {
   if (persister_) {
     auto status = persister_->Open(config_.data_dir);
     if (!status.ok()) {
-  // parallel
-  std::vector<std::future<RequestVoteResponse>> fus;
-  for (int i = 0; i < peers_.size(); ++i) {
-    fus.push_back(std::async(std::launch::async, [&]() {
-      RequestVoteResponse res;
-      RequestVote(req, res);
-      return res;
-    }));
-  }
+      state_ = NodeState::kInitialized;
+      return status;
+    }
 
+    // 恢复持久化状态
+    PersistentState state;
+    if (persister_->LoadState(state).ok()) {
+      current_term_ = state.current_term;
+      voted_for_ = state.voted_for;
+      LOG_INFO("Restored state: term={}, voted_for={}", current_term_,
   for (auto& fu : fus) {
     RequestVoteResponse res = fu.get();
     if (res.vote_granted_) {

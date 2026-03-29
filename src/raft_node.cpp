@@ -128,21 +128,21 @@ class RaftNode::RaftNodeImpl {
 
   // ========== 依赖组件 ==========
   RaftNodeConfig config_;
-  // candidate id that received vote in current term
-  // initialized to -1 (null)
-  RaftNodeId voted_for_;
-  RaftNodeRole role_;
+  std::shared_ptr<StateMachine> state_machine_;
+  std::unique_ptr<NetworkTransport> network_;
+  std::unique_ptr<TimerService> timer_;
+  std::unique_ptr<Persister> persister_;
+  std::unique_ptr<Protocol> protocol_;
 
-  // Volatile state on all servers
+  // ========== 运行时状态 ==========
+  enum class NodeState {
+    kInitialized = 0,
+    kRunning = 1,
+    kStopping = 2,
+    kStopped = 3
+  };
+  std::atomic<NodeState> state_{NodeState::kInitialized};
 
-  // index of highest log entry known to be committed
-  // initialized to 0, increases monotonically)
-  uint32_t commit_index_;
-  // index of highest log entry applied to state machine
-  // initialized to 0, increases monotonically
-  uint32_t last_applied_;
-
-  RaftLog log_;
   uint32_t vote_count_;
 
   // amount of time left till timeout

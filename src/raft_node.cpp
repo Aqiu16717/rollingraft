@@ -73,6 +73,16 @@ class RaftNode::RaftNodeImpl {
   void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp,
                                  Term original_term);
 
+  // 日志复制相关
+  void BroadcastAppendEntriesLocked();
+  void SendAppendEntriesToPeerLocked(NodeId peer_id);
+  void HandleAppendEntriesResponse(NodeId from,
+                                   const AppendEntriesResponse& resp);
+
+  // 提交和应用
+  void TryCommitLocked();
+  void ApplyCommittedLocked();
+
  private:
   RaftNodeId server_id_;
   std::vector<RaftNodeId> peers_;

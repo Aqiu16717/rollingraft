@@ -859,3 +859,14 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
   // 重置选举定时器
   ResetElectionTimerLocked();
+
+  // 检查 prev_log 是否匹配
+  if (req.prev_log_index_ > 0) {
+    Term prev_term = GetLogTermLocked(req.prev_log_index_);
+    if (prev_term != req.prev_log_term_) {
+      LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}",
+                server_id_, req.prev_log_index_, prev_term, req.prev_log_term_);
+      resp.conflict_index_ = req.prev_log_index_;
+      return;
+    }
+  }

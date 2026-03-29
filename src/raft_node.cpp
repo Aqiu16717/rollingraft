@@ -960,3 +960,4 @@ Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
 
 NodeAddr RaftNode::GetLeaderAddr() const {
   return raft_node_impl_->GetLeaderAddr();
+}

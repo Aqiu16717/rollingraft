@@ -5,15 +5,16 @@
 #include <vector>
 
 #include "rollingraft/status.h"
+#include "rollingraft/types.h"
 
 namespace rollingraft {
 
 struct RaftLogEntry {
   RaftLogEntry() = default;
-  RaftLogEntry(uint32_t index, uint32_t term, const std::string& command)
+  RaftLogEntry(Index index, Term term, const std::string& command)
       : index_(index), term_(term), command_(command) {}
 
-  uint32_t index_;
+  Index index_;
   uint32_t term_;
   std::string data_;
   std::string command_;
@@ -26,8 +27,8 @@ class RaftLog {
     entries_.push_back(log_entry);
     return Status();
   }
-  uint32_t LastLogIndex() const;
-  uint32_t LastLogTerm() const;
+  Index LastLogIndex() const;
+  Term LastLogTerm() const;
 
  private:
   std::vector<RaftLogEntry> entries_;

@@ -8,13 +8,9 @@
 
 #include "rollingraft/state_machine.h"
 #include "rollingraft/status.h"
+#include "rollingraft/types.h"
 
 namespace rollingraft {
-
-/**
- * Unique node identifier.
- */
-using RaftNodeId = int32_t;
 
 /**
  * At any given time each server is in one of three states:
@@ -38,7 +34,7 @@ class Persister;
 class Protocol;
 
 struct RaftNodeConfig {
-  RaftNodeId node_id;
+  NodeId node_id;
   std::string listen_addr;
   std::vector<std::string> peers;
   std::string data_dir;
@@ -62,13 +58,6 @@ inline const char* RaftNodeRoleToString(RaftNodeRole role) {
   return role_str[role];
 }
 
-struct RequestVoteRequest;
-struct RequestVoteResponse;
-struct AppendEntriesRequest;
-struct AppendEntriesResponse;
-struct InstallSnapshotRequest;
-struct InstallSnapshotResponse;
-
 class RaftNode {
  public:
   RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm);
@@ -87,8 +76,8 @@ class RaftNode {
 
   bool IsLeader();
   RaftNodeRole GetRole() const;
-  uint64_t CurrentTerm() const;
-  std::string GetLeaderAddr() const;
+  Term CurrentTerm() const;
+  NodeAddr GetLeaderAddr() const;
 
  private:
   class RaftNodeImpl;

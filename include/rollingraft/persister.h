@@ -42,6 +42,18 @@ class Persister {
   // 获取指定范围的日志条目 [start, end)
   virtual Status GetEntries(uint64_t start, uint64_t end,
                             std::vector<RaftLogEntry>* out) = 0;
+
+  // 获取单个日志条目
+  virtual Status GetEntry(uint64_t index, RaftLogEntry\& entry) = 0;
+
+  // 截断后缀日志
+  virtual Status TruncateSuffix(uint64_t from_index) = 0;
+
+  // 截断前缀日志
+  virtual Status TruncatePrefix(uint64_t before_index) = 0;
+
+  // 获取最后一条日志的信息
+  virtual std::pair<uint64_t, uint64_t> GetLastLogInfo() = 0;
   virtual Status Write(const std::string& data) = 0;
   virtual Status Read(std::string& data) = 0;
 };

@@ -570,3 +570,13 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
         // protocol_->DeserializeResponse(resp, response); // TODO
         HandleRequestVoteResponse(peer_id, response, original_term);
       });
+}
+
+void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
+    NodeId from, const RequestVoteResponse& resp, Term original_term) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ != RaftNodeRole::CANDIDATE) return;
+
+  // 如果响应任期更高，转为 Follower

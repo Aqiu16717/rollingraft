@@ -360,16 +360,16 @@ Status RaftNode::RaftNodeImpl::Propose(
   PendingProposal proposal;
   proposal.index = index;
   proposal.callback = std::move(callback);
-  io_context_.stop();
+  proposal.propose_time = std::chrono::steady_clock::now();
+  pending_proposals_[index] = std::move(proposal);
 
-  if (io_thread_.joinable()) {
-    if (std::this_thread::get_id() == io_thread_.get_id()) {
-      LOG_ERROR(
-          "Stop() called from within the IO thread! Deatching instead of "
-          "joining.");
-      io_thread_.detach();
-    } else {
-      io_thread_.join();
+  // 触发日志复制
+  BroadcastAppendEntriesLocked();
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     }
   }
 

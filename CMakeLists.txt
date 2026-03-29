@@ -17,6 +17,7 @@ target_sources(rollingraft
     "src/server.cpp"
     "src/status.cpp"
     "src/raft_node.cpp"
+    "src/raft_log.cpp"
 )
 
 # add third_party non-boost-asio
@@ -60,4 +61,4 @@ target_link_libraries(rollingraft
 enable_testing()
 add_subdirectory(tests)
 
-add_subdirectory(example)
+# add_subdirectory(example)

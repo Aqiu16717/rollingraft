@@ -370,9 +370,12 @@ Status RaftNode::RaftNodeImpl::Propose(
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
-    }
-  }
-
-  LOG_INFO("Stop success: {} on {}", config_.node_id, config_.listen_addr);
-  return Status::OK();
+  // TODO: 实现线性一致性读
+  (void)callback;
+  return Status::Error("Not implemented");
 }
+
+// ========== 状态转换 ==========
+
+void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
+  RaftNodeRole old_role = role_;

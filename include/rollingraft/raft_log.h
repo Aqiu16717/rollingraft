@@ -23,18 +23,37 @@ struct RaftLogEntry {
   std::string command_;
 };
 
+// 日志管理类（内存缓存）
 class RaftLog {
  public:
   RaftLog() = default;
-  Status AppendLogEntry(const RaftLogEntry& log_entry) {
-    entries_.push_back(log_entry);
-    return Status();
-  }
-  Index LastLogIndex() const;
-  Term LastLogTerm() const;
+
+  // 追加单条日志
+  std::pair<Index, Status> Append(Term term, std::string data);
+
+  Status AppendLogEntry(const RaftLogEntry& entry);
+
+  std::optional<RaftLogEntry> GetEntry(Index index) const;
+
+  std::vector<RaftLogEntry> GetEntries(Index start, Index end) const;
+
+  std::pair<Index, Term> GetLastLogInfo() const;
+
+  Term GetLogTerm(Index index) const;
+
+  Status TruncateSuffix(Index from_index);
+
+  Index LastLogIndex() const { return GetLastLogInfo().first; }
+
+  Term LastLogTerm() const { return GetLastLogInfo().second; }
 
  private:
-  std::vector<RaftLogEntry> entries_;
+  size_t ToPhysicalIndex(Index logical_index) const;
+  bool IsInRange(Index index) const;
+
+ private:
+  std::deque<RaftLogEntry> entries_;
+  Index start_index_ = 1;
 };
 
 }  // namespace rollingraft

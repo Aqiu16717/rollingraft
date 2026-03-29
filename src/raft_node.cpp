@@ -143,11 +143,11 @@ class RaftNode::RaftNodeImpl {
   };
   std::atomic<NodeState> state_{NodeState::kInitialized};
 
-  uint32_t vote_count_;
+  // ========== 线程同步 ==========
+  mutable std::mutex mtx_;
 
-  // amount of time left till timeout
-  int timeout_elapsed_ = 0;
-  int election_timeout_ = 0;
+  // ========== 待处理提案 ==========
+  std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
 
  private:
   // Volatile state on leaders

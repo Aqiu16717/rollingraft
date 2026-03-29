@@ -300,16 +300,16 @@ Status RaftNode::RaftNodeImpl::AppendEntries(
       proposal.callback(result);
     }
     pending_proposals_.clear();
+  }
 
-  // Generate a random number between [kMinElectionTimeout,
-  // kMaxElectionTimeout)
-  std::uniform_int_distribution<uint64_t> dist(kMinElectionTimeout,
-                                               kMaxElectionTimeout);
-  election_timeout_ = dist(rng);
+  state_ = NodeState::kStopped;
+  LOG_INFO("RaftNode {} stopped", config_.node_id);
+  return Status::OK();
+}
 
-  // Reset the elapsed time
-  timeout_elapsed_ = 0;
-
+bool RaftNode::RaftNodeImpl::IsLeader() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return role_ == RaftNodeRole::LEADER;
   LOG_INFO("Node {} randomized election timeout to {}ms (role: {})", server_id_,
            election_timeout_, RaftNodeRoleToString(role_));
 }

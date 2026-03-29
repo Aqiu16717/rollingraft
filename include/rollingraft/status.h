@@ -96,6 +96,9 @@ class Status {
   bool IsProtocolError() const { return code() == kProtocolError; }
 
   // Returns true iff the status indicates a Protocol error.
+
+  // Returns true iff the status indicates a NotLeader error.
+  bool IsNotLeader() const { return code() == kNotLeader; }
   bool IsRaftNodeStartError() const { return code() == kRaftNodeStartError; }
 
   // Return a string representation of this status suitable of printing.

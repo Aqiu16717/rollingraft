@@ -117,7 +117,9 @@ class Status {
     kSerializeError,
     kDeSerializeError,
     kProtocolError,
-    kRaftNodeStartError
+    kRaftNodeStartError,
+    kGenericError,
+    kNotLeader
   };
 
   Code code() const {

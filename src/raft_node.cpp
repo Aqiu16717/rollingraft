@@ -580,3 +580,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   if (role_ != RaftNodeRole::CANDIDATE) return;
 
   // 如果响应任期更高，转为 Follower
+  if (resp.term_ > current_term_) {
+    LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
+             current_term_, resp.term_);
+    BecomeFollowerLocked(resp.term_);
+    return;
+  }
+
+  // 如果任期已改变，忽略此响应
+  if (original_term != current_term_) {
+    return;

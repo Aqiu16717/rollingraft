@@ -709,3 +709,14 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     });
   }
 }
+
+// ========== 提交和应用 ==========
+
+void RaftNode::RaftNodeImpl::TryCommitLocked() {
+  auto [last_index, _] = log_.GetLastLogInfo();
+
+  for (Index index = last_index; index > commit_index_; --index) {
+    // 只提交当前任期的日志
+    if (GetLogTermLocked(index) != current_term_) {
+      break;
+    }

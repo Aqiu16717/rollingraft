@@ -830,3 +830,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
 void RaftNode::RaftNodeImpl::HandleAppendEntries(
     const AppendEntriesRequest& req, AppendEntriesResponse& resp) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  resp.term_ = current_term_;
+  resp.success_ = false;
+  resp.conflict_index_ = 0;
+  resp.entries_count_ = 0;
+
+  // 如果 Leader 任期更高，转为 Follower
+  if (req.term_ > current_term_) {
+    BecomeFollowerLocked(req.term_);

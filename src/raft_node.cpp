@@ -840,3 +840,12 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
   // 如果 Leader 任期更高，转为 Follower
   if (req.term_ > current_term_) {
     BecomeFollowerLocked(req.term_);
+    resp.term_ = current_term_;
+  }
+
+  // 拒绝旧任期的 Leader
+  if (req.term_ < current_term_) {
+    LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_,
+              req.term_, current_term_);
+    return;
+  }

@@ -181,15 +181,15 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   }
   if (!network_) {
     throw std::invalid_argument("NetworkTransport cannot be null");
-void RaftNode::RaftNodeImpl::SetRole(const RaftNodeRole& role) { role_ = role; }
+  }
+  if (!timer_) {
+    throw std::invalid_argument("TimerService cannot be null");
+  }
 
-Status RaftNode::RaftNodeImpl::BecomeFollower() {
-  LOG_INFO("Node {} become follower.", server_id_);
-  SetRole(RaftNodeRole::FOLLOWER);
-  RandomizeElectionTimeout();
-  return Status();
+  LOG_INFO("RaftNodeImpl created for node {}", server_id_);
 }
 
+RaftNode::RaftNodeImpl::~RaftNodeImpl() {
 // 1. become candidate
 // 2. start election
 Status RaftNode::RaftNodeImpl::BecomeCandidate() {

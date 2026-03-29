@@ -730,3 +730,13 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
 
     if (count > (peer_addrs_.size() + 1) / 2) {
       commit_index_ = index;
+      LOG_INFO("Node {} commit index advanced to {}", server_id_,
+               commit_index_);
+      ApplyCommittedLocked();
+      break;
+    }
+  }
+}
+
+void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
+  while (last_applied_ < commit_index_) {

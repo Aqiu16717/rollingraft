@@ -379,3 +379,13 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
 
 void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   RaftNodeRole old_role = role_;
+
+  role_ = RaftNodeRole::FOLLOWER;
+  current_term_ = term;
+  voted_for_ = -1;
+  vote_count_ = 0;
+  leader_id_ = -1;
+  leader_addr_.clear();
+
+  // 停止 Leader 定时器
+  StopHeartbeatTimerLocked();

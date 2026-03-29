@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <rollingraft/raft_log.h>
 #include <rollingraft/status.h>
+#include <rollingraft/types.h>
 
 namespace rollingraft {
 class Persister {

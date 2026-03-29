@@ -320,16 +320,16 @@ RaftNodeRole RaftNode::RaftNodeImpl::GetRole() const {
 Term RaftNode::RaftNodeImpl::CurrentTerm() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return current_term_;
+}
 
-  Status status = server_->Start();
-  if (!status.ok()) {
-    LOG_ERROR("Failed to start server: {}", status.ToString());
-    return status;
-  }
+std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return leader_addr_;
+}
 
-  work_guard_ = std::make_unique<WorkGuard>(asio::make_work_guard(io_context_));
-
-  if (!work_guard_) {
+void RaftNode::RaftNodeImpl::SetRoleChangeCallback(
+    std::function<void(RaftNodeRole, uint64_t)> cb) {
+  role_change_callback_ = std::move(cb);
     return Status::RaftNodeStartError("Failed to allocate work_guard");
   }
 

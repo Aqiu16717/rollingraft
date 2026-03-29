@@ -410,3 +410,13 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   RaftNodeRole old_role = role_;
 
   role_ = RaftNodeRole::CANDIDATE;
+  ++current_term_;
+  voted_for_ = server_id_;
+  vote_count_ = 1;  // 给自己投票
+
+  // 持久化
+  if (persister_) {
+    persister_->SaveState({current_term_, voted_for_});
+  }
+
+  // 回调

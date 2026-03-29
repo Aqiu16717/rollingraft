@@ -920,3 +920,13 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
   if (index == 0) return 0;
   return log_.GetLogTerm(index);
+}
+
+NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
+  // 简单解析：从地址中提取端口号作为 ID
+  // 实际应用中应该使用配置的 node_id 映射
+  auto pos = addr.find(':');
+  if (pos == std::string::npos) return -1;
+  try {
+    return static_cast<NodeId>(std::stoi(addr.substr(pos + 1)));
+  } catch (...) {

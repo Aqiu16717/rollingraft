@@ -849,3 +849,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
               req.term_, current_term_);
     return;
   }
+
+  // 更新 Leader 信息
+  leader_id_ = req.leader_id_;
+  auto it = peer_map_.find(leader_id_);
+  if (it != peer_map_.end()) {
+    leader_addr_ = it->second;
+  }
+
+  // 重置选举定时器
+  ResetElectionTimerLocked();

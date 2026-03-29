@@ -760,3 +760,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
     // 回调等待的用户
     auto it = pending_proposals_.find(last_applied_);
+    if (it != pending_proposals_.end()) {
+      it->second.callback(result);
+      pending_proposals_.erase(it);
+    }
+  }
+}
+
+// ========== RPC 处理 ==========
+
+void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,

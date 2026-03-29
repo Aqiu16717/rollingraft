@@ -600,3 +600,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   if (resp.vote_granted_) {
     ++vote_count_;
     LOG_INFO("Node {} got vote from {}, total: {}/{}", server_id_, from,
+             vote_count_, peer_addrs_.size() + 1);
+
+    // 获得多数票，成为 Leader
+    if (vote_count_ > (peer_addrs_.size() + 1) / 2) {
+      BecomeLeaderLocked();
+    }
+  }
+}
+
+// ========== 日志复制 ==========

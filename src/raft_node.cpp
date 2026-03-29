@@ -610,3 +610,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
 }
 
 // ========== 日志复制 ==========
+
+void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ != RaftNodeRole::LEADER) return;
+
+  BroadcastAppendEntriesLocked();
+}

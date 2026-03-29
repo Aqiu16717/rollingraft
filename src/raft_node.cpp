@@ -689,3 +689,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     Index new_match = next_index_[from] - 1 + resp.entries_count_;
     match_index_[from] = std::max(match_index_[from], new_match);
     next_index_[from] = match_index_[from] + 1;
+
+    // 尝试提交
+    TryCommitLocked();
+  } else {
+    // 日志不匹配，回退
+    if (resp.conflict_index_ > 0) {
+      next_index_[from] = resp.conflict_index_;
+    } else {
+      next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
+    }

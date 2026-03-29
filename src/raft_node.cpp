@@ -560,3 +560,13 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   network_->SendRpc(
       peer_id, addr, data, std::chrono::milliseconds(config_.rpc_timeout_ms),
       [this, peer_id, original_term](const std::string& resp, bool success,
+                                     const std::string& error) {
+        if (!success) {
+          LOG_WARN("RequestVote to {} failed: {}", peer_id, error);
+          return;
+        }
+
+        RequestVoteResponse response;
+        // protocol_->DeserializeResponse(resp, response); // TODO
+        HandleRequestVoteResponse(peer_id, response, original_term);
+      });

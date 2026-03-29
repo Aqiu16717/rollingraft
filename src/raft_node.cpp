@@ -280,15 +280,15 @@ Status RaftNode::RaftNodeImpl::AppendEntries(
   return Status();
 }
 
-Status RaftNode::RaftNodeImpl::InstallSnapshot(
-    const InstallSnapshotRequest& install_snapshot_request,
-    InstallSnapshotResponse& install_snapshot_response) {
-  return Status();
-}
+  // 3. 停止 NetworkTransport
+  if (network_) {
+    network_->Stop();
+  }
 
-void RaftNode::RaftNodeImpl::RandomizeElectionTimeout() {
-  constexpr uint64_t kMinElectionTimeout = 150;
-  constexpr uint64_t kMaxElectionTimeout = 300;
+  // 4. 关闭持久化
+  if (persister_) {
+    persister_->Close();
+  }
 
   // Thread-safe random number generator
   // use static variables to ensure it is initialized only once

@@ -500,3 +500,13 @@ void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
   heartbeat_timer_ = timer_->SetInterval(
       std::chrono::milliseconds(config_.heartbeat_interval_ms),
       [this]() { OnHeartbeatTimeout(); });
+}
+
+void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
+  if (heartbeat_timer_ != 0) {
+    timer_->CancelTimer(heartbeat_timer_);
+    heartbeat_timer_ = 0;
+  }
+}
+
+// ========== 选举处理 ==========

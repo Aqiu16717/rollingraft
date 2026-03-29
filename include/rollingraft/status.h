@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "rollingraft/types.h"
 
 namespace rollingraft {
 

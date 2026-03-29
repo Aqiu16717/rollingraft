@@ -33,8 +33,8 @@ class RaftNode::RaftNodeImpl {
                std::unique_ptr<NetworkTransport> network,
                std::unique_ptr<TimerService> timer,
                std::unique_ptr<Persister> persister,
-               std::unique_ptr<Protocol> protocol) {}
-  ~RaftNodeImpl() = default;
+               std::unique_ptr<Protocol> protocol);
+  ~RaftNodeImpl();
 
   Status Start();
   Status Stop();

@@ -60,6 +60,15 @@ class Status {
   }
   }
 
+  // Not leader error (indicates which node is the leader)
+  static Status NotLeader(NodeId leader_id, const std::string& leader_addr) {
+    std::string msg = "Not leader";
+    if (leader_id >= 0) {
+      msg += ", leader is " + leader_addr;
+    }
+    return Status(kNotLeader, msg, "");
+  }
+
   // Returns true iff the status indicates success.
   bool ok() const { return (state_ == nullptr); }
 

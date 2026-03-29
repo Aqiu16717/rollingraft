@@ -310,16 +310,16 @@ Status RaftNode::RaftNodeImpl::AppendEntries(
 bool RaftNode::RaftNodeImpl::IsLeader() const {
   std::lock_guard<std::mutex> lock(mtx_);
   return role_ == RaftNodeRole::LEADER;
-  LOG_INFO("Node {} randomized election timeout to {}ms (role: {})", server_id_,
-           election_timeout_, RaftNodeRoleToString(role_));
 }
 
-Status RaftNode::RaftNodeImpl::Start() {
-  if (is_running_.exchange(true)) {
-    return Status::OK();
-  }
+RaftNodeRole RaftNode::RaftNodeImpl::GetRole() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return role_;
+}
 
-  LOG_INFO("Starting RaftNode {} on {}", config_.node_id, config_.listen_addr);
+Term RaftNode::RaftNodeImpl::CurrentTerm() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return current_term_;
 
   Status status = server_->Start();
   if (!status.ok()) {

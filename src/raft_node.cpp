@@ -270,15 +270,15 @@ Status RaftNode::RaftNodeImpl::Stop() {
 
   // 1. 停止定时器（加锁）
   {
-
-Status RaftNode::RaftNodeImpl::AppendEntries(
-    const AppendEntriesRequest& append_entries_request,
-    AppendEntriesResponse& append_enctries_response) {
-  for (;;) {
-    // send
+    std::lock_guard<std::mutex> lock(mtx_);
+    CancelElectionTimerLocked();
+    StopHeartbeatTimerLocked();
   }
-  return Status();
-}
+
+  // 2. 停止 TimerService
+  if (timer_) {
+    timer_->Stop();
+  }
 
   // 3. 停止 NetworkTransport
   if (network_) {
@@ -519,3 +519,24 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
 
   LOG_INFO("Node {} election timeout at term {}, becoming Candidate",
            server_id_, current_term_);
+
+  BecomeCandidateLocked();
+}
+
+void RaftNode::RaftNodeImpl::BroadcastRequestVoteLocked() {
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+
+  RequestVoteRequest req;
+  req.term_ = current_term_;
+  req.candidate_id_ = server_id_;
+  req.last_log_index_ = last_index;
+  req.last_log_term_ = last_term;
+
+  LOG_INFO("Node {} broadcasting RequestVote at term {} to {} peers",
+           server_id_, current_term_, peer_addrs_.size());
+
+  for (const auto& [peer_id, addr] : peer_map_) {
+    (void)peer_id;
+    SendRequestVoteToPeerLocked(peer_id, addr);
+  }
+}

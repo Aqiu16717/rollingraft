@@ -590,3 +590,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   // 如果任期已改变，忽略此响应
   if (original_term != current_term_) {
     return;
+  }
+
+  // 忽略旧任期的响应
+  if (resp.term_ < current_term_) {
+    return;
+  }
+
+  if (resp.vote_granted_) {
+    ++vote_count_;
+    LOG_INFO("Node {} got vote from {}, total: {}/{}", server_id_, from,

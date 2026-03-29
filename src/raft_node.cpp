@@ -490,3 +490,13 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
+  if (election_timer_ != 0) {
+    timer_->CancelTimer(election_timer_);
+    election_timer_ = 0;
+  }
+}
+
+void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
+  heartbeat_timer_ = timer_->SetInterval(
+      std::chrono::milliseconds(config_.heartbeat_interval_ms),
+      [this]() { OnHeartbeatTimeout(); });

@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "rollingraft/raft_log.h"
-#include "rollingraft/raft_node.h"
+#include "rollingraft/types.h"
 
 namespace rollingraft {
 
@@ -41,15 +41,15 @@ struct RequestVoteRequest : public RaftRequest {
   // candidate's term
   uint32_t term_;
   // candidate requesting vote
-  RaftNodeId candidate_id_;
+  NodeId candidate_id_;
   // index of candidate’s last log entry (§5.4)
   uint32_t last_log_index_;
   // term of candidate’s last log entry (§5.4)
   uint32_t last_log_term_;
 
   RequestVoteRequest() = delete;
-  RequestVoteRequest(uint32_t term, RaftNodeId candidate_id,
-                     uint32_t last_log_index, uint32_t last_log_term)
+  RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index,
+                     Term last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),
         term_(term),
         candidate_id_(candidate_id),
@@ -76,23 +76,22 @@ struct RequestVoteResponse : RaftResponse {
  */
 struct AppendEntriesRequest : public RaftRequest {
   // leader's term
-  uint32_t term_;
+  Term term_;
   // so follower can redirect clients
-  RaftNodeId leader_id_;
+  NodeId leader_id_;
   // index of log entry immediately preceding new ones
-  uint32_t prev_log_index_;
+  Index prev_log_index_;
   // term of prevLogIndex entry
-  uint32_t prev_log_term_;
+  Term prev_log_term_;
   // log entries to store (empty for heartbeat;
   // may send more than one for efficiency)
   RaftLog entries_;
   // leader's commitIndex
-  uint32_t leader_commit_;
+  Index leader_commit_;
 
   AppendEntriesRequest() = delete;
-  AppendEntriesRequest(uint32_t term, RaftNodeId leader_id,
-                       uint32_t prev_log_index_, uint32_t prev_log_term,
-                       RaftLog entries, uint32_t leader_commit)
+  AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index_,
+                       Term prev_log_term, RaftLog entries, Index leader_commit)
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
         term_(term),
         leader_id_(leader_id),
@@ -104,12 +103,12 @@ struct AppendEntriesRequest : public RaftRequest {
 
 struct AppendEntriesResponse : public RaftResponse {
   // currentTerm, for leader to update itself
-  uint32_t term_;
+  Term term_;
   // true if follower contained entry matching prevLogIndex and prevLogTerm
   bool success_;
 
   AppendEntriesResponse() = delete;
-  AppendEntriesResponse(uint32_t term, bool success)
+  AppendEntriesResponse(Term term, bool success)
       : RaftResponse(RaftMessageType::KAppendEntriesResponse),
         term_(term),
         success_(success) {}
@@ -121,14 +120,14 @@ struct AppendEntriesResponse : public RaftResponse {
  */
 struct InstallSnapshotRequest : public RaftRequest {
   // leader's term
-  uint32_t term_;
+  Term term_;
   // so follower can redirect clients
-  RaftNodeId leader_id_;
+  NodeId leader_id_;
   // the snapshot replaces all entries up through
   // and including this index
-  uint32_t last_included_index_;
+  Index last_included_index_;
   // term of lastIncludedIndex
-  uint32_t last_included_term_;
+  Term last_included_term_;
   // byte offset where chunk is positioned in the snapshot file
   uint32_t offset_;
   // raw bytes of the snapshot chunk, starting at offset
@@ -137,9 +136,8 @@ struct InstallSnapshotRequest : public RaftRequest {
   bool done_;
 
   InstallSnapshotRequest() = delete;
-  InstallSnapshotRequest(uint32_t term, RaftNodeId leader_id,
-                         uint32_t last_included_index,
-                         uint32_t last_included_term, uint32_t offset,
+  InstallSnapshotRequest(Term term, NodeId leader_id, Index last_included_index,
+                         Term last_included_term, uint32_t offset,
                          std::vector<char> data, bool done)
       : RaftRequest(RaftMessageType::KInstallSnapshotRequest),
 
@@ -171,8 +169,8 @@ struct ClientRequest {
 struct ClientResponse {
   bool success;
   std::string response;
-  uint32_t last_applied_index_;
-  RaftNodeId leader_id;
+  Index last_applied_index_;
+  NodeId leader_id;
   std::string leader_addr;
   Status error_code;
 };

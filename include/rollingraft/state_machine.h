@@ -22,10 +22,11 @@ class Snapshot {
 };
 
 struct ApplyResult {
-  bool success_;
+  bool success = false;
   // data that return to client
-  std::string response_;
-  uint64_t applied_index_;
+  std::string response;
+  uint64_t applied_index = 0;
+  std::string error_message;
 };
 
 class StateMachine {

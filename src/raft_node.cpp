@@ -800,3 +800,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
   // 检查日志是否至少一样新
   auto [last_index, last_term] = log_.GetLastLogInfo();
+
+  bool log_is_up_to_date =
+      (req.last_log_term_ > last_term) ||
+      (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
+
+  if (!log_is_up_to_date) {
+    LOG_DEBUG("Node {} reject vote: candidate log not up-to-date", server_id_);
+    return;
+  }

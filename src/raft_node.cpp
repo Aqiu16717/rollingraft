@@ -930,3 +930,13 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
   try {
     return static_cast<NodeId>(std::stoi(addr.substr(pos + 1)));
   } catch (...) {
+    return -1;
+  }
+}
+
+// ========== RaftNode 公共接口 ==========
+
+RaftNode::RaftNode(const RaftNodeConfig& config,
+                   std::shared_ptr<StateMachine> sm)
+    : raft_node_impl_(std::make_unique<RaftNodeImpl>(
+          config, sm,

@@ -103,16 +103,16 @@ class RaftNode::RaftNodeImpl {
   NodeId server_id_;
   std::vector<NodeAddr> peer_addrs_;
   std::unordered_map<NodeId, NodeAddr> peer_map_;
-   * integers. Each term begins with an election, in which one
-   * or more candidates attempt to become leader as described
-   * in Section 5.2. If a candidate wins the election, then it
-   * serves as leader for the rest of the term. In some situations
-   * an election will result in a split vote. In this case the term
-   * will end with no leader; a new term (with a new election) will
-   * begin shortly. Raft ensures that there is at most one leader
-   * in a given term.
-   * Different servers may observe the transitions between
-   * terms at different times, and in some situations a server
+
+  // ========== Raft 持久化状态 ==========
+  Term current_term_ = 0;
+  NodeId voted_for_ = -1;
+  RaftLog log_;
+
+  // ========== Raft 易失状态 ==========
+  Index commit_index_ = 0;
+  Index last_applied_ = 0;
+  NodeId leader_id_ = -1;
    * may not observe an election or even entire terms. Terms
    * act as a logical clock [14] in Raft, and they allow servers
    * to detect obsolete information such as stale leaders. Each

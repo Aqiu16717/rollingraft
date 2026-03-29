@@ -240,16 +240,16 @@ Status RaftNode::RaftNodeImpl::Start() {
   status = network_->Start();
   if (!status.ok()) {
     if (persister_) persister_->Close();
-  response.term_ = current_term_;
+    state_ = NodeState::kInitialized;
+    return status;
+  }
 
-  LOG_INFO("Node {} received RequestVote from {} at term {}", server_id_,
-           request.candidate_id_, request.term_);
+  // 3. 启动定时器服务
+  timer_->Start();
 
-  // refuse vote if candidate's term is older than my term
-  if (request.term_ < current_term_) {
-    response.vote_granted_ = false;
-    LOG_INFO("Rejecting vote for {}: their term {} is older than mine {}",
-             request.candidate_id_, request.term_, current_term_);
+  // 4. 进入 Follower 状态
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
     return Status::OK();
   }
 

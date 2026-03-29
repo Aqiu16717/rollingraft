@@ -250,16 +250,16 @@ Status RaftNode::RaftNodeImpl::Start() {
   // 4. 进入 Follower 状态
   {
     std::lock_guard<std::mutex> lock(mtx_);
-    return Status::OK();
+    BecomeFollowerLocked(current_term_);
   }
 
-  // if cnadidate's term is newer, become follower whatever my state is
-  if (request.term_ > current_term_) {
-    LOG_INFO("Updating term from {} to {}", current_term_, request.term_);
-    // reset voted_for_
-    voted_for_ = -1;
-    current_term_ = request.term_;
-    // todo
+  LOG_INFO("RaftNode {} started successfully", config_.node_id);
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::Stop() {
+  NodeState expected = NodeState::kRunning;
+  if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
     // persister_->
     BecomeFollower();
   }

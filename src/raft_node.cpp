@@ -41,20 +41,21 @@ class RaftNode::RaftNodeImpl {
 
   bool IsLeader() const;
   RaftNodeRole GetRole() const;
-  uint64_t CurrentTerm() const;
+  Term CurrentTerm() const;
   std::string GetLeaderAddr() const;
 
   void SetRoleChangeCallback(std::function<void(RaftNodeRole, uint64_t)> cb);
-  void SetLeaderChangeCallback(std::function<void(RaftNodeId, std::string)> cb);
+  void SetLeaderChangeCallback(std::function<void(NodeId, std::string)> cb);
 
   Status Propose(const std::string& command,
                  std::function<void(const ApplyResult&)> callback);
   Status ReadIndex(std::function<void()> callback);
 
-  Status RequestVote(const RequestVoteRequest&, RequestVoteResponse&);
-  Status AppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
-  Status InstallSnapshot(const InstallSnapshotRequest&,
-                         InstallSnapshotResponse&);
+  // RPC 处理器（由 NetworkTransport 调用）
+  void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
+  void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
+  void HandleInstallSnapshot(const InstallSnapshotRequest&,
+                             InstallSnapshotResponse&);
 
  private:
   Status BecomeFollower();

@@ -86,7 +86,7 @@ struct AppendEntriesRequest : public RaftRequest {
   Term prev_log_term_;
   // log entries to store (empty for heartbeat;
   // may send more than one for efficiency)
-  RaftLog entries_;
+  std::vector<RaftLogEntry> entries_;
   // leader's commitIndex
   Index leader_commit_;
 

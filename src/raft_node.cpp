@@ -720,3 +720,13 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     if (GetLogTermLocked(index) != current_term_) {
       break;
     }
+
+    // 统计复制到多数节点的日志
+    int count = 1;  // 自己
+    for (const auto& [peer_id, match] : match_index_) {
+      (void)peer_id;
+      if (match >= index) ++count;
+    }
+
+    if (count > (peer_addrs_.size() + 1) / 2) {
+      commit_index_ = index;

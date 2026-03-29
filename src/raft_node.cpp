@@ -630,3 +630,12 @@ void RaftNode::RaftNodeImpl::BroadcastAppendEntriesLocked() {
 void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it = next_index_.find(peer_id);
   if (it == next_index_.end()) return;
+
+  Index next_idx = it->second;
+
+  AppendEntriesRequest req;
+  req.term_ = current_term_;
+  req.leader_id_ = server_id_;
+  req.prev_log_index_ = next_idx - 1;
+  req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
+  req.leader_commit_ = commit_index_;

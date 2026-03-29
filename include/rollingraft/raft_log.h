@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 

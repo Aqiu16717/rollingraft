@@ -83,7 +83,20 @@ class RaftNode::RaftNodeImpl {
   void TryCommitLocked();
   void ApplyCommittedLocked();
 
- private:
+  // 工具方法
+  uint64_t GetLogTermLocked(uint64_t index);
+  NodeId ParseNodeId(const NodeAddr& addr);
+
+  // 超时处理回调
+  void OnElectionTimeout();
+  void OnHeartbeatTimeout();
+
+  // RPC 处理入口
+  void HandleIncomingRpc(NodeId from, const std::string& data,
+                         std::string& response);
+
+  // 状态检查
+  bool IsRunning() const { return state_ == NodeState::kRunning; }
   RaftNodeId server_id_;
   std::vector<RaftNodeId> peers_;
 

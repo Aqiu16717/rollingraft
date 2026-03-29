@@ -439,3 +439,14 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   role_ = RaftNodeRole::LEADER;
   leader_id_ = server_id_;
   leader_addr_ = config_.listen_addr;
+
+  // 初始化 Leader 状态
+  auto [last_index, _] = log_.GetLastLogInfo();
+  next_index_.clear();
+  match_index_.clear();
+
+  for (const auto& [peer_id, addr] : peer_map_) {
+    (void)addr;
+    next_index_[peer_id] = last_index + 1;
+    match_index_[peer_id] = 0;
+  }

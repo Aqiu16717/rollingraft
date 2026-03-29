@@ -330,16 +330,16 @@ std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
 void RaftNode::RaftNodeImpl::SetRoleChangeCallback(
     std::function<void(RaftNodeRole, uint64_t)> cb) {
   role_change_callback_ = std::move(cb);
-    return Status::RaftNodeStartError("Failed to allocate work_guard");
-  }
+}
 
-  io_thread_ = std::thread([this]() { io_context_.run(); });
+void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
+    std::function<void(NodeId, std::string)> cb) {
+  leader_change_callback_ = std::move(cb);
+}
 
-  status = BecomeFollower();
-  if (!status.ok()) {
-    LOG_ERROR("Failed to become follower: {}", status.ToString());
-    // todo: cleanup or stop
-    return status;
+Status RaftNode::RaftNodeImpl::Propose(
+    const std::string& command,
+    std::function<void(const ApplyResult&)> callback) {
   }
 
   LOG_INFO("Start success: {} on {}", config_.node_id, config_.listen_addr);

@@ -53,6 +53,11 @@ class Status {
   static Status RaftNodeStartError(const std::string& msg,
                                    const std::string& msg2 = "") {
     return Status(kRaftNodeStartError, msg, msg2);
+
+  // Generic error status
+  static Status Error(const std::string& msg, const std::string& msg2 = "") {
+    return Status(kGenericError, msg, msg2);
+  }
   }
 
   // Returns true iff the status indicates success.

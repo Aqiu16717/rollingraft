@@ -200,16 +200,16 @@ RaftNode::RaftNodeImpl::~RaftNodeImpl() {
 Status RaftNode::RaftNodeImpl::Start() {
   NodeState expected = NodeState::kInitialized;
   if (!state_.compare_exchange_strong(expected, NodeState::kRunning)) {
-  SetRole(RaftNodeRole::LEADER);
-  // AppendEntriesRequest req{
-  //     .} AppendEntries(req);
-  return Status();
-}
+    return Status::Error("Already started or stopped");
+  }
 
-Status RaftNode::RaftNodeImpl::Election() {
-  RequestVoteRequest req(current_term_, server_id_, log_.LastLogIndex(),
-                         log_.LastLogTerm());
+  LOG_INFO("Starting RaftNode {} on {}...", config_.node_id,
+           config_.listen_addr);
 
+  // 1. 初始化持久化
+  if (persister_) {
+    auto status = persister_->Open(config_.data_dir);
+    if (!status.ok()) {
   // parallel
   std::vector<std::future<RequestVoteResponse>> fus;
   for (int i = 0; i < peers_.size(); ++i) {

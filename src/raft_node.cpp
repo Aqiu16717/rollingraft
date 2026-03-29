@@ -770,3 +770,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 // ========== RPC 处理 ==========
 
 void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
+                                               const std::string& data,
+                                               std::string& response) {
+  (void)from;
+  (void)data;
+  (void)response;
+  // TODO: 根据消息类型分发到具体处理器
+}
+
+void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
+                                               RequestVoteResponse& resp) {

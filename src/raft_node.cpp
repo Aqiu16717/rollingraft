@@ -97,12 +97,12 @@ class RaftNode::RaftNodeImpl {
 
   // 状态检查
   bool IsRunning() const { return state_ == NodeState::kRunning; }
-  // ========== 节点标识 ==========n  NodeId server_id_;n  std::vector<NodeAddr> peer_addrs_;n  std::unordered_map<NodeId, NodeAddr> peer_map_;
+
  private:
-  // Persistent state on all servers
-  /**
-   * Raft divides time into terms of arbitrary length, as
-   * shown in Figure 5. Terms are numbered with consecutive
+  // ========== 节点标识 ==========
+  NodeId server_id_;
+  std::vector<NodeAddr> peer_addrs_;
+  std::unordered_map<NodeId, NodeAddr> peer_map_;
    * integers. Each term begins with an election, in which one
    * or more candidates attempt to become leader as described
    * in Section 5.2. If a candidate wins the election, then it

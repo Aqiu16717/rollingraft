@@ -47,7 +47,8 @@ struct RequestVoteRequest : public RaftRequest {
   // term of candidate’s last log entry (§5.4)
   uint32_t last_log_term_;
 
-  RequestVoteRequest() = delete;
+  RequestVoteRequest()
+      : RaftRequest(RaftMessageType::KRequestVoteRequest) {}
   RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index,
                      Term last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),

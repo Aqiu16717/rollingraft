@@ -699,3 +699,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     } else {
       next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
     }
+
+    // 延迟重试
+    timer_->SetTimeout(std::chrono::milliseconds(10), [this, from]() {
+      std::lock_guard<std::mutex> lock(mtx_);
+      if (role_ == RaftNodeRole::LEADER) {
+        SendAppendEntriesToPeerLocked(from);
+      }
+    });
+  }
+}

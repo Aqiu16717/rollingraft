@@ -790,3 +790,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     BecomeFollowerLocked(req.term_);
     resp.term_ = current_term_;
   }
+
+  // 拒绝旧任期的请求
+  if (req.term_ < current_term_) {
+    LOG_DEBUG("Node {} reject vote: req.term {} < {}", server_id_, req.term_,
+              current_term_);
+    return;
+  }
+
+  // 检查日志是否至少一样新
+  auto [last_index, last_term] = log_.GetLastLogInfo();

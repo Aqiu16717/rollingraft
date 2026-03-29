@@ -910,3 +910,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
 void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {
+  (void)req;
+  (void)resp;
+  // TODO: 实现快照处理
+}
+
+// ========== 工具方法 ==========
+
+uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
+  if (index == 0) return 0;
+  return log_.GetLogTerm(index);

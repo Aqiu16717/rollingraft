@@ -190,16 +190,16 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
 }
 
 RaftNode::RaftNodeImpl::~RaftNodeImpl() {
-// 1. become candidate
-// 2. start election
-Status RaftNode::RaftNodeImpl::BecomeCandidate() {
-  ++current_term_;
-  ++vote_count_;
-  SetRole(RaftNodeRole::CANDIDATE);
-  return Status();
+  if (state_ == NodeState::kRunning) {
+    Stop();
+  }
 }
 
-Status RaftNode::RaftNodeImpl::BecomeLeader() {
+// ========== 公共接口实现 ==========
+
+Status RaftNode::RaftNodeImpl::Start() {
+  NodeState expected = NodeState::kInitialized;
+  if (!state_.compare_exchange_strong(expected, NodeState::kRunning)) {
   SetRole(RaftNodeRole::LEADER);
   // AppendEntriesRequest req{
   //     .} AppendEntries(req);

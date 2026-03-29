@@ -340,16 +340,16 @@ void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
 Status RaftNode::RaftNodeImpl::Propose(
     const std::string& command,
     std::function<void(const ApplyResult&)> callback) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
   }
 
-  LOG_INFO("Start success: {} on {}", config_.node_id, config_.listen_addr);
-  return Status::OK();
-}
-
-Status RaftNode::RaftNodeImpl::Stop() {
-  if (!is_running_.exchange(false)) {
-    return Status::OK();
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
   }
+
 
   LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id, config_.listen_addr);
   if (server_) {

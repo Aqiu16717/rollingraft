@@ -350,16 +350,16 @@ Status RaftNode::RaftNodeImpl::Propose(
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
-
-  LOG_INFO("Stopping RaftNode: {} on {}", config_.node_id, config_.listen_addr);
-  if (server_) {
-    server_->Stop();
+  // 追加到本地日志
+  auto [index, status] = log_.Append(current_term_, command);
+  if (!status.ok()) {
+    return status;
   }
 
-  if (work_guard_) {
-    work_guard_.reset();
-  }
-
+  // 记录待处理提案
+  PendingProposal proposal;
+  proposal.index = index;
+  proposal.callback = std::move(callback);
   io_context_.stop();
 
   if (io_thread_.joinable()) {

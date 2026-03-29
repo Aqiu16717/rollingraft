@@ -460,3 +460,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   // 回调
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
+  }
+  if (leader_change_callback_) {
+    leader_change_callback_(server_id_, config_.listen_addr);
+  }
+
+  LOG_INFO("Node {} became Leader at term {}", server_id_, current_term_);
+
+  // 立即发送心跳（建立权威）
+  BroadcastAppendEntriesLocked();
+}

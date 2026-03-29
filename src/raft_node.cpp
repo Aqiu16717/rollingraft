@@ -16,6 +16,14 @@
 
 using namespace rollingraft;
 
+// ========== 待处理提案 ==========
+struct PendingProposal {
+  Index index;                                         // 日志索引
+  std::function<void(const ApplyResult&)> callback;    // 完成回调
+  std::chrono::steady_clock::time_point propose_time;  // 提交时间
+};
+
+// ========== RaftNode 实现 ==========
 class RaftNode::RaftNodeImpl {
   using RaftNodeId = int32_t;
 

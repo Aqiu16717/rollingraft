@@ -163,15 +163,15 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     std::unique_ptr<Protocol> protocol)
     : config_(config),
       state_machine_(std::move(state_machine)),
+      network_(std::move(network)),
+      timer_(std::move(timer)),
+      persister_(std::move(persister)),
+      protocol_(std::move(protocol)) {
+  server_id_ = config.node_id;
+  peer_addrs_ = config.peers;
 
- private:
-  using WorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
-  std::unique_ptr<WorkGuard> work_guard_;
-  std::unique_ptr<Server> server_;
-  asio::io_context io_context_;
-  std::thread io_thread_;
-  std::atomic<bool> is_running_;
-
+  // 构建 peer 映射表
+  for (const auto& addr : peer_addrs_) {
  private:
   RaftNodeConfig config_;
   std::shared_ptr<StateMachine> state_machine_;

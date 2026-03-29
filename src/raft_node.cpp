@@ -260,16 +260,16 @@ Status RaftNode::RaftNodeImpl::Start() {
 Status RaftNode::RaftNodeImpl::Stop() {
   NodeState expected = NodeState::kRunning;
   if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
-    // persister_->
-    BecomeFollower();
+    if (state_ == NodeState::kStopped) {
+      return Status::OK();  // 已经停止
+    }
+    return Status::Error("Node not running");
   }
 
-  // Each server will vote for at most one candidate in a
-  // given term, on a first-come-first-served basis (note: Sec-
-  // tion 5.4 adds an additional restriction on votes).
+  LOG_INFO("Stopping RaftNode {}...", config_.node_id);
 
-  return Status();
-}
+  // 1. 停止定时器（加锁）
+  {
 
 Status RaftNode::RaftNodeImpl::AppendEntries(
     const AppendEntriesRequest& append_entries_request,

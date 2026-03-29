@@ -25,8 +25,6 @@ struct PendingProposal {
 
 // ========== RaftNode 实现 ==========
 class RaftNode::RaftNodeImpl {
-  using RaftNodeId = int32_t;
-
  public:
   RaftNodeImpl(const RaftNodeConfig& config,
                std::shared_ptr<StateMachine> state_machine,

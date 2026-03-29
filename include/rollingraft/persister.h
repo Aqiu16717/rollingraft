@@ -6,6 +6,14 @@
 #include <rollingraft/types.h>
 
 namespace rollingraft {
+
+// 持久化元数据（必须在每次选举前持久化）
+struct PersistentState {
+  Term current_term = 0;  // 当前任期
+  NodeId voted_for = -1;  // 投票给的候选人ID（-1表示未投票）
+};
+
+// 持久化接口
 class Persister {
  public:
   virtual ~Persister() = default;

@@ -639,3 +639,14 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.prev_log_index_ = next_idx - 1;
   req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
   req.leader_commit_ = commit_index_;
+
+  // 获取日志条目
+  auto [last_index, _] = log_.GetLastLogInfo();
+  if (next_idx <= last_index) {
+    Index end =
+        std::min(next_idx + config_.max_entries_per_append, last_index + 1);
+    req.entries_ = log_.GetEntries(next_idx, end);
+  }
+
+  // 序列化并发送
+  std::string data;

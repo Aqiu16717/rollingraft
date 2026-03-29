@@ -7,94 +7,94 @@
 
 namespace rollingraft {
 
-// 持久化元数据（必须在每次选举前持久化）
+// Persistent metadata (must be persisted before each election)
 struct PersistentState {
   Term current_term = 0;  // 当前任期
-  NodeId voted_for = -1;  // 投票给的候选人ID（-1表示未投票）
+  NodeId voted_for = -1;  // ID of candidate voted for (-1 means not voted)
 };
 
-// 持久化接口
+// Persistence interface
 class Persister {
  public:
   virtual ~Persister() = default;
 
   // ==================== 生命周期 ====================
 
-  // 打开/创建持久化存储
+  // Open/create persistent storage
   // @param data_dir: 数据目录路径
-  // @return: 成功返回 OK，失败返回 IOError
+  // @return: OK on success, IOError on failure
   virtual Status Open(const std::string& data_dir) = 0;
 
-  // 关闭持久化存储
+  // Close persistent storage
   virtual void Close() = 0;
 
-  // ==================== 元数据操作 ====================
+  // ==================== Metadata Operations ====================
 
-  // 保存持久化状态（必须同步写入）
-  // 在以下场景调用：
-  // - 成为 Candidate 时（term++, voted_for=self）
-  // - 收到更高 term 的 RPC 时（转为 Follower）
-  // - 投票给其他候选人时
+  // Save persistent state (must be synchronous write)
+  // Called in the following scenarios:
+  // - When becoming Candidate (term++, voted_for=self)
+  // - When receiving RPC with higher term (revert to Follower)
+  // - When voting for other candidates
   virtual Status SaveState(const PersistentState& state) = 0;
 
-  // 加载持久化状态
-  // 如果状态不存在，返回 OK 且 state 为默认值
+  // Load persistent state
+  // If state doesn't exist, return OK with default state values
   virtual Status LoadState(PersistentState& state) = 0;
 
-  // ==================== 日志操作 ====================
+  // ==================== Log Operations ====================
 
-  // 追加日志条目（批量）
-  // 在 Leader 接收客户端命令时调用
-  // 在 Follower 接收 AppendEntries 时调用
+  // Append log entries (batch)
+  // Called when Leader receives client commands
+  // Called when Follower receives AppendEntries
   virtual Status AppendEntries(const std::vector<RaftLogEntry>& entries) = 0;
 
-  // 获取指定范围的日志条目 [start, end)
-  // 用于 Leader 向 Follower 发送 AppendEntries
+  // Get log entries in range [start, end)
+  // Used for Leader to send AppendEntries to Followers
   virtual Status GetEntries(uint64_t start, uint64_t end,
                             std::vector<RaftLogEntry>* out) = 0;
 
-  // 获取单个日志条目
+  // Get single log entry
   virtual Status GetEntry(uint64_t index, RaftLogEntry& entry) = 0;
 
-  // 截断日志（删除 index 及之后的所有条目）
-  // 在日志冲突时调用（Follower 的日志比 Leader 新）
+  // Truncate log (delete all entries from index onwards)
+  // Called on log conflict (Follower's log is newer than Leader's)
   virtual Status TruncateSuffix(uint64_t from_index) = 0;
 
-  // 删除前缀日志（用于快照后清理旧日志）
-  // 删除 [1, before_index) 的所有日志
+  // Delete prefix logs (used to clean up old logs after snapshot)
+  // Delete all logs in [1, before_index)
   virtual Status TruncatePrefix(uint64_t before_index) = 0;
 
-  // 获取最后一条日志的信息
+  // Get info of the last log entry
   virtual std::pair<uint64_t, uint64_t> GetLastLogInfo() = 0;
 
-  // ==================== 快照操作（可选） ====================
+  // ==================== Snapshot Operations (Optional) ====================
 
-  // 保存快照元数据
-  // @param snapshot_data: 状态机序列化后的数据
-  // @param last_index: 快照包含的最后日志索引
-  // @param last_term: 快照包含的最后日志任期
+  // Save snapshot metadata
+  // @param snapshot_data: serialized state machine data
+  // @param last_index: last log index included in snapshot
+  // @param last_term: last log term included in snapshot
   virtual Status SaveSnapshot(const std::string& snapshot_data,
                               uint64_t last_index, uint64_t last_term) {
     (void)snapshot_data;
     (void)last_index;
     (void)last_term;
-    return Status::OK();  // 默认空实现
+    return Status::OK();  // Default no-op implementation
   }
 
-  // 加载快照
+  // Load snapshot
   virtual Status LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
                               uint64_t& last_term) {
     (void)snapshot_data;
     (void)last_index;
     (void)last_term;
-    return Status::OK();  // 默认空实现
+    return Status::OK();  // Default no-op implementation
   }
 
-  // 获取快照信息
+  // Get snapshot info
   virtual bool HasSnapshot() const { return false; }
 };
 
-// 工厂函数类型
+// Factory function type
 using PersisterFactory = std::function<std::unique_ptr<Persister>()>;
 
 }  // namespace rollingraft

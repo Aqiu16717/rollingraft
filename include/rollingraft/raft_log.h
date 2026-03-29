@@ -23,12 +23,12 @@ struct RaftLogEntry {
   std::string command_;
 };
 
-// 日志管理类（内存缓存）
+// Log manager class (in-memory cache)
 class RaftLog {
  public:
   RaftLog() = default;
 
-  // 追加单条日志
+  // Append single log entry
   std::pair<Index, Status> Append(Term term, std::string data);
 
   Status AppendLogEntry(const RaftLogEntry& entry);

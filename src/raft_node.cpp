@@ -16,14 +16,14 @@
 
 using namespace rollingraft;
 
-// ========== 待处理提案 ==========
+// ========== Pending Proposals ==========
 struct PendingProposal {
-  Index index;                                         // 日志索引
-  std::function<void(const ApplyResult&)> callback;    // 完成回调
-  std::chrono::steady_clock::time_point propose_time;  // 提交时间
+  Index index;                                         // Log index
+  std::function<void(const ApplyResult&)> callback;    // Completion callback
+  std::chrono::steady_clock::time_point propose_time;  // Proposal timestamp
 };
 
-// ========== RaftNode 实现 ==========
+// ========== RaftNode Implementation ==========
 class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(const RaftNodeConfig& config,
@@ -49,67 +49,67 @@ class RaftNode::RaftNodeImpl {
                  std::function<void(const ApplyResult&)> callback);
   Status ReadIndex(std::function<void()> callback);
 
-  // RPC 处理器（由 NetworkTransport 调用）
+  // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
   void HandleInstallSnapshot(const InstallSnapshotRequest&,
                              InstallSnapshotResponse&);
 
  private:
-  // 状态转换（调用时必须持有 mtx_）
+  // State transitions (must hold mtx_ when calling)
   void BecomeFollowerLocked(Term term);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
 
-  // 定时器管理（调用时必须持有 mtx_）
+  // Timer management (must hold mtx_ when calling)
   void ResetElectionTimerLocked();
   void CancelElectionTimerLocked();
   void StartHeartbeatTimerLocked();
   void StopHeartbeatTimerLocked();
 
-  // 选举相关
+  // Election related
   void BroadcastRequestVoteLocked();
   void SendRequestVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
   void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp,
                                  Term original_term);
 
-  // 日志复制相关
+  // Log replication related
   void BroadcastAppendEntriesLocked();
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
 
-  // 提交和应用
+  // Commit and apply
   void TryCommitLocked();
   void ApplyCommittedLocked();
 
-  // 工具方法
+  // Utility methods
   uint64_t GetLogTermLocked(uint64_t index);
   NodeId ParseNodeId(const NodeAddr& addr);
 
-  // 超时处理回调
+  // Timeout handlers
   void OnElectionTimeout();
   void OnHeartbeatTimeout();
 
-  // RPC 处理入口
+  // RPC entry point
   void HandleIncomingRpc(NodeId from, const std::string& data,
                          std::string& response);
 
-  // 状态检查
+  // State check
   bool IsRunning() const { return state_ == NodeState::kRunning; }
 
  private:
-  // ========== 节点标识 ==========
+  // ========== Node Identity ==========
   NodeId server_id_;
   std::vector<NodeAddr> peer_addrs_;
   std::unordered_map<NodeId, NodeAddr> peer_map_;
 
-  // ========== Raft 持久化状态 ==========
+  // ========== Raft Persistent State ==========
   Term current_term_ = 0;
   NodeId voted_for_ = -1;
   RaftLog log_;
 
-  // ========== Raft 易失状态 ==========
+  // ========== Raft Volatile State ==========
   Index commit_index_ = 0;
   Index last_applied_ = 0;
   NodeId leader_id_ = -1;
@@ -117,16 +117,16 @@ class RaftNode::RaftNodeImpl {
   RaftNodeRole role_ = RaftNodeRole::FOLLOWER;
   uint32_t vote_count_ = 0;
 
-  // ========== Leader 状态 ==========
+  // ========== Leader State ==========
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
 
-  // ========== 定时器状态 ==========
+  // ========== Timer State ==========
   int election_timeout_ = 0;
   TimerId election_timer_ = 0;
   TimerId heartbeat_timer_ = 0;
 
-  // ========== 依赖组件 ==========
+  // ========== Dependencies ==========
   RaftNodeConfig config_;
   std::shared_ptr<StateMachine> state_machine_;
   std::unique_ptr<NetworkTransport> network_;
@@ -134,7 +134,7 @@ class RaftNode::RaftNodeImpl {
   std::unique_ptr<Persister> persister_;
   std::unique_ptr<Protocol> protocol_;
 
-  // ========== 运行时状态 ==========
+  // ========== Runtime State ==========
   enum class NodeState {
     kInitialized = 0,
     kRunning = 1,
@@ -143,18 +143,18 @@ class RaftNode::RaftNodeImpl {
   };
   std::atomic<NodeState> state_{NodeState::kInitialized};
 
-  // ========== 线程同步 ==========
+  // ========== Thread Synchronization ==========
   mutable std::mutex mtx_;
 
-  // ========== 待处理提案 ==========
+  // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
 
-  // ========== 回调 ==========
+  // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
   std::function<void(NodeId, std::string)> leader_change_callback_;
 };
 
-// ========== 构造函数/析构函数 ==========
+// ========== Constructor/Destructor ==========
 
 RaftNode::RaftNodeImpl::RaftNodeImpl(
     const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
@@ -170,7 +170,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   server_id_ = config.node_id;
   peer_addrs_ = config.peers;
 
-  // 构建 peer 映射表
+  // Build peer map
   for (const auto& addr : peer_addrs_) {
     NodeId peer_id = ParseNodeId(addr);
     peer_map_[peer_id] = addr;
@@ -195,7 +195,7 @@ RaftNode::RaftNodeImpl::~RaftNodeImpl() {
   }
 }
 
-// ========== 公共接口实现 ==========
+// ========== Public Interface Implementation ==========
 
 Status RaftNode::RaftNodeImpl::Start() {
   NodeState expected = NodeState::kInitialized;
@@ -206,7 +206,7 @@ Status RaftNode::RaftNodeImpl::Start() {
   LOG_INFO("Starting RaftNode {} on {}...", config_.node_id,
            config_.listen_addr);
 
-  // 1. 初始化持久化
+  // 1. Initialize persistence
   if (persister_) {
     auto status = persister_->Open(config_.data_dir);
     if (!status.ok()) {
@@ -214,7 +214,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       return status;
     }
 
-    // 恢复持久化状态
+    // Restore persistent state
     PersistentState state;
     if (persister_->LoadState(state).ok()) {
       current_term_ = state.current_term;
@@ -224,7 +224,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     }
   }
 
-  // 2. 初始化网络层
+  // 2. Initialize network layer
   auto handler = [this](NodeId from, const std::string& req,
                         std::string& resp) {
     HandleIncomingRpc(from, req, resp);
@@ -244,10 +244,10 @@ Status RaftNode::RaftNodeImpl::Start() {
     return status;
   }
 
-  // 3. 启动定时器服务
+  // 3. Start timer service
   timer_->Start();
 
-  // 4. 进入 Follower 状态
+  // 4. Enter Follower state
   {
     std::lock_guard<std::mutex> lock(mtx_);
     BecomeFollowerLocked(current_term_);
@@ -261,36 +261,36 @@ Status RaftNode::RaftNodeImpl::Stop() {
   NodeState expected = NodeState::kRunning;
   if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
     if (state_ == NodeState::kStopped) {
-      return Status::OK();  // 已经停止
+      return Status::OK();  // Already stopped
     }
     return Status::Error("Node not running");
   }
 
   LOG_INFO("Stopping RaftNode {}...", config_.node_id);
 
-  // 1. 停止定时器（加锁）
+  // 1. Stop timers (with lock)
   {
     std::lock_guard<std::mutex> lock(mtx_);
     CancelElectionTimerLocked();
     StopHeartbeatTimerLocked();
   }
 
-  // 2. 停止 TimerService
+  // 2. Stop TimerService
   if (timer_) {
     timer_->Stop();
   }
 
-  // 3. 停止 NetworkTransport
+  // 3. Stop NetworkTransport
   if (network_) {
     network_->Stop();
   }
 
-  // 4. 关闭持久化
+  // 4. Close persistence
   if (persister_) {
     persister_->Close();
   }
 
-  // 5. 清理待处理提案
+  // 5. Clean up pending proposals
   {
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
@@ -350,32 +350,32 @@ Status RaftNode::RaftNodeImpl::Propose(
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
-  // 追加到本地日志
+  // Append to local log
   auto [index, status] = log_.Append(current_term_, command);
   if (!status.ok()) {
     return status;
   }
 
-  // 记录待处理提案
+  // Record pending proposal
   PendingProposal proposal;
   proposal.index = index;
   proposal.callback = std::move(callback);
   proposal.propose_time = std::chrono::steady_clock::now();
   pending_proposals_[index] = std::move(proposal);
 
-  // 触发日志复制
+  // Trigger log replication
   BroadcastAppendEntriesLocked();
 
   return Status::OK();
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
-  // TODO: 实现线性一致性读
+  // TODO: implement linearizable read
   (void)callback;
   return Status::Error("Not implemented");
 }
 
-// ========== 状态转换 ==========
+// ========== State Transitions ==========
 
 void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   RaftNodeRole old_role = role_;
@@ -387,18 +387,18 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   leader_id_ = -1;
   leader_addr_.clear();
 
-  // 停止 Leader 定时器
+  // Stop leader timer
   StopHeartbeatTimerLocked();
 
-  // 重置并启动选举定时器
+  // Reset and start election timer
   ResetElectionTimerLocked();
 
-  // 持久化
+  // Persist state
   if (persister_) {
     persister_->SaveState({current_term_, voted_for_});
   }
 
-  // 回调
+  // Invoke callback
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
   }
@@ -412,24 +412,24 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   role_ = RaftNodeRole::CANDIDATE;
   ++current_term_;
   voted_for_ = server_id_;
-  vote_count_ = 1;  // 给自己投票
+  vote_count_ = 1;  // Vote for self
 
-  // 持久化
+  // Persist state
   if (persister_) {
     persister_->SaveState({current_term_, voted_for_});
   }
 
-  // 回调
+  // Invoke callback
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
   }
 
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
 
-  // 发送投票请求
+  // Send request vote
   BroadcastRequestVoteLocked();
 
-  // 重置选举定时器
+  // Reset election timer
   ResetElectionTimerLocked();
 }
 
@@ -440,7 +440,7 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   leader_id_ = server_id_;
   leader_addr_ = config_.listen_addr;
 
-  // 初始化 Leader 状态
+  // Initialize leader state
   auto [last_index, _] = log_.GetLastLogInfo();
   next_index_.clear();
   match_index_.clear();
@@ -451,13 +451,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     match_index_[peer_id] = 0;
   }
 
-  // 停止选举定时器
+  // Stop election timer
   CancelElectionTimerLocked();
 
-  // 启动心跳定时器
+  // Start heartbeat timer
   StartHeartbeatTimerLocked();
 
-  // 回调
+  // Invoke callback
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
   }
@@ -467,16 +467,16 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
 
   LOG_INFO("Node {} became Leader at term {}", server_id_, current_term_);
 
-  // 立即发送心跳（建立权威）
+  // Send heartbeat immediately (establish authority)
   BroadcastAppendEntriesLocked();
 }
 
-// ========== 定时器管理 ==========
+// ========== Timer Management ==========
 
 void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   CancelElectionTimerLocked();
 
-  // 随机超时 [election_timeout, 2 * election_timeout)
+  // Random timeout [election_timeout, 2 * election_timeout)
   static thread_local std::mt19937 gen(std::random_device{}());
   std::uniform_int_distribution<> dis(config_.election_timeout_ms,
                                       2 * config_.election_timeout_ms);
@@ -509,7 +509,7 @@ void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
   }
 }
 
-// ========== 选举处理 ==========
+// ========== Election Handling ==========
 
 void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   std::lock_guard<std::mutex> lock(mtx_);
@@ -551,11 +551,11 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   req.last_log_index_ = last_index;
   req.last_log_term_ = last_term;
 
-  // 序列化请求
+  // Serialize request
   std::string data;
-  // protocol_->SerializeRequest(req, data);  // TODO: 实现序列化
+  // protocol_->SerializeRequest(req, data);  // TODO: implement serialization
 
-  Term original_term = current_term_;  // 保存当前任期用于比较
+  Term original_term = current_term_;  // Save current term for comparison
 
   network_->SendRpc(
       peer_id, addr, data, std::chrono::milliseconds(config_.rpc_timeout_ms),
@@ -567,7 +567,7 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
         }
 
         RequestVoteResponse response;
-        // protocol_->DeserializeResponse(resp, response); // TODO
+        // protocol_->DeserializeResponse(resp, response); // TODO: implement deserialization: implement deserialization
         HandleRequestVoteResponse(peer_id, response, original_term);
       });
 }
@@ -579,7 +579,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::CANDIDATE) return;
 
-  // 如果响应任期更高，转为 Follower
+  // If response term is higher, revert to Follower
   if (resp.term_ > current_term_) {
     LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
              current_term_, resp.term_);
@@ -587,12 +587,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     return;
   }
 
-  // 如果任期已改变，忽略此响应
+  // If term has changed, ignore this response
   if (original_term != current_term_) {
     return;
   }
 
-  // 忽略旧任期的响应
+  // Ignore stale term responses
   if (resp.term_ < current_term_) {
     return;
   }
@@ -602,14 +602,14 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     LOG_INFO("Node {} got vote from {}, total: {}/{}", server_id_, from,
              vote_count_, peer_addrs_.size() + 1);
 
-    // 获得多数票，成为 Leader
+    // Got majority votes, become Leader
     if (vote_count_ > (peer_addrs_.size() + 1) / 2) {
       BecomeLeaderLocked();
     }
   }
 }
 
-// ========== 日志复制 ==========
+// ========== Log Replication ==========
 
 void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
   std::lock_guard<std::mutex> lock(mtx_);
@@ -640,7 +640,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
   req.leader_commit_ = commit_index_;
 
-  // 获取日志条目
+  // Get log entries
   auto [last_index, _] = log_.GetLastLogInfo();
   if (next_idx <= last_index) {
     Index end =
@@ -648,9 +648,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     req.entries_ = log_.GetEntries(next_idx, end);
   }
 
-  // 序列化并发送
+  // Serialize and send
   std::string data;
-  // protocol_->SerializeRequest(req, data); // TODO
+  // protocol_->SerializeRequest(req, data); // TODO: implement serialization
 
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
@@ -678,29 +678,29 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;
 
-  // 如果响应任期更高，转为 Follower
+  // If response term is higher, revert to Follower
   if (resp.term_ > current_term_) {
     BecomeFollowerLocked(resp.term_);
     return;
   }
 
   if (resp.success_) {
-    // 更新进度
+    // Update progress
     Index new_match = next_index_[from] - 1 + resp.entries_count_;
     match_index_[from] = std::max(match_index_[from], new_match);
     next_index_[from] = match_index_[from] + 1;
 
-    // 尝试提交
+    // Try to commit
     TryCommitLocked();
   } else {
-    // 日志不匹配，回退
+    // Log mismatch, back off
     if (resp.conflict_index_ > 0) {
       next_index_[from] = resp.conflict_index_;
     } else {
       next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
     }
 
-    // 延迟重试
+    // Retry with delay
     timer_->SetTimeout(std::chrono::milliseconds(10), [this, from]() {
       std::lock_guard<std::mutex> lock(mtx_);
       if (role_ == RaftNodeRole::LEADER) {
@@ -710,19 +710,19 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
   }
 }
 
-// ========== 提交和应用 ==========
+// ========== Commit and Apply ==========
 
 void RaftNode::RaftNodeImpl::TryCommitLocked() {
   auto [last_index, _] = log_.GetLastLogInfo();
 
   for (Index index = last_index; index > commit_index_; --index) {
-    // 只提交当前任期的日志
+    // Only commit entries from current term
     if (GetLogTermLocked(index) != current_term_) {
       break;
     }
 
-    // 统计复制到多数节点的日志
-    int count = 1;  // 自己
+    // Count logs replicated to majority
+    int count = 1;  // Self
     for (const auto& [peer_id, match] : match_index_) {
       (void)peer_id;
       if (match >= index) ++count;
@@ -751,14 +751,14 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
     const auto& entry = *entry_opt;
 
-    // 应用到 StateMachine
+    // Apply to StateMachine
     auto result = state_machine_->Apply(
         std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(entry.data_.data()),
             entry.data_.size()),
         last_applied_);
 
-    // 回调等待的用户
+    // Callback to waiting users
     auto it = pending_proposals_.find(last_applied_);
     if (it != pending_proposals_.end()) {
       it->second.callback(result);
@@ -767,7 +767,7 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
   }
 }
 
-// ========== RPC 处理 ==========
+// ========== RPC Handling ==========
 
 void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
                                                const std::string& data,
@@ -775,7 +775,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
   (void)from;
   (void)data;
   (void)response;
-  // TODO: 根据消息类型分发到具体处理器
+  // TODO: dispatch to specific handler based on message type
 }
 
 void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
@@ -785,20 +785,20 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   resp.term_ = current_term_;
   resp.vote_granted_ = false;
 
-  // 如果请求任期更高，转为 Follower
+  // If request term is higher, revert to Follower
   if (req.term_ > current_term_) {
     BecomeFollowerLocked(req.term_);
     resp.term_ = current_term_;
   }
 
-  // 拒绝旧任期的请求
+  // Reject stale term requests
   if (req.term_ < current_term_) {
     LOG_DEBUG("Node {} reject vote: req.term {} < {}", server_id_, req.term_,
               current_term_);
     return;
   }
 
-  // 检查日志是否至少一样新
+  // Check if log is at least as up-to-date
   auto [last_index, last_term] = log_.GetLastLogInfo();
 
   bool log_is_up_to_date =
@@ -810,15 +810,15 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     return;
   }
 
-  // 检查是否已投票
+  // Check if already voted
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
     resp.vote_granted_ = true;
 
-    // 重置选举定时器
+    // Reset election timer
     ResetElectionTimerLocked();
 
-    // 持久化
+    // Persist state
     if (persister_) {
       persister_->SaveState({current_term_, voted_for_});
     }
@@ -837,30 +837,30 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
   resp.conflict_index_ = 0;
   resp.entries_count_ = 0;
 
-  // 如果 Leader 任期更高，转为 Follower
+  // If leader term is higher, revert to Follower
   if (req.term_ > current_term_) {
     BecomeFollowerLocked(req.term_);
     resp.term_ = current_term_;
   }
 
-  // 拒绝旧任期的 Leader
+  // Reject stale term leader
   if (req.term_ < current_term_) {
     LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_,
               req.term_, current_term_);
     return;
   }
 
-  // 更新 Leader 信息
+  // Update leader info
   leader_id_ = req.leader_id_;
   auto it = peer_map_.find(leader_id_);
   if (it != peer_map_.end()) {
     leader_addr_ = it->second;
   }
 
-  // 重置选举定时器
+  // Reset election timer
   ResetElectionTimerLocked();
 
-  // 检查 prev_log 是否匹配
+  // Check if prev_log matches
   if (req.prev_log_index_ > 0) {
     Term prev_term = GetLogTermLocked(req.prev_log_index_);
     if (prev_term != req.prev_log_term_) {
@@ -871,9 +871,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
     }
   }
 
-  // 追加日志条目
+  // Append log entries
   if (!req.entries_.empty()) {
-    // 检查冲突并截断
+    // Check for conflicts and truncate
     for (const auto& entry : req.entries_) {
       Term existing_term = GetLogTermLocked(entry.index_);
       if (existing_term != 0 && existing_term != entry.term_) {
@@ -884,7 +884,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
       }
     }
 
-    // 追加新条目
+    // Append new entries
     for (const auto& entry : req.entries_) {
       auto [idx, status] = log_.Append(entry.term_, entry.data_);
       (void)idx;
@@ -898,7 +898,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
     LOG_INFO("Node {} appended {} entries", server_id_, req.entries_.size());
   }
 
-  // 更新 commit_index
+  // Update commit_index
   if (req.leader_commit_ > commit_index_) {
     auto [last_index, _] = log_.GetLastLogInfo();
     commit_index_ = std::min(req.leader_commit_, last_index);
@@ -912,10 +912,10 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {
   (void)req;
   (void)resp;
-  // TODO: 实现快照处理
+  // TODO: implement snapshot handling
 }
 
-// ========== 工具方法 ==========
+// ========== Utility Methods ==========
 
 uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
   if (index == 0) return 0;
@@ -923,8 +923,8 @@ uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
 }
 
 NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
-  // 简单解析：从地址中提取端口号作为 ID
-  // 实际应用中应该使用配置的 node_id 映射
+  // Simple parsing: extract port number as ID from address
+  // In production, should use configured node_id mapping
   auto pos = addr.find(':');
   if (pos == std::string::npos) return -1;
   try {
@@ -934,14 +934,14 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
   }
 }
 
-// ========== RaftNode 公共接口 ==========
+// ========== RaftNode Public Interface ==========
 
 RaftNode::RaftNode(const RaftNodeConfig& config,
                    std::shared_ptr<StateMachine> sm)
     : raft_node_impl_(std::make_unique<RaftNodeImpl>(
           config, sm,
           config.network_factory ? config.network_factory()
-                                 : nullptr,  // TODO: 默认实现
+                                 : nullptr,  // TODO: default implementation
           config.timer_factory ? config.timer_factory() : nullptr,
           config.persister_factory ? config.persister_factory() : nullptr,
           config.protocol_factory ? config.protocol_factory() : nullptr)) {}

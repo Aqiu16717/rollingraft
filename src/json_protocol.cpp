@@ -118,7 +118,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         uint32_t prev_log_term = j["prev_log_term"];
         uint32_t leader_commit = j["leader_commit"];
 
-        // 创建AppendEntriesRequest对象（暂时不处理entries）
+        // Create AppendEntriesRequest object (entries not processed yet)
         RaftLog entries;
         AppendEntriesRequest* append_req =
             new AppendEntriesRequest(term, leader_id, prev_log_index,

@@ -34,7 +34,7 @@ std::vector<RaftLogEntry> RaftLog::GetEntries(Index start, Index end) const {
     return result;
   }
 
-  // 调整到有效范围
+  // Clamp to valid range
   Index actual_start = std::max(start, start_index_);
   Index actual_end =
       std::min(end, start_index_ + static_cast<Index>(entries_.size()));
@@ -72,7 +72,7 @@ Term RaftLog::GetLogTerm(Index index) const {
 
 Status RaftLog::TruncateSuffix(Index from_index) {
   if (from_index > start_index_ + entries_.size()) {
-    return Status::OK();  // 无需截断
+    return Status::OK();  // No truncation needed
   }
 
   if (from_index <= start_index_) {

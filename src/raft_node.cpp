@@ -680,3 +680,12 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
   // 如果响应任期更高，转为 Follower
   if (resp.term_ > current_term_) {
+    BecomeFollowerLocked(resp.term_);
+    return;
+  }
+
+  if (resp.success_) {
+    // 更新进度
+    Index new_match = next_index_[from] - 1 + resp.entries_count_;
+    match_index_[from] = std::max(match_index_[from], new_match);
+    next_index_[from] = match_index_[from] + 1;

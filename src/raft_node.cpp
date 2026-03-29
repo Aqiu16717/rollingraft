@@ -149,20 +149,20 @@ class RaftNode::RaftNodeImpl {
   // ========== 待处理提案 ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
 
- private:
-  // Volatile state on leaders
+  // ========== 回调 ==========
+  std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
+  std::function<void(NodeId, std::string)> leader_change_callback_;
+};
 
-  // for each server, index of the next log entry
-  // to send to that server (initialized to leader
-  // last log index + 1)
-  std::vector<uint32_t> next_index_;
-  // for each server, index of highest log entry
-  // known to be replicated on server
-  // (initialized to 0, increases monotonically)
-  std::vector<uint32_t> match_index_;
+// ========== 构造函数/析构函数 ==========
 
- private:
-  std::mutex mtx_;
+RaftNode::RaftNodeImpl::RaftNodeImpl(
+    const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
+    std::unique_ptr<NetworkTransport> network,
+    std::unique_ptr<TimerService> timer, std::unique_ptr<Persister> persister,
+    std::unique_ptr<Protocol> protocol)
+    : config_(config),
+      state_machine_(std::move(state_machine)),
 
  private:
   using WorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;

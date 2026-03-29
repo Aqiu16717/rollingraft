@@ -740,3 +740,13 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
 
 void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
   while (last_applied_ < commit_index_) {
+    ++last_applied_;
+
+    auto entry_opt = log_.GetEntry(last_applied_);
+    if (!entry_opt) {
+      LOG_ERROR("Node {} failed to get log entry {}", server_id_,
+                last_applied_);
+      continue;
+    }
+
+    const auto& entry = *entry_opt;

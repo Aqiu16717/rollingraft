@@ -550,3 +550,13 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   req.candidate_id_ = server_id_;
   req.last_log_index_ = last_index;
   req.last_log_term_ = last_term;
+
+  // 序列化请求
+  std::string data;
+  // protocol_->SerializeRequest(req, data);  // TODO: 实现序列化
+
+  Term original_term = current_term_;  // 保存当前任期用于比较
+
+  network_->SendRpc(
+      peer_id, addr, data, std::chrono::milliseconds(config_.rpc_timeout_ms),
+      [this, peer_id, original_term](const std::string& resp, bool success,

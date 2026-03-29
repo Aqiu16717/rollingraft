@@ -870,3 +870,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
       return;
     }
   }
+
+  // 追加日志条目
+  if (!req.entries_.empty()) {
+    // 检查冲突并截断
+    for (const auto& entry : req.entries_) {
+      Term existing_term = GetLogTermLocked(entry.index_);
+      if (existing_term != 0 && existing_term != entry.term_) {
+        LOG_INFO("Node {} truncating log from index {}", server_id_,
+                 entry.index_);
+        log_.TruncateSuffix(entry.index_);

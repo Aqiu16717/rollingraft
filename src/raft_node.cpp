@@ -97,9 +97,7 @@ class RaftNode::RaftNodeImpl {
 
   // 状态检查
   bool IsRunning() const { return state_ == NodeState::kRunning; }
-  RaftNodeId server_id_;
-  std::vector<RaftNodeId> peers_;
-
+  // ========== 节点标识 ==========n  NodeId server_id_;n  std::vector<NodeAddr> peer_addrs_;n  std::unordered_map<NodeId, NodeAddr> peer_map_;
  private:
   // Persistent state on all servers
   /**

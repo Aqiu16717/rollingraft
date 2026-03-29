@@ -619,3 +619,14 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
 
   BroadcastAppendEntriesLocked();
 }
+
+void RaftNode::RaftNodeImpl::BroadcastAppendEntriesLocked() {
+  for (const auto& [peer_id, addr] : peer_map_) {
+    (void)addr;
+    SendAppendEntriesToPeerLocked(peer_id);
+  }
+}
+
+void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
+  auto it = next_index_.find(peer_id);
+  if (it == next_index_.end()) return;

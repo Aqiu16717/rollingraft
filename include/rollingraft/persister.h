@@ -17,6 +17,14 @@ struct PersistentState {
 class Persister {
  public:
   virtual ~Persister() = default;
+
+  // ==================== 生命周期 ====================
+
+  // 打开/创建持久化存储
+  virtual Status Open(const std::string\& data_dir) = 0;
+
+  // 关闭持久化存储
+  virtual void Close() = 0;
   virtual Status Write(const std::string& data) = 0;
   virtual Status Read(std::string& data) = 0;
 };

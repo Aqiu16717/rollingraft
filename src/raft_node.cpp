@@ -660,3 +660,13 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
                     [this, peer_id](const std::string& resp, bool success,
                                     const std::string& error) {
                       if (!success) {
+                        LOG_WARN("AppendEntries to {} failed: {}", peer_id,
+                                 error);
+                        return;
+                      }
+
+                      AppendEntriesResponse response;
+                      // protocol_->DeserializeResponse(resp, response); // TODO
+                      HandleAppendEntriesResponse(peer_id, response);
+                    });
+}

@@ -430,3 +430,12 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   BroadcastRequestVoteLocked();
 
   // 重置选举定时器
+  ResetElectionTimerLocked();
+}
+
+void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
+  RaftNodeRole old_role = role_;
+
+  role_ = RaftNodeRole::LEADER;
+  leader_id_ = server_id_;
+  leader_addr_ = config_.listen_addr;

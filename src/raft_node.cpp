@@ -900,3 +900,13 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
   // 更新 commit_index
   if (req.leader_commit_ > commit_index_) {
+    auto [last_index, _] = log_.GetLastLogInfo();
+    commit_index_ = std::min(req.leader_commit_, last_index);
+    ApplyCommittedLocked();
+  }
+
+  resp.success_ = true;
+}
+
+void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
+    const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {

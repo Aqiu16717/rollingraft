@@ -33,6 +33,15 @@ class Persister {
 
   // 加载持久化状态
   virtual Status LoadState(PersistentState\& state) = 0;
+
+  // ==================== 日志操作 ====================
+
+  // 追加日志条目（批量）
+  virtual Status AppendEntries(const std::vector<RaftLogEntry>\& entries) = 0;
+
+  // 获取指定范围的日志条目 [start, end)
+  virtual Status GetEntries(uint64_t start, uint64_t end,
+                            std::vector<RaftLogEntry>* out) = 0;
   virtual Status Write(const std::string& data) = 0;
   virtual Status Read(std::string& data) = 0;
 };

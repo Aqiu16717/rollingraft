@@ -470,3 +470,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   // 立即发送心跳（建立权威）
   BroadcastAppendEntriesLocked();
 }
+
+// ========== 定时器管理 ==========
+
+void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
+  CancelElectionTimerLocked();
+
+  // 随机超时 [election_timeout, 2 * election_timeout)
+  static thread_local std::mt19937 gen(std::random_device{}());
+  std::uniform_int_distribution<> dis(config_.election_timeout_ms,
+                                      2 * config_.election_timeout_ms);

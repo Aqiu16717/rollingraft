@@ -420,3 +420,13 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
 
   // 回调
+  if (old_role != role_ && role_change_callback_) {
+    role_change_callback_(role_, current_term_);
+  }
+
+  LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
+
+  // 发送投票请求
+  BroadcastRequestVoteLocked();
+
+  // 重置选举定时器

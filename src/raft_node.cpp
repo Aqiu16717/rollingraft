@@ -400,3 +400,13 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
 
   // 回调
   if (old_role != role_ && role_change_callback_) {
+    role_change_callback_(role_, current_term_);
+  }
+
+  LOG_INFO("Node {} became Follower at term {}", server_id_, current_term_);
+}
+
+void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
+  RaftNodeRole old_role = role_;
+
+  role_ = RaftNodeRole::CANDIDATE;

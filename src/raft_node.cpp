@@ -450,3 +450,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     next_index_[peer_id] = last_index + 1;
     match_index_[peer_id] = 0;
   }
+
+  // 停止选举定时器
+  CancelElectionTimerLocked();
+
+  // 启动心跳定时器
+  StartHeartbeatTimerLocked();
+
+  // 回调
+  if (old_role != role_ && role_change_callback_) {
+    role_change_callback_(role_, current_term_);

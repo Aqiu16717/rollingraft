@@ -750,3 +750,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
     }
 
     const auto& entry = *entry_opt;
+
+    // 应用到 StateMachine
+    auto result = state_machine_->Apply(
+        std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(entry.data_.data()),
+            entry.data_.size()),
+        last_applied_);
+
+    // 回调等待的用户
+    auto it = pending_proposals_.find(last_applied_);

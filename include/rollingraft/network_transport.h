@@ -24,7 +24,7 @@ using RpcRequestHandler = std::function<void(
 // Connection state callback
 // - peer_id: peer node ID
 // - addr: peer address
-// - connected: true=连接建立, false=连接断开
+// - connected: true=connected, false=disconnected
 using ConnectionCallback =
     std::function<void(NodeId peer_id, const NodeAddr& addr, bool connected)>;
 

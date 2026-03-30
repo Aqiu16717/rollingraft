@@ -14,6 +14,15 @@
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
+// Default component implementations
+#include "json_protocol.h"
+#include "asio_timer_service.h"
+
+// Forward declaration for default network transport
+namespace rollingraft {
+std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
+}  // namespace rollingraft
+
 using namespace rollingraft;
 
 // ========== Pending Proposals ==========
@@ -941,10 +950,12 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
     : raft_node_impl_(std::make_unique<RaftNodeImpl>(
           config, sm,
           config.network_factory ? config.network_factory()
-                                 : nullptr,  // TODO: default implementation
-          config.timer_factory ? config.timer_factory() : nullptr,
+                                 : CreateDefaultNetworkTransport(),
+          config.timer_factory ? config.timer_factory()
+                              : TimerService::CreateDefault(),
           config.persister_factory ? config.persister_factory() : nullptr,
-          config.protocol_factory ? config.protocol_factory() : nullptr)) {}
+          config.protocol_factory ? config.protocol_factory()
+                                 : std::make_unique<JsonProtocol>())) {}
 
 RaftNode::~RaftNode() = default;
 

@@ -131,15 +131,13 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
               "Missing required fields for RequestVote");
         }
 
-        uint32_t term = j["term"];
-        uint32_t candidate_id = j["candidate_id"];
-        uint32_t last_log_index = j["last_log_index"];
-        uint32_t last_log_term = j["last_log_term"];
-
-        RequestVoteRequest* vote_req = new RequestVoteRequest(
-            term, candidate_id, last_log_index, last_log_term);
-        req = *vote_req;
-        delete vote_req;
+        // Note: The interface expects req to be the correct type already.
+        // We cast and populate the fields based on message type.
+        RequestVoteRequest& vote_req = static_cast<RequestVoteRequest&>(req);
+        vote_req.term_ = j["term"];
+        vote_req.candidate_id_ = j["candidate_id"];
+        vote_req.last_log_index_ = j["last_log_index"];
+        vote_req.last_log_term_ = j["last_log_term"];
         break;
       }
 

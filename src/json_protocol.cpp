@@ -172,22 +172,16 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
               "Missing required fields for InstallSnapshot");
         }
 
-        uint32_t term = j["term"];
-        uint32_t leader_id = j["leader_id"];
-        uint32_t last_included_index = j["last_included_index"];
-        uint32_t last_included_term = j["last_included_term"];
-        uint32_t offset = j["offset"];
-        bool done = j["done"];
+        InstallSnapshotRequest& snapshot_req = static_cast<InstallSnapshotRequest&>(req);
+        snapshot_req.term_ = j["term"];
+        snapshot_req.leader_id_ = j["leader_id"];
+        snapshot_req.last_included_index_ = j["last_included_index"];
+        snapshot_req.last_included_term_ = j["last_included_term"];
+        snapshot_req.offset_ = j["offset"];
+        snapshot_req.done_ = j["done"];
 
-        // 解析data字段
         std::string data_str = j["data"];
-        std::vector<char> data(data_str.begin(), data_str.end());
-
-        InstallSnapshotRequest* snapshot_req =
-            new InstallSnapshotRequest(term, leader_id, last_included_index,
-                                       last_included_term, offset, data, done);
-        req = *snapshot_req;
-        delete snapshot_req;
+        snapshot_req.data_ = std::vector<char>(data_str.begin(), data_str.end());
         break;
       }
 

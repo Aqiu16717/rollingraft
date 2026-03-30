@@ -318,3 +318,75 @@ class TcpNetworkTransport : public NetworkTransport {
                                 if (connection_callback_) {
                                   connection_callback_(new_conn->GetPeerId(),
                                                        new_conn->GetAddr(), true);
+                                }
+                              } else if (running_) {
+                                LOG_ERROR("Accept error: {}", ec.message());
+                              }
+
+                              if (running_) {
+                                DoAccept();
+                              }
+                            });
+  }
+
+  std::shared_ptr<TcpConnection> GetOrCreateConnection(NodeId peer_id,
+                                                       const NodeAddr& addr) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = connections_.find(peer_id);
+    if (it != connections_.end() && it->second->IsConnected()) {
+      return it->second;
+    }
+
+    // Parse address
+    auto pos = addr.find(':');
+    if (pos == std::string::npos) {
+      return nullptr;
+    }
+
+    std::string host = addr.substr(0, pos);
+    uint16_t port = static_cast<uint16_t>(std::stoi(addr.substr(pos + 1)));
+
+    try {
+      asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
+
+      auto conn = std::make_shared<TcpConnection>(io_context_, peer_id, addr);
+      conn->Socket().async_connect(endpoint, [conn](std::error_code ec) {
+        if (!ec) {
+          conn->Start();
+        } else {
+          LOG_ERROR("Connect error: {}", ec.message());
+        }
+      });
+
+      connections_[peer_id] = conn;
+      return conn;
+    } catch (const std::exception& e) {
+      LOG_ERROR("Failed to create connection: {}", e.what());
+      return nullptr;
+    }
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  bool initialized_ = false;
+  bool running_ = false;
+
+  asio::io_context io_context_;
+  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_;
+  std::thread io_thread_;
+
+  NodeAddr listen_addr_;
+  std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
+  RpcRequestHandler request_handler_;
+  ConnectionCallback connection_callback_;
+
+  std::unordered_map<NodeId, std::shared_ptr<TcpConnection>> connections_;
+};
+
+// Factory function
+std::unique_ptr<NetworkTransport> CreateTcpNetworkTransport() {
+  return std::make_unique<TcpNetworkTransport>();
+}
+
+}  // namespace rollingraft

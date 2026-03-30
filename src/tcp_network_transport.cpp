@@ -389,4 +389,9 @@ std::unique_ptr<NetworkTransport> CreateTcpNetworkTransport() {
   return std::make_unique<TcpNetworkTransport>();
 }
 
+// Default factory function (used by RaftNode)
+std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport() {
+  return std::make_unique<TcpNetworkTransport>();
+}
+
 }  // namespace rollingraft

@@ -149,19 +149,17 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
               "Missing required fields for AppendEntries");
         }
 
-        uint32_t term = j["term"];
-        uint32_t leader_id = j["leader_id"];
-        uint32_t prev_log_index = j["prev_log_index"];
-        uint32_t prev_log_term = j["prev_log_term"];
-        uint32_t leader_commit = j["leader_commit"];
+        AppendEntriesRequest& append_req = static_cast<AppendEntriesRequest&>(req);
+        append_req.term_ = j["term"];
+        append_req.leader_id_ = j["leader_id"];
+        append_req.prev_log_index_ = j["prev_log_index"];
+        append_req.prev_log_term_ = j["prev_log_term"];
+        append_req.leader_commit_ = j["leader_commit"];
 
-        // Create AppendEntriesRequest object (entries not processed yet)
-        RaftLog entries;
-        AppendEntriesRequest* append_req =
-            new AppendEntriesRequest(term, leader_id, prev_log_index,
-                                     prev_log_term, entries, leader_commit);
-        req = *append_req;
-        delete append_req;
+        auto status = DeserializeEntries(j, append_req.entries_);
+        if (!status.ok()) {
+          return status;
+        }
         break;
       }
 

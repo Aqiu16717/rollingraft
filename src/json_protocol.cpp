@@ -271,13 +271,9 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
               "Missing required fields for RequestVoteResponse");
         }
 
-        uint32_t term = j["term"];
-        bool vote_granted = j["vote_granted"];
-
-        RequestVoteResponse* vote_res =
-            new RequestVoteResponse(term, vote_granted);
-        res = *vote_res;
-        delete vote_res;
+        RequestVoteResponse& vote_res = static_cast<RequestVoteResponse&>(res);
+        vote_res.term_ = j["term"];
+        vote_res.vote_granted_ = j["vote_granted"];
         break;
       }
 

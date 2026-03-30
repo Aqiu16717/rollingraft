@@ -18,6 +18,8 @@
 #include "json_protocol.h"
 #include "asio_timer_service.h"
 
+#include "nlohmann/json.hpp"
+
 // Forward declaration for default network transport
 namespace rollingraft {
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
@@ -562,7 +564,11 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
 
   // Serialize request
   std::string data;
-  // protocol_->SerializeRequest(req, data);  // TODO: implement serialization
+  auto status = protocol_->SerializeRequest(req, data);
+  if (!status.ok()) {
+    LOG_ERROR("Failed to serialize RequestVoteRequest: {}", status.ToString());
+    return;
+  }
 
   Term original_term = current_term_;  // Save current term for comparison
 
@@ -576,7 +582,12 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
         }
 
         RequestVoteResponse response;
-        // protocol_->DeserializeResponse(resp, response); // TODO: implement deserialization: implement deserialization
+        auto status = protocol_->DeserializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize RequestVoteResponse: {}",
+                    status.ToString());
+          return;
+        }
         HandleRequestVoteResponse(peer_id, response, original_term);
       });
 }

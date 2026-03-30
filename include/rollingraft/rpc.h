@@ -169,7 +169,8 @@ struct InstallSnapshotResponse : public RaftResponse {
   // currentTerm, for leader to update itself
   uint32_t term_;
 
-  InstallSnapshotResponse() = delete;
+  InstallSnapshotResponse()
+      : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(0) {}
   InstallSnapshotResponse(uint32_t term)
       : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(term) {}
 };

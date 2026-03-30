@@ -221,6 +221,8 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
         j["type"] = static_cast<int>(res.type_);
         j["term"] = append_res.term_;
         j["success"] = append_res.success_;
+        j["conflict_index"] = append_res.conflict_index_;
+        j["entries_count"] = append_res.entries_count_;
         break;
       }
 

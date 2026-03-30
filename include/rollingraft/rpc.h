@@ -90,15 +90,17 @@ struct AppendEntriesRequest : public RaftRequest {
   // leader's commitIndex
   Index leader_commit_;
 
-  AppendEntriesRequest() = delete;
-  AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index_,
-                       Term prev_log_term, RaftLog entries, Index leader_commit)
+  AppendEntriesRequest()
+      : RaftRequest(RaftMessageType::KAppendEntriesRequest) {}
+  AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index,
+                       Term prev_log_term, std::vector<RaftLogEntry> entries,
+                       Index leader_commit)
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
         term_(term),
         leader_id_(leader_id),
-        prev_log_index_(prev_log_index_),
+        prev_log_index_(prev_log_index),
         prev_log_term_(prev_log_term),
-        entries_(entries),
+        entries_(std::move(entries)),
         leader_commit_(leader_commit) {}
 };
 
@@ -107,12 +109,24 @@ struct AppendEntriesResponse : public RaftResponse {
   Term term_;
   // true if follower contained entry matching prevLogIndex and prevLogTerm
   bool success_;
+  // index of conflicting entry (for log backtracking optimization)
+  Index conflict_index_;
+  // number of entries successfully replicated
+  Index entries_count_;
 
-  AppendEntriesResponse() = delete;
-  AppendEntriesResponse(Term term, bool success)
+  AppendEntriesResponse()
+      : RaftResponse(RaftMessageType::KAppendEntriesResponse),
+        term_(0),
+        success_(false),
+        conflict_index_(0),
+        entries_count_(0) {}
+  AppendEntriesResponse(Term term, bool success, Index conflict_index = 0,
+                        Index entries_count = 0)
       : RaftResponse(RaftMessageType::KAppendEntriesResponse),
         term_(term),
-        success_(success) {}
+        success_(success),
+        conflict_index_(conflict_index),
+        entries_count_(entries_count) {}
 };
 
 /**
@@ -136,7 +150,7 @@ struct InstallSnapshotRequest : public RaftRequest {
   // true if this is the last chunk
   bool done_;
 
-  InstallSnapshotRequest() = delete;
+  InstallSnapshotRequest() : RaftRequest(RaftMessageType::KInstallSnapshotRequest) {}
   InstallSnapshotRequest(Term term, NodeId leader_id, Index last_included_index,
                          Term last_included_term, uint32_t offset,
                          std::vector<char> data, bool done)

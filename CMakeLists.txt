@@ -14,12 +14,11 @@ target_include_directories(rollingraft
 )
 target_sources(rollingraft
     PRIVATE
-    "src/server.cpp"
     "src/status.cpp"
     "src/raft_node.cpp"
     "src/raft_log.cpp"
     "src/json_protocol.cpp"
-    "src/tcp_network_transport.cpp"
+    "src/asio_network_transport.cpp"
     "src/asio_timer_service.cpp"
     "src/logger.cpp"
     "src/logger_spdlog_adapter.cpp"
@@ -58,6 +57,13 @@ target_include_directories(spdlog
 target_link_libraries(rollingraft
   PRIVATE
     spdlog
+)
+
+# add leveldb
+find_package(leveldb REQUIRED)
+target_link_libraries(rollingraft
+  PRIVATE
+    leveldb
 )
 
 

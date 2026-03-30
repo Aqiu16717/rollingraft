@@ -182,10 +182,10 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   std::string body_buffer_;
 };
 
-class TcpNetworkTransport : public NetworkTransport {
+class AsioNetworkTransport : public NetworkTransport {
  public:
-  TcpNetworkTransport() = default;
-  ~TcpNetworkTransport() override { Stop(); }
+  AsioNetworkTransport() = default;
+  ~AsioNetworkTransport() override { Stop(); }
 
   Status Initialize(const NodeAddr& listen_addr,
                     RpcRequestHandler handler) override {
@@ -255,7 +255,7 @@ class TcpNetworkTransport : public NetworkTransport {
     // Start accepting connections
     DoAccept();
 
-    LOG_INFO("TcpNetworkTransport started on {}", listen_addr_);
+    LOG_INFO("AsioNetworkTransport started on {}", listen_addr_);
     return Status::OK();
   }
 
@@ -288,7 +288,7 @@ class TcpNetworkTransport : public NetworkTransport {
       io_thread_.join();
     }
 
-    LOG_INFO("TcpNetworkTransport stopped");
+    LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();
   }
 
@@ -389,13 +389,13 @@ class TcpNetworkTransport : public NetworkTransport {
 };
 
 // Factory function
-std::unique_ptr<NetworkTransport> CreateTcpNetworkTransport() {
-  return std::make_unique<TcpNetworkTransport>();
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport() {
+  return std::make_unique<AsioNetworkTransport>();
 }
 
 // Default factory function (used by RaftNode)
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport() {
-  return std::make_unique<TcpNetworkTransport>();
+  return std::make_unique<AsioNetworkTransport>();
 }
 
 }  // namespace rollingraft

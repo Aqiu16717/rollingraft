@@ -75,6 +75,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         j["prev_log_index"] = append_req.prev_log_index_;
         j["prev_log_term"] = append_req.prev_log_term_;
         j["leader_commit"] = append_req.leader_commit_;
+        SerializeEntries(j, append_req.entries_);
         break;
       }
 
@@ -87,8 +88,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         j["last_included_index"] = snapshot_req.last_included_index_;
         j["last_included_term"] = snapshot_req.last_included_term_;
         j["offset"] = snapshot_req.offset_;
-        j["data"] =
-            std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
+        j["data"] = std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
         j["done"] = snapshot_req.done_;
         break;
       }

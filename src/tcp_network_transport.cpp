@@ -158,3 +158,83 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       asio::async_write(socket_, asio::buffer(*msg),
                         [self, msg](std::error_code ec, std::size_t) {
                           if (ec) {
+                            LOG_ERROR("Write response error: {}", ec.message());
+                          }
+                        });
+    } else if (!pending_callbacks_.empty()) {
+      // This is a client connection, handle response
+      auto callback = pending_callbacks_.front();
+      pending_callbacks_.pop_front();
+      callback(body_buffer_, true, "");
+    }
+  }
+
+ private:
+  asio::ip::tcp::socket socket_;
+  NodeId peer_id_;
+  NodeAddr addr_;
+  std::atomic<bool> connected_;
+
+  mutable std::mutex mutex_;
+  RpcRequestHandler request_handler_;
+  std::deque<RpcResponseCallback> pending_callbacks_;
+
+  char header_buffer_[4];
+  std::string body_buffer_;
+};
+
+class TcpNetworkTransport : public NetworkTransport {
+ public:
+  TcpNetworkTransport() = default;
+  ~TcpNetworkTransport() override { Stop(); }
+
+  Status Initialize(const NodeAddr& listen_addr,
+                    RpcRequestHandler handler) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (initialized_) {
+      return Status::Error("Already initialized");
+    }
+
+    listen_addr_ = listen_addr;
+    request_handler_ = handler;
+
+    // Parse address
+    auto pos = listen_addr.find(':');
+    if (pos == std::string::npos) {
+      return Status::Error("Invalid address format: " + listen_addr);
+    }
+
+    std::string host = listen_addr.substr(0, pos);
+    uint16_t port = static_cast<uint16_t>(std::stoi(listen_addr.substr(pos + 1)));
+
+    try {
+      asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
+      acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_, endpoint);
+    } catch (const std::exception& e) {
+      return Status::Error("Failed to create acceptor: " + std::string(e.what()));
+    }
+
+    initialized_ = true;
+    return Status::OK();
+  }
+
+  void SetConnectionCallback(ConnectionCallback callback) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    connection_callback_ = callback;
+  }
+
+  Status Start() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_) {
+      return Status::Error("Not initialized");
+    }
+
+    if (running_) {
+      return Status::OK();
+    }
+
+    running_ = true;
+
+    // Start io_context in a separate thread

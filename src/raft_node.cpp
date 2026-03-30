@@ -670,7 +670,11 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   // Serialize and send
   std::string data;
-  // protocol_->SerializeRequest(req, data); // TODO: implement serialization
+  auto status = protocol_->SerializeRequest(req, data);
+  if (!status.ok()) {
+    LOG_ERROR("Failed to serialize AppendEntriesRequest: {}", status.ToString());
+    return;
+  }
 
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
@@ -686,7 +690,12 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
                       }
 
                       AppendEntriesResponse response;
-                      // protocol_->DeserializeResponse(resp, response); // TODO
+                      auto status = protocol_->DeserializeResponse(resp, response);
+                      if (!status.ok()) {
+                        LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
+                                  status.ToString());
+                        return;
+                      }
                       HandleAppendEntriesResponse(peer_id, response);
                     });
 }

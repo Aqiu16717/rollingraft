@@ -238,3 +238,83 @@ class TcpNetworkTransport : public NetworkTransport {
     running_ = true;
 
     // Start io_context in a separate thread
+    work_guard_ = std::make_unique<asio::executor_work_guard<asio::io_context::executor_type>>(
+        io_context_.get_executor());
+
+    io_thread_ = std::thread([this]() {
+      try {
+        io_context_.run();
+      } catch (const std::exception& e) {
+        LOG_ERROR("IO context error: {}", e.what());
+      }
+    });
+
+    // Start accepting connections
+    DoAccept();
+
+    LOG_INFO("TcpNetworkTransport started on {}", listen_addr_);
+    return Status::OK();
+  }
+
+  Status Stop() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!running_) {
+      return Status::OK();
+    }
+
+    running_ = false;
+
+    // Stop acceptor
+    if (acceptor_ && acceptor_->is_open()) {
+      std::error_code ec;
+      acceptor_->close(ec);
+    }
+
+    // Close all connections
+    for (auto& [id, conn] : connections_) {
+      conn->Close();
+    }
+    connections_.clear();
+
+    // Stop io_context
+    work_guard_.reset();
+    io_context_.stop();
+
+    if (io_thread_.joinable()) {
+      io_thread_.join();
+    }
+
+    LOG_INFO("TcpNetworkTransport stopped");
+    return Status::OK();
+  }
+
+  void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
+               std::chrono::milliseconds timeout,
+               RpcResponseCallback callback) override {
+    auto conn = GetOrCreateConnection(to, addr);
+
+    if (!conn || !conn->IsConnected()) {
+      callback("", false, "Not connected");
+      return;
+    }
+
+    conn->Send(request_data, callback, timeout);
+  }
+
+ private:
+  void DoAccept() {
+    auto new_conn = std::make_shared<TcpConnection>(io_context_);
+
+    acceptor_->async_accept(new_conn->Socket(),
+                            [this, new_conn](std::error_code ec) {
+                              if (!ec) {
+                                new_conn->SetRequestHandler(request_handler_);
+                                new_conn->Start();
+                                {
+                                  std::lock_guard<std::mutex> lock(mutex_);
+                                  connections_[new_conn->GetPeerId()] = new_conn;
+                                }
+                                if (connection_callback_) {
+                                  connection_callback_(new_conn->GetPeerId(),
+                                                       new_conn->GetAddr(), true);

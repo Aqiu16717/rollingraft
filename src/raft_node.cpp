@@ -801,10 +801,82 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
                                                const std::string& data,
                                                std::string& response) {
-  (void)from;
-  (void)data;
-  (void)response;
-  // TODO: dispatch to specific handler based on message type
+  // First, peek at the message type to dispatch to the correct handler
+  // We need to deserialize based on the type field in the JSON
+  try {
+    // Parse just enough to get the type
+    auto j = nlohmann::json::parse(data);
+    if (!j.contains("type")) {
+      LOG_ERROR("Received RPC without type field");
+      return;
+    }
+
+    int type_id = j["type"];
+    auto message_type = static_cast<RaftMessageType>(type_id);
+
+    switch (message_type) {
+      case RaftMessageType::KRequestVoteRequest: {
+        RequestVoteRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize RequestVoteRequest: {}",
+                    status.ToString());
+          return;
+        }
+        RequestVoteResponse resp;
+        HandleRequestVote(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize RequestVoteResponse: {}",
+                    status.ToString());
+        }
+        break;
+      }
+
+      case RaftMessageType::KAppendEntriesRequest: {
+        AppendEntriesRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize AppendEntriesRequest: {}",
+                    status.ToString());
+          return;
+        }
+        AppendEntriesResponse resp;
+        HandleAppendEntries(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize AppendEntriesResponse: {}",
+                    status.ToString());
+        }
+        break;
+      }
+
+      case RaftMessageType::KInstallSnapshotRequest: {
+        InstallSnapshotRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize InstallSnapshotRequest: {}",
+                    status.ToString());
+          return;
+        }
+        InstallSnapshotResponse resp;
+        HandleInstallSnapshot(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize InstallSnapshotResponse: {}",
+                    status.ToString());
+        }
+        break;
+      }
+
+      default:
+        LOG_ERROR("Unknown message type: {}", type_id);
+        break;
+    }
+
+  } catch (const std::exception& e) {
+    LOG_ERROR("Failed to handle incoming RPC: {}", e.what());
+  }
 }
 
 void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,

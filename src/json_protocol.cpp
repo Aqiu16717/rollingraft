@@ -7,9 +7,48 @@
 
 using namespace rollingraft;
 
+namespace {
+
 RaftMessageType IntToMessageType(int type_id) {
   return static_cast<RaftMessageType>(type_id);
 }
+
+// Helper to serialize RaftLogEntry entries
+void SerializeEntries(nlohmann::json& j, const std::vector<RaftLogEntry>& entries) {
+  j["entries"] = nlohmann::json::array();
+  for (const auto& entry : entries) {
+    nlohmann::json entry_json;
+    entry_json["index"] = entry.index_;
+    entry_json["term"] = entry.term_;
+    entry_json["data"] = entry.data_;
+    j["entries"].push_back(entry_json);
+  }
+}
+
+// Helper to deserialize RaftLogEntry entries
+Status DeserializeEntries(const nlohmann::json& j, std::vector<RaftLogEntry>& entries) {
+  if (!j.contains("entries") || !j["entries"].is_array()) {
+    return Status::OK();  // Empty entries is OK
+  }
+
+  for (const auto& entry_json : j["entries"]) {
+    if (!entry_json.contains("index") || !entry_json.contains("term")) {
+      return Status::DeSerializeError("Missing entry fields");
+    }
+
+    RaftLogEntry entry;
+    entry.index_ = entry_json["index"];
+    entry.term_ = entry_json["term"];
+    if (entry_json.contains("data")) {
+      entry.data_ = entry_json["data"];
+    }
+    entries.push_back(entry);
+  }
+
+  return Status::OK();
+}
+
+}  // namespace
 
 Status JsonProtocol::SerializeRequest(const RaftRequest& req,
                                       std::string& output) const {

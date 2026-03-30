@@ -283,13 +283,15 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
               "Missing required fields for AppendEntriesResponse");
         }
 
-        uint32_t term = j["term"];
-        bool success = j["success"];
-
-        AppendEntriesResponse* append_res =
-            new AppendEntriesResponse(term, success);
-        res = *append_res;
-        delete append_res;
+        AppendEntriesResponse& append_res = static_cast<AppendEntriesResponse&>(res);
+        append_res.term_ = j["term"];
+        append_res.success_ = j["success"];
+        if (j.contains("conflict_index")) {
+          append_res.conflict_index_ = j["conflict_index"];
+        }
+        if (j.contains("entries_count")) {
+          append_res.entries_count_ = j["entries_count"];
+        }
         break;
       }
 

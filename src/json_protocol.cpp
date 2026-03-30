@@ -301,12 +301,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
               "Missing required fields for InstallSnapshotResponse");
         }
 
-        uint32_t term = j["term"];
-
-        InstallSnapshotResponse* snapshot_res =
-            new InstallSnapshotResponse(term);
-        res = *snapshot_res;
-        delete snapshot_res;
+        InstallSnapshotResponse& snapshot_res = static_cast<InstallSnapshotResponse&>(res);
+        snapshot_res.term_ = j["term"];
         break;
       }
 

@@ -9,7 +9,7 @@ namespace rollingraft {
 
 // Persistent metadata (must be persisted before each election)
 struct PersistentState {
-  Term current_term = 0;  // 当前任期
+  Term current_term = 0;  // Current term
   NodeId voted_for = -1;  // ID of candidate voted for (-1 means not voted)
 };
 
@@ -18,10 +18,10 @@ class Persister {
  public:
   virtual ~Persister() = default;
 
-  // ==================== 生命周期 ====================
+  // ==================== Lifecycle ====================
 
   // Open/create persistent storage
-  // @param data_dir: 数据目录路径
+  // @param data_dir: data directory path
   // @return: OK on success, IOError on failure
   virtual Status Open(const std::string& data_dir) = 0;
 

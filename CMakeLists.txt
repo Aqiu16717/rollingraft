@@ -18,6 +18,11 @@ target_sources(rollingraft
     "src/status.cpp"
     "src/raft_node.cpp"
     "src/raft_log.cpp"
+    "src/json_protocol.cpp"
+    "src/tcp_network_transport.cpp"
+    "src/asio_timer_service.cpp"
+    "src/logger.cpp"
+    "src/logger_spdlog_adapter.cpp"
 )
 
 # add third_party non-boost-asio

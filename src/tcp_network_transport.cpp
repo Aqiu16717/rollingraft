@@ -78,3 +78,83 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
                         if (ec) {
                           callback("", false, "Send failed: " + ec.message());
                           self->connected_ = false;
+                        }
+                        // Response will be handled by DoRead
+                      });
+
+    // Store callback for response matching
+    std::lock_guard<std::mutex> lock(self->mutex_);
+    pending_callbacks_.push_back(callback);
+  }
+
+  void SetRequestHandler(RpcRequestHandler handler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    request_handler_ = handler;
+  }
+
+ private:
+  void DoReadHeader() {
+    auto self = shared_from_this();
+    asio::async_read(socket_, asio::buffer(header_buffer_),
+                     [this, self](std::error_code ec, std::size_t) {
+                       if (ec) {
+                         if (ec != asio::error::eof) {
+                           LOG_ERROR("Read header error: {}", ec.message());
+                         }
+                         connected_ = false;
+                         return;
+                       }
+
+                       uint32_t length = (static_cast<uint8_t>(header_buffer_[0]) << 24) |
+                                         (static_cast<uint8_t>(header_buffer_[1]) << 16) |
+                                         (static_cast<uint8_t>(header_buffer_[2]) << 8) |
+                                         static_cast<uint8_t>(header_buffer_[3]);
+
+                       if (length > 0 && length < 100 * 1024 * 1024) {  // Max 100MB
+                         body_buffer_.resize(length);
+                         DoReadBody(length);
+                       } else {
+                         LOG_ERROR("Invalid message length: {}", length);
+                         connected_ = false;
+                       }
+                     });
+  }
+
+  void DoReadBody(uint32_t length) {
+    auto self = shared_from_this();
+    asio::async_read(socket_, asio::buffer(body_buffer_),
+                     [this, self](std::error_code ec, std::size_t) {
+                       if (ec) {
+                         LOG_ERROR("Read body error: {}", ec.message());
+                         connected_ = false;
+                         return;
+                       }
+
+                       HandleMessage();
+                       DoReadHeader();
+                     });
+  }
+
+  void HandleMessage() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (request_handler_) {
+      // This is a server connection, handle request
+      std::string response;
+      request_handler_(peer_id_, body_buffer_, response);
+
+      // Send response
+      uint32_t length = static_cast<uint32_t>(response.size());
+      char header[4];
+      header[0] = static_cast<char>((length >> 24) & 0xFF);
+      header[1] = static_cast<char>((length >> 16) & 0xFF);
+      header[2] = static_cast<char>((length >> 8) & 0xFF);
+      header[3] = static_cast<char>(length & 0xFF);
+
+      auto self = shared_from_this();
+      auto msg = std::make_shared<std::string>(header, 4);
+      msg->append(response);
+
+      asio::async_write(socket_, asio::buffer(*msg),
+                        [self, msg](std::error_code ec, std::size_t) {
+                          if (ec) {

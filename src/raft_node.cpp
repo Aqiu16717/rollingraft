@@ -520,6 +520,11 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   next_index_.clear();
   match_index_.clear();
 
+  // Clear client sessions - new leader doesn't have old session state
+  // Clients will retry with their next command, which will be treated as new
+  size_t cleared_sessions = client_sessions_.size();
+  client_sessions_.clear();
+
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
     next_index_[peer_id] = last_index + 1;
@@ -540,7 +545,8 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     leader_change_callback_(server_id_, config_.listen_addr);
   }
 
-  LOG_INFO("Node {} became Leader at term {}", server_id_, current_term_);
+  LOG_INFO("Node {} became Leader at term {} (cleared {} client sessions)",
+           server_id_, current_term_, cleared_sessions);
 
   // Send heartbeat immediately (establish authority)
   BroadcastAppendEntriesLocked();

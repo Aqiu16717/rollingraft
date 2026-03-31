@@ -36,6 +36,15 @@ struct PendingProposal {
   std::chrono::steady_clock::time_point propose_time;  // Proposal timestamp
 };
 
+// ========== Client Session (for idempotency) ==========
+struct ClientSession {
+  uint64_t last_seq;                                        // Last processed seq
+  std::string last_response;                                // Cached response
+  Index last_index;                                         // Log index
+  Term last_term;                                           // Term when executed
+  std::chrono::steady_clock::time_point last_active;        // For cleanup
+};
+
 // ========== RaftNode Implementation ==========
 class RaftNode::RaftNodeImpl {
  public:
@@ -135,6 +144,7 @@ class RaftNode::RaftNodeImpl {
   // ========== Leader State ==========
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
+  std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Idempotency
 
   // ========== Timer State ==========
   int election_timeout_ = 0;

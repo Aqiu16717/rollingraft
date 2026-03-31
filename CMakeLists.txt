@@ -65,8 +65,18 @@ target_include_directories(rollingraft_spdlog INTERFACE
 )
 add_library(rollingraft::spdlog ALIAS rollingraft_spdlog)
 
-# LevelDB (system library)
-find_package(leveldb REQUIRED)
+# LevelDB (bundled via submodule)
+set(LEVELDB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LEVELDB_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(LEVELDB_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/leveldb EXCLUDE_FROM_ALL)
+
+# Create alias for consistency
+if(NOT TARGET leveldb::leveldb)
+  if(TARGET leveldb)
+    add_library(leveldb::leveldb ALIAS leveldb)
+  endif()
+endif()
 
 # Link dependencies
 target_link_libraries(rollingraft
@@ -75,7 +85,7 @@ target_link_libraries(rollingraft
     rollingraft::json
   PRIVATE
     rollingraft::spdlog
-    leveldb
+    leveldb::leveldb
 )
 
 # Testing

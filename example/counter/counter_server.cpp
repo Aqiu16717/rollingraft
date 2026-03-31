@@ -2,6 +2,7 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -30,7 +31,7 @@ class CounterSnapshot : public rollingraft::Snapshot {
     if (offset > data_.size()) {
       return 0;
     }
-    size_t can_read = std::min(data_.size() - offset, length);
+    size_t can_read = std::min(data_.size() - static_cast<size_t>(offset), length);
     std::memcpy(dest, data_.data() + offset, can_read);
     return can_read;
   }
@@ -70,9 +71,9 @@ class CounterMachine : public rollingraft::StateMachine {
     last_applied_index_ = index;
 
     rollingraft::ApplyResult result;
-    result.success_ = true;
-    result.response_ = std::to_string(value_);
-    result.applied_index_ = index;
+    result.success = true;
+    result.response = std::to_string(value_);
+    result.applied_index = index;
 
     NotifyWaiters(index);
 
@@ -147,7 +148,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  rollingraft::RaftNodeId node_id = std::stoll(argv[1]);
+  rollingraft::NodeId node_id = std::stoll(argv[1]);
   std::string listen_port = argv[2];
 
   rollingraft::RaftNodeConfig config;
@@ -165,8 +166,8 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, SignalHandler);
 
   try {
-    auto sm = std::make_unique<CounterMachine>();
-    rollingraft::RaftNode node(config, sm);
+    auto sm = std::make_shared<CounterMachine>();
+    rollingraft::RaftNode raft_node(config, sm);
 
     std::cout << "-------------------------------------------\n";
     std::cout << " Raft Counter Node " << node_id << " Started\n";
@@ -174,17 +175,17 @@ int main(int argc, char** argv) {
     std::cout << " Storage: " << config.data_dir << "\n";
     std::cout << "-------------------------------------------\n";
 
-    node.Start();
+    raft_node.Start();
 
     while (g_running) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
-      if (node.IsLeader()) {
-        std::cout << "Current count value: " << sm->GetValue() << std::endl;
+      if (raft_node.IsLeader()) {
+        std::cout << "Current count value: " << sm->GetValue() << "\n";
       }
     }
 
     std::cout << "Stopping Raft node..." << std::endl;
-    node.Stop();
+    raft_node.Stop();
   } catch (const std::exception& e) {
     std::cerr << "Uncaught exception: " << e.what() << std::endl;
     return 1;

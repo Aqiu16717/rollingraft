@@ -1,5 +1,7 @@
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "rollingraft/rpc.h"
@@ -7,13 +9,13 @@
 class CounterClient {
  public:
   explicit CounterClient(const std::vector<std::string>& servers)
-      : servers_(servers), connect_idx_(0), client_id_(12345), seq(1) {}
+      : servers_(servers), connect_idx_(0), client_id_(12345), seq_(1) {}
 
   void SendCommand(const std::string& cmd) {
     rollingraft::ClientRequest req;
     req.command = cmd;
     req.client_id = client_id_;
-    req.seq = seq++;
+    req.seq = seq_++;
 
     bool success = false;
     while (!success) {
@@ -32,7 +34,7 @@ class CounterClient {
         } else {
           std::cout << "[Client] Redirected to Node: " << resp.leader_id << "("
                     << resp.leader_addr << ")" << std::endl;
-          current_addr_ = resp.leader_addr;
+          current_addr = resp.leader_addr;
           continue;
         }
       } else {
@@ -59,7 +61,8 @@ void PrintClientUsage(const char* prog) {
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    PrintClientUsage();
+    PrintClientUsage(argv[0]);
+    return 1;
   }
 
   std::vector<std::string> server_addrs;
@@ -73,7 +76,7 @@ int main(int argc, char* argv[]) {
   CounterClient client(server_addrs);
 
   std::string input;
-  while (std::cout >> "> " && std::getline(std::cin, input)) {
+  while (std::cout << "> " && std::getline(std::cin, input)) {
     if (input == "exit") {
       break;
     }

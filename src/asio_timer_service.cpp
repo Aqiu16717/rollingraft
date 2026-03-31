@@ -46,8 +46,7 @@ void AsioTimerService::Stop() {
   {
     std::lock_guard<std::mutex> lock(timers_mutex_);
     for (auto& [id, timer] : timers_) {
-      std::error_code ec;
-      timer->asio_timer->cancel(ec);
+      timer->asio_timer->cancel();
     }
     timers_.clear();
   }
@@ -149,8 +148,7 @@ bool AsioTimerService::CancelTimer(TimerId timer_id) {
     return false;
   }
 
-  std::error_code ec;
-  it->second->asio_timer->cancel(ec);
+  it->second->asio_timer->cancel();
   timers_.erase(it);
   return true;
 }

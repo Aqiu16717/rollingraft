@@ -1,8 +1,10 @@
 #include "rollingraft/raft_node.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <random>
 
 #include "rollingraft/logger.h"
@@ -58,6 +60,7 @@ class RaftNode::RaftNodeImpl {
 
   Status Propose(const std::string& command,
                  std::function<void(const ApplyResult&)> callback);
+  ApplyResult ProposeAndWaitLocked(const std::string& command);
   Status ReadIndex(std::function<void()> callback);
 
   // RPC handlers (called by NetworkTransport)
@@ -379,6 +382,56 @@ Status RaftNode::RaftNodeImpl::Propose(
   BroadcastAppendEntriesLocked();
 
   return Status::OK();
+}
+
+ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
+    const std::string& command) {
+  // Use promise/future for synchronous wait
+  std::promise<ApplyResult> promise;
+  auto future = promise.get_future();
+
+  // Create callback that will set the promise value
+  auto callback = [&promise](const ApplyResult& result) {
+    promise.set_value(result);
+  };
+
+  // Append to local log
+  auto [index, status] = log_.Append(current_term_, command);
+  if (!status.ok()) {
+    ApplyResult error_result;
+    error_result.success = false;
+    error_result.error_message = status.GetMessage();
+    return error_result;
+  }
+
+  // Record pending proposal
+  PendingProposal proposal;
+  proposal.index = index;
+  proposal.callback = std::move(callback);
+  proposal.propose_time = std::chrono::steady_clock::now();
+  pending_proposals_[index] = std::move(proposal);
+
+  // Trigger log replication
+  BroadcastAppendEntriesLocked();
+
+  // Unlock mutex while waiting to allow other threads to make progress
+  mtx_.unlock();
+
+  // Wait for commit and apply with timeout
+  auto wait_status = future.wait_for(std::chrono::seconds(5));
+
+  mtx_.lock();
+
+  if (wait_status == std::future_status::timeout) {
+    // Remove pending proposal on timeout
+    pending_proposals_.erase(index);
+    ApplyResult timeout_result;
+    timeout_result.success = false;
+    timeout_result.error_message = "Command execution timeout";
+    return timeout_result;
+  }
+
+  return future.get();
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
@@ -1037,7 +1090,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
 void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
                                                   ClientResponse& resp) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  mtx_.lock();
 
   // Check if we are the leader
   if (role_ != RaftNodeRole::LEADER) {
@@ -1045,26 +1098,32 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.error = "Not leader";
     resp.leader_id = leader_id_;
     resp.leader_addr = leader_addr_;
+    mtx_.unlock();
     return;
   }
 
   // For read-only requests, query state machine directly (may be stale)
   if (req.read_only) {
     // TODO: Implement linearizable read using ReadIndex
-    resp.success = true;
+    resp.success = false;
     resp.error = "Read not yet implemented";
+    mtx_.unlock();
     return;
   }
 
-  // Write command: propose to Raft log
+  // Write command: propose to Raft log and wait for execution
   // TODO: Implement idempotency check using client_id + seq
-  // TODO: Wait for commit and apply, then return result
 
-  // For now, return not implemented
-  resp.success = false;
-  resp.error = "Write commands not yet implemented";
+  auto result = ProposeAndWaitLocked(req.command);
+
+  resp.success = result.success;
+  resp.response = result.response;
+  resp.error = result.error_message;
+  resp.last_applied_index = result.applied_index;
   resp.leader_id = server_id_;
   resp.leader_addr = config_.listen_addr;
+
+  mtx_.unlock();
 }
 
 // ========== Utility Methods ==========

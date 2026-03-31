@@ -1127,10 +1127,46 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     return;
   }
 
-  // Write command: propose to Raft log and wait for execution
-  // TODO: Implement idempotency check using client_id + seq
+  // Get or create client session for idempotency
+  auto& session = client_sessions_[req.client_id];
+  session.last_active = std::chrono::steady_clock::now();
 
+  // Case 1: Old request (seq < last_seq) - already executed, return cached
+  if (req.seq < session.last_seq) {
+    resp.success = true;
+    resp.response = session.last_response;
+    resp.last_applied_index = session.last_index;
+    resp.leader_id = server_id_;
+    resp.leader_addr = config_.listen_addr;
+    LOG_INFO("Client {} seq {} is old (last={}), returning cached result",
+             req.client_id, req.seq, session.last_seq);
+    mtx_.unlock();
+    return;
+  }
+
+  // Case 2: Duplicate request (seq == last_seq) - return cached result
+  if (req.seq == session.last_seq) {
+    resp.success = true;
+    resp.response = session.last_response;
+    resp.last_applied_index = session.last_index;
+    resp.leader_id = server_id_;
+    resp.leader_addr = config_.listen_addr;
+    LOG_INFO("Client {} seq {} is duplicate, returning cached result",
+             req.client_id, req.seq);
+    mtx_.unlock();
+    return;
+  }
+
+  // Case 3: New request (seq > last_seq) - execute normally
   auto result = ProposeAndWaitLocked(req.command);
+
+  // Update session cache if successful
+  if (result.success) {
+    session.last_seq = req.seq;
+    session.last_response = result.response;
+    session.last_index = result.applied_index;
+    session.last_term = current_term_;
+  }
 
   resp.success = result.success;
   resp.response = result.response;

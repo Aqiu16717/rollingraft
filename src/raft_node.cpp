@@ -65,6 +65,7 @@ class RaftNode::RaftNodeImpl {
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
   void HandleInstallSnapshot(const InstallSnapshotRequest&,
                              InstallSnapshotResponse&);
+  void HandleClientRequest(const ClientRequest&, ClientResponse&);
 
  private:
   // State transitions (must hold mtx_ when calling)
@@ -869,6 +870,24 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
         break;
       }
 
+      case RaftMessageType::KClientRequest: {
+        ClientRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize ClientRequest: {}",
+                    status.ToString());
+          return;
+        }
+        ClientResponse resp;
+        HandleClientRequest(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize ClientResponse: {}",
+                    status.ToString());
+        }
+        break;
+      }
+
       default:
         LOG_ERROR("Unknown message type: {}", type_id);
         break;
@@ -1014,6 +1033,38 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
   (void)req;
   (void)resp;
   // TODO: implement snapshot handling
+}
+
+void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
+                                                  ClientResponse& resp) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  // Check if we are the leader
+  if (role_ != RaftNodeRole::LEADER) {
+    resp.success = false;
+    resp.error = "Not leader";
+    resp.leader_id = leader_id_;
+    resp.leader_addr = leader_addr_;
+    return;
+  }
+
+  // For read-only requests, query state machine directly (may be stale)
+  if (req.read_only) {
+    // TODO: Implement linearizable read using ReadIndex
+    resp.success = true;
+    resp.error = "Read not yet implemented";
+    return;
+  }
+
+  // Write command: propose to Raft log
+  // TODO: Implement idempotency check using client_id + seq
+  // TODO: Wait for commit and apply, then return result
+
+  // For now, return not implemented
+  resp.success = false;
+  resp.error = "Write commands not yet implemented";
+  resp.leader_id = server_id_;
+  resp.leader_addr = config_.listen_addr;
 }
 
 // ========== Utility Methods ==========

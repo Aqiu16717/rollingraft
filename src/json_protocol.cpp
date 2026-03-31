@@ -93,6 +93,17 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         break;
       }
 
+      case RaftMessageType::KClientRequest: {
+        const ClientRequest& client_req =
+            static_cast<const ClientRequest&>(req);
+        j["type"] = static_cast<int>(req.type_);
+        j["command"] = client_req.command;
+        j["client_id"] = client_req.client_id;
+        j["seq"] = client_req.seq;
+        j["read_only"] = client_req.read_only;
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unknown request type");
     }
@@ -185,6 +196,23 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         break;
       }
 
+      case RaftMessageType::KClientRequest: {
+        if (!j.contains("command") || !j.contains("client_id") ||
+            !j.contains("seq")) {
+          return Status::DeSerializeError(
+              "Missing required fields for ClientRequest");
+        }
+
+        ClientRequest& client_req = static_cast<ClientRequest&>(req);
+        client_req.command = j["command"];
+        client_req.client_id = j["client_id"];
+        client_req.seq = j["seq"];
+        if (j.contains("read_only")) {
+          client_req.read_only = j["read_only"];
+        }
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unsupported request type");
     }
@@ -231,6 +259,19 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
             static_cast<const InstallSnapshotResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["term"] = snapshot_res.term_;
+        break;
+      }
+
+      case RaftMessageType::KClientResponse: {
+        const ClientResponse& client_res =
+            static_cast<const ClientResponse&>(res);
+        j["type"] = static_cast<int>(res.type_);
+        j["success"] = client_res.success;
+        j["response"] = client_res.response;
+        j["error"] = client_res.error;
+        j["last_applied_index"] = client_res.last_applied_index;
+        j["leader_id"] = client_res.leader_id;
+        j["leader_addr"] = client_res.leader_addr;
         break;
       }
 
@@ -303,6 +344,32 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
         InstallSnapshotResponse& snapshot_res = static_cast<InstallSnapshotResponse&>(res);
         snapshot_res.term_ = j["term"];
+        break;
+      }
+
+      case RaftMessageType::KClientResponse: {
+        if (!j.contains("success")) {
+          return Status::DeSerializeError(
+              "Missing required fields for ClientResponse");
+        }
+
+        ClientResponse& client_res = static_cast<ClientResponse&>(res);
+        client_res.success = j["success"];
+        if (j.contains("response")) {
+          client_res.response = j["response"];
+        }
+        if (j.contains("error")) {
+          client_res.error = j["error"];
+        }
+        if (j.contains("last_applied_index")) {
+          client_res.last_applied_index = j["last_applied_index"];
+        }
+        if (j.contains("leader_id")) {
+          client_res.leader_id = j["leader_id"];
+        }
+        if (j.contains("leader_addr")) {
+          client_res.leader_addr = j["leader_addr"];
+        }
         break;
       }
 

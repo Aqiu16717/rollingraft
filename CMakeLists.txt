@@ -1,75 +1,104 @@
-cmake_minimum_required(VERSION 3.11)
-project(rollingraft LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.14)
+project(rollingraft
+  VERSION 0.1.0
+  LANGUAGES C CXX
+  DESCRIPTION "A C++20 Raft consensus library based on Asio"
+)
 
+# C++ Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_library(rollingraft "")
+# Build options
+option(BUILD_SHARED_LIBS "Build shared library" OFF)
+option(BUILD_TESTING "Build tests" ON)
+option(BUILD_EXAMPLES "Build examples" ON)
+
+# Compiler warnings
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Main library
+add_library(rollingraft)
+
+# Collect source files automatically
+file(GLOB_RECURSE ROLLINGRAFT_SOURCES
+  CONFIGURE_DEPENDS
+  "src/*.cpp"
+)
+target_sources(rollingraft PRIVATE ${ROLLINGRAFT_SOURCES})
+
+# Include directories
 target_include_directories(rollingraft
   PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     ${PROJECT_SOURCE_DIR}/src
 )
-target_sources(rollingraft
-    PRIVATE
-    "src/status.cpp"
-    "src/raft_node.cpp"
-    "src/raft_log.cpp"
-    "src/json_protocol.cpp"
-    "src/asio_network_transport.cpp"
-    "src/asio_timer_service.cpp"
-    "src/logger.cpp"
-    "src/logger_spdlog_adapter.cpp"
-)
 
-# add third_party non-boost-asio
-add_library(nonboost_asio INTERFACE)
-target_include_directories(nonboost_asio
-  INTERFACE 
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nonboost_asio/asio/include
-)
-target_compile_definitions(nonboost_asio
-  INTERFACE 
-    ASIO_STANDALONE
-)
-target_link_libraries(rollingraft PRIVATE nonboost_asio)
+# Third-party dependencies
 
+# Asio (header-only)
+add_library(rollingraft_asio INTERFACE)
+target_include_directories(rollingraft_asio INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nonboost_asio/asio/include
+)
+target_compile_definitions(rollingraft_asio INTERFACE ASIO_STANDALONE)
+add_library(rollingraft::asio ALIAS rollingraft_asio)
 
-# add third_party nlohmann_json
-add_library(nlohmann_json INTERFACE)
-target_include_directories(nlohmann_json
-  INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/single_include
+# nlohmann_json (header-only)
+add_library(rollingraft_json INTERFACE)
+target_include_directories(rollingraft_json INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/single_include
 )
-target_link_libraries(rollingraft
-  PRIVATE
-    nlohmann_json
-)
+add_library(rollingraft::json ALIAS rollingraft_json)
 
-# add third_party spdlog
-add_library(spdlog INTERFACE)
-target_include_directories(spdlog
-  INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include
+# spdlog (header-only)
+add_library(rollingraft_spdlog INTERFACE)
+target_include_directories(rollingraft_spdlog INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include
 )
-target_link_libraries(rollingraft
-  PRIVATE
-    spdlog
-)
+add_library(rollingraft::spdlog ALIAS rollingraft_spdlog)
 
-# add leveldb
+# LevelDB (system library)
 find_package(leveldb REQUIRED)
+
+# Link dependencies
 target_link_libraries(rollingraft
+  PUBLIC
+    rollingraft::asio
+    rollingraft::json
   PRIVATE
+    rollingraft::spdlog
     leveldb
 )
 
+# Testing
+if(BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
 
-# This project is tested using GoogleTest
-# add_subdirectory("third_party/googletest")
-enable_testing()
-add_subdirectory(tests)
+# Examples
+if(BUILD_EXAMPLES)
+  add_subdirectory(example)
+endif()
 
-# add_subdirectory(example)
+# Installation (simplified - just library and headers)
+include(GNUInstallDirs)
+
+install(TARGETS rollingraft
+  EXPORT rollingraft-targets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY include/rollingraft
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)

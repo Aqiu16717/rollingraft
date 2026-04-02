@@ -13,6 +13,7 @@
 #include "rollingraft/protocol.h"
 #include "rollingraft/raft_log.h"
 #include "rollingraft/rpc.h"
+#include "rollingraft/state_machine.h"
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
@@ -43,6 +44,16 @@ struct ClientSession {
   Index last_index;                                         // Log index
   Term last_term;                                           // Term when executed
   std::chrono::steady_clock::time_point last_active;        // For cleanup
+};
+
+// ========== Snapshot Transfer State (Leader side) ==========
+struct SnapshotSendState {
+  std::shared_ptr<Snapshot> snapshot;                       // Snapshot handle
+  uint64_t offset = 0;                                      // Current offset
+  Index last_included_index = 0;                            // Snapshot metadata
+  Term last_included_term = 0;                              // Snapshot metadata
+  bool in_progress = false;                                 // Transfer in progress
+  size_t last_chunk_size = 0;                               // For progress tracking
 };
 
 // ========== RaftNode Implementation ==========
@@ -102,6 +113,12 @@ class RaftNode::RaftNodeImpl {
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
+
+  // Snapshot related
+  void SendInstallSnapshotToPeerLocked(NodeId peer_id);
+  void SendNextSnapshotChunkLocked(NodeId peer_id);
+  void HandleInstallSnapshotResponse(NodeId from, const InstallSnapshotResponse& resp,
+                                     bool rpc_success);
 
   // Commit and apply
   void TryCommitLocked();
@@ -173,6 +190,10 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
+
+  // ========== Snapshot Transfer State ==========
+  std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
+  std::string snapshot_temp_data_;                                // Follower side (chunk buffer)
 
   // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
@@ -723,6 +744,15 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   Index next_idx = it->second;
 
+  // Check if we need to send snapshot instead
+  Index first_log_index = log_.GetFirstIndex();
+  if (next_idx < first_log_index) {
+    LOG_INFO("Node {}: next_idx {} < first_log_index {}, sending snapshot to {}",
+             server_id_, next_idx, first_log_index, peer_id);
+    SendInstallSnapshotToPeerLocked(peer_id);
+    return;
+  }
+
   AppendEntriesRequest req;
   req.term_ = current_term_;
   req.leader_id_ = server_id_;
@@ -807,6 +837,180 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
       }
     });
   }
+}
+
+// ========== Snapshot Replication ==========
+
+constexpr size_t kSnapshotChunkSize = 64 * 1024;  // 64KB chunks
+
+void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
+  auto& state = snapshot_sends_[peer_id];
+
+  // Already in progress? Skip
+  if (state.in_progress) {
+    LOG_DEBUG("Node {}: snapshot send to {} already in progress", server_id_,
+              peer_id);
+    return;
+  }
+
+  // Create new snapshot if needed
+  if (!state.snapshot) {
+    LOG_INFO("Node {}: creating snapshot for {}", server_id_, peer_id);
+    state.snapshot = state_machine_->CreateSnapshot();
+    if (!state.snapshot) {
+      LOG_ERROR("Node {}: failed to create snapshot", server_id_);
+      return;
+    }
+    state.offset = 0;
+    state.last_included_index = state.snapshot->GetMeta().last_included_index_;
+    state.last_included_term = state.snapshot->GetMeta().last_included_term_;
+  }
+
+  state.in_progress = true;
+  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?",
+           server_id_, peer_id, state.last_included_index,
+           state.last_included_term);
+
+  SendNextSnapshotChunkLocked(peer_id);
+}
+
+void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
+  auto it_state = snapshot_sends_.find(peer_id);
+  if (it_state == snapshot_sends_.end()) return;
+
+  auto& state = it_state->second;
+
+  // Safety checks
+  if (!state.snapshot || !state.in_progress) {
+    LOG_ERROR("Node {}: invalid snapshot state for {}", server_id_, peer_id);
+    return;
+  }
+
+  // Read chunk
+  std::vector<char> buffer(kSnapshotChunkSize);
+  size_t bytes_read = state.snapshot->Read(
+      state.offset, reinterpret_cast<uint8_t*>(buffer.data()), kSnapshotChunkSize);
+  buffer.resize(bytes_read);
+  state.last_chunk_size = bytes_read;
+
+  // Check if this is the last chunk
+  bool is_last = (bytes_read < kSnapshotChunkSize);
+
+  // Build request
+  InstallSnapshotRequest req;
+  req.term_ = current_term_;
+  req.leader_id_ = server_id_;
+  req.last_included_index_ = state.last_included_index;
+  req.last_included_term_ = state.last_included_term;
+  req.offset_ = static_cast<uint32_t>(state.offset);
+  req.data_ = std::move(buffer);
+  req.done_ = is_last;
+
+  // Serialize
+  std::string data;
+  auto status = protocol_->SerializeRequest(req, data);
+  if (!status.ok()) {
+    LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}",
+              server_id_, status.ToString());
+    state.in_progress = false;
+    return;
+  }
+
+  // Get peer address
+  auto it_addr = peer_map_.find(peer_id);
+  if (it_addr == peer_map_.end()) {
+    LOG_ERROR("Node {}: peer {} not found", server_id_, peer_id);
+    state.in_progress = false;
+    return;
+  }
+
+  LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
+            server_id_, peer_id, state.offset, bytes_read, is_last);
+
+  // Send
+  network_->SendRpc(peer_id, it_addr->second, data,
+                    std::chrono::milliseconds(config_.rpc_timeout_ms),
+                    [this, peer_id](const std::string& resp, bool success,
+                                    const std::string& error) {
+                      // Deserialize response first (outside lock)
+                      InstallSnapshotResponse response;
+                      if (success) {
+                        auto status = protocol_->DeserializeResponse(resp, response);
+                        if (!status.ok()) {
+                          LOG_ERROR("Node {}: failed to deserialize "
+                                    "InstallSnapshotResponse: {}",
+                                    server_id_, status.ToString());
+                          success = false;
+                        }
+                      } else {
+                        LOG_WARN("Node {}: InstallSnapshot to {} failed: {}",
+                                 server_id_, peer_id, error);
+                      }
+                      HandleInstallSnapshotResponse(peer_id, response, success);
+                    });
+}
+
+void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
+    NodeId from, const InstallSnapshotResponse& resp, bool rpc_success) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ != RaftNodeRole::LEADER) return;
+
+  auto it = snapshot_sends_.find(from);
+  if (it == snapshot_sends_.end()) return;
+
+  auto& state = it->second;
+  state.in_progress = false;
+
+  // RPC failed: retry with backoff
+  if (!rpc_success) {
+    LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_, from);
+    timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
+      std::lock_guard<std::mutex> lock(mtx_);
+      if (role_ == RaftNodeRole::LEADER) {
+        SendNextSnapshotChunkLocked(from);
+      }
+    });
+    return;
+  }
+
+  // Term check: if follower has higher term, revert to follower
+  if (resp.term_ > current_term_) {
+    LOG_INFO("Node {}: follower {} has higher term {} vs {}, reverting to Follower",
+             server_id_, from, resp.term_, current_term_);
+    BecomeFollowerLocked(resp.term_);
+    return;
+  }
+
+  // Check if we're done
+  if (state.offset + state.last_chunk_size >=
+      state.snapshot->GetMeta().last_included_index_) {
+    // Actually we need to track total size, not index. Let 'done' flag drive this.
+    // But we don't store total size. Use the done flag from last send.
+    // Simpler: check if last chunk was smaller than chunk size
+    if (state.last_chunk_size < kSnapshotChunkSize) {
+      // Transfer complete
+      LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}",
+               server_id_, from, state.last_included_index);
+
+      match_index_[from] = state.last_included_index;
+      next_index_[from] = state.last_included_index + 1;
+
+      // Clean up
+      snapshot_sends_.erase(it);
+
+      // Try to commit (snapshot doesn't increase commit directly,
+      // but we may be able to commit entries after the snapshot)
+      TryCommitLocked();
+      return;
+    }
+  }
+
+  // More chunks to send
+  state.offset += state.last_chunk_size;
+  state.in_progress = true;
+  SendNextSnapshotChunkLocked(from);
 }
 
 // ========== Commit and Apply ==========
@@ -1099,9 +1303,91 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
 void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {
-  (void)req;
-  (void)resp;
-  // TODO: implement snapshot handling
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  resp.term_ = current_term_;
+
+  // Term check: reject stale leader
+  if (req.term_ < current_term_) {
+    LOG_DEBUG("Node {} reject InstallSnapshot: req.term {} < {}", server_id_,
+              req.term_, current_term_);
+    return;
+  }
+
+  // Higher term: revert to follower
+  if (req.term_ > current_term_) {
+    LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
+             current_term_, req.term_);
+    BecomeFollowerLocked(req.term_);
+    resp.term_ = current_term_;
+  }
+
+  // Update leader info
+  leader_id_ = req.leader_id_;
+  auto it = peer_map_.find(leader_id_);
+  if (it != peer_map_.end()) {
+    leader_addr_ = it->second;
+  }
+
+  // Reset election timer (we have a valid leader)
+  ResetElectionTimerLocked();
+
+  // Handle snapshot chunk
+  if (req.offset_ == 0) {
+    // New snapshot transfer, clear buffer
+    snapshot_temp_data_.clear();
+    LOG_INFO("Node {} starting snapshot receive: index={}, term={}", server_id_,
+             req.last_included_index_, req.last_included_term_);
+  }
+
+  // Append chunk data
+  snapshot_temp_data_.append(req.data_.data(), req.data_.size());
+  LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}",
+            server_id_, req.offset_, req.data_.size(), req.done_);
+
+  // Final chunk: restore state machine
+  if (req.done_) {
+    LOG_INFO("Node {} restoring from snapshot: {} bytes, up to index {} term {}",
+             server_id_, snapshot_temp_data_.size(), req.last_included_index_,
+             req.last_included_term_);
+
+    // Restore state machine
+    std::vector<uint8_t> snapshot_bytes(snapshot_temp_data_.begin(),
+                                        snapshot_temp_data_.end());
+
+    if (!state_machine_->Restore(snapshot_bytes)) {
+      LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
+      // Clear buffer and wait for leader to retry
+      snapshot_temp_data_.clear();
+      return;
+    }
+
+    // Update log: discard all entries covered by snapshot
+    log_.SetStartIndex(req.last_included_index_ + 1);
+
+    // Update indices
+    last_applied_ = req.last_included_index_;
+    commit_index_ = req.last_included_index_;
+
+    // Persist snapshot if persister available
+    if (persister_) {
+      auto status = persister_->SaveSnapshot(snapshot_temp_data_,
+                                             req.last_included_index_,
+                                             req.last_included_term_);
+      if (!status.ok()) {
+        LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
+                 status.ToString());
+        // Non-fatal: we can continue, snapshot will be resent if needed
+      }
+    }
+
+    // Clear buffer
+    snapshot_temp_data_.clear();
+
+    LOG_INFO("Node {} successfully restored from snapshot, log start={}, "
+             "commit_index={}",
+             server_id_, log_.GetFirstIndex(), commit_index_);
+  }
 }
 
 void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,

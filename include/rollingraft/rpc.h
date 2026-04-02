@@ -14,7 +14,9 @@ enum class RaftMessageType : int8_t {
   KAppendEntriesRequest = 2,
   KAppendEntriesResponse = 3,
   KInstallSnapshotRequest = 4,
-  KInstallSnapshotResponse = 5
+  KInstallSnapshotResponse = 5,
+  KClientRequest = 6,
+  KClientResponse = 7
 };
 
 struct RaftRequest {
@@ -169,25 +171,38 @@ struct InstallSnapshotResponse : public RaftResponse {
   // currentTerm, for leader to update itself
   uint32_t term_;
 
-  InstallSnapshotResponse() = delete;
+  InstallSnapshotResponse()
+      : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(0) {}
   InstallSnapshotResponse(uint32_t term)
       : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(term) {}
 };
 
-struct ClientRequest {
+struct ClientRequest : public RaftRequest {
   std::string command;
   uint64_t client_id;
   uint64_t seq;
   bool read_only = false;
+
+  ClientRequest()
+      : RaftRequest(RaftMessageType::KClientRequest),
+        client_id(0),
+        seq(0),
+        read_only(false) {}
 };
 
-struct ClientResponse {
+struct ClientResponse : public RaftResponse {
   bool success;
   std::string response;
-  Index last_applied_index_;
+  std::string error;
+  Index last_applied_index;
   NodeId leader_id;
   std::string leader_addr;
-  Status error_code;
+
+  ClientResponse()
+      : RaftResponse(RaftMessageType::KClientResponse),
+        success(false),
+        last_applied_index(0),
+        leader_id(-1) {}
 };
 
 Status RpcCall(const std::string& addr, const ClientRequest& req,

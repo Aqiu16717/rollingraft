@@ -1,5 +1,3 @@
-#include "rollingraft/network_transport.h"
-
 #include <asio.hpp>
 #include <atomic>
 #include <chrono>
@@ -12,6 +10,8 @@
 #include <unordered_map>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/network_transport.h"
+#include "rollingraft/types.h"
 
 namespace rollingraft {
 
@@ -19,10 +19,7 @@ namespace rollingraft {
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  public:
   TcpConnection(asio::io_context& io_ctx, NodeId peer_id, const NodeAddr& addr)
-      : socket_(io_ctx),
-        peer_id_(peer_id),
-        addr_(addr),
-        connected_(false) {}
+      : socket_(io_ctx), peer_id_(peer_id), addr_(addr), connected_(false) {}
 
   TcpConnection(asio::io_context& io_ctx)
       : socket_(io_ctx), peer_id_(-1), addr_(""), connected_(false) {}
@@ -72,15 +69,16 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     });
 
     // Send message
-    asio::async_write(socket_, asio::buffer(*msg),
-                      [self, msg, callback, timer](std::error_code ec, std::size_t) {
-                        timer->cancel();
-                        if (ec) {
-                          callback("", false, "Send failed: " + ec.message());
-                          self->connected_ = false;
-                        }
-                        // Response will be handled by DoRead
-                      });
+    asio::async_write(
+        socket_, asio::buffer(*msg),
+        [self, msg, callback, timer](std::error_code ec, std::size_t) {
+          timer->cancel();
+          if (ec) {
+            callback("", false, "Send failed: " + ec.message());
+            self->connected_ = false;
+          }
+          // Response will be handled by DoRead
+        });
 
     // Store callback for response matching
     std::lock_guard<std::mutex> lock(self->mutex_);
@@ -95,29 +93,30 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  private:
   void DoReadHeader() {
     auto self = shared_from_this();
-    asio::async_read(socket_, asio::buffer(header_buffer_),
-                     [this, self](std::error_code ec, std::size_t) {
-                       if (ec) {
-                         if (ec != asio::error::eof) {
-                           LOG_ERROR("Read header error: {}", ec.message());
-                         }
-                         connected_ = false;
-                         return;
-                       }
+    asio::async_read(
+        socket_, asio::buffer(header_buffer_),
+        [this, self](std::error_code ec, std::size_t) {
+          if (ec) {
+            if (ec != asio::error::eof) {
+              LOG_ERROR("Read header error: {}", ec.message());
+            }
+            connected_ = false;
+            return;
+          }
 
-                       uint32_t length = (static_cast<uint8_t>(header_buffer_[0]) << 24) |
-                                         (static_cast<uint8_t>(header_buffer_[1]) << 16) |
-                                         (static_cast<uint8_t>(header_buffer_[2]) << 8) |
-                                         static_cast<uint8_t>(header_buffer_[3]);
+          uint32_t length = (static_cast<uint8_t>(header_buffer_[0]) << 24) |
+                            (static_cast<uint8_t>(header_buffer_[1]) << 16) |
+                            (static_cast<uint8_t>(header_buffer_[2]) << 8) |
+                            static_cast<uint8_t>(header_buffer_[3]);
 
-                       if (length > 0 && length < 100 * 1024 * 1024) {  // Max 100MB
-                         body_buffer_.resize(length);
-                         DoReadBody(length);
-                       } else {
-                         LOG_ERROR("Invalid message length: {}", length);
-                         connected_ = false;
-                       }
-                     });
+          if (length > 0 && length < 100 * 1024 * 1024) {  // Max 100MB
+            body_buffer_.resize(length);
+            DoReadBody(length);
+          } else {
+            LOG_ERROR("Invalid message length: {}", length);
+            connected_ = false;
+          }
+        });
   }
 
   void DoReadBody(uint32_t length) {
@@ -183,10 +182,10 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   std::string body_buffer_;
 };
 
-class TcpNetworkTransport : public NetworkTransport {
+class AsioNetworkTransport : public NetworkTransport {
  public:
-  TcpNetworkTransport() = default;
-  ~TcpNetworkTransport() override { Stop(); }
+  AsioNetworkTransport() = default;
+  ~AsioNetworkTransport() override { Stop(); }
 
   Status Initialize(const NodeAddr& listen_addr,
                     RpcRequestHandler handler) override {
@@ -206,13 +205,16 @@ class TcpNetworkTransport : public NetworkTransport {
     }
 
     std::string host = listen_addr.substr(0, pos);
-    uint16_t port = static_cast<uint16_t>(std::stoi(listen_addr.substr(pos + 1)));
+    uint16_t port =
+        static_cast<uint16_t>(std::stoi(listen_addr.substr(pos + 1)));
 
     try {
       asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-      acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_, endpoint);
+      acceptor_ =
+          std::make_unique<asio::ip::tcp::acceptor>(io_context_, endpoint);
     } catch (const std::exception& e) {
-      return Status::Error("Failed to create acceptor: " + std::string(e.what()));
+      return Status::Error("Failed to create acceptor: " +
+                           std::string(e.what()));
     }
 
     initialized_ = true;
@@ -238,7 +240,8 @@ class TcpNetworkTransport : public NetworkTransport {
     running_ = true;
 
     // Start io_context in a separate thread
-    work_guard_ = std::make_unique<asio::executor_work_guard<asio::io_context::executor_type>>(
+    work_guard_ = std::make_unique<
+        asio::executor_work_guard<asio::io_context::executor_type>>(
         io_context_.get_executor());
 
     io_thread_ = std::thread([this]() {
@@ -252,7 +255,7 @@ class TcpNetworkTransport : public NetworkTransport {
     // Start accepting connections
     DoAccept();
 
-    LOG_INFO("TcpNetworkTransport started on {}", listen_addr_);
+    LOG_INFO("AsioNetworkTransport started on {}", listen_addr_);
     return Status::OK();
   }
 
@@ -285,7 +288,7 @@ class TcpNetworkTransport : public NetworkTransport {
       io_thread_.join();
     }
 
-    LOG_INFO("TcpNetworkTransport stopped");
+    LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();
   }
 
@@ -306,27 +309,27 @@ class TcpNetworkTransport : public NetworkTransport {
   void DoAccept() {
     auto new_conn = std::make_shared<TcpConnection>(io_context_);
 
-    acceptor_->async_accept(new_conn->Socket(),
-                            [this, new_conn](std::error_code ec) {
-                              if (!ec) {
-                                new_conn->SetRequestHandler(request_handler_);
-                                new_conn->Start();
-                                {
-                                  std::lock_guard<std::mutex> lock(mutex_);
-                                  connections_[new_conn->GetPeerId()] = new_conn;
-                                }
-                                if (connection_callback_) {
-                                  connection_callback_(new_conn->GetPeerId(),
-                                                       new_conn->GetAddr(), true);
-                                }
-                              } else if (running_) {
-                                LOG_ERROR("Accept error: {}", ec.message());
-                              }
+    acceptor_->async_accept(
+        new_conn->Socket(), [this, new_conn](std::error_code ec) {
+          if (!ec) {
+            new_conn->SetRequestHandler(request_handler_);
+            new_conn->Start();
+            {
+              std::lock_guard<std::mutex> lock(mutex_);
+              connections_[new_conn->GetPeerId()] = new_conn;
+            }
+            if (connection_callback_) {
+              connection_callback_(new_conn->GetPeerId(), new_conn->GetAddr(),
+                                   true);
+            }
+          } else if (running_) {
+            LOG_ERROR("Accept error: {}", ec.message());
+          }
 
-                              if (running_) {
-                                DoAccept();
-                              }
-                            });
+          if (running_) {
+            DoAccept();
+          }
+        });
   }
 
   std::shared_ptr<TcpConnection> GetOrCreateConnection(NodeId peer_id,
@@ -373,7 +376,8 @@ class TcpNetworkTransport : public NetworkTransport {
   bool running_ = false;
 
   asio::io_context io_context_;
-  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_;
+  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>
+      work_guard_;
   std::thread io_thread_;
 
   NodeAddr listen_addr_;
@@ -385,13 +389,13 @@ class TcpNetworkTransport : public NetworkTransport {
 };
 
 // Factory function
-std::unique_ptr<NetworkTransport> CreateTcpNetworkTransport() {
-  return std::make_unique<TcpNetworkTransport>();
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport() {
+  return std::make_unique<AsioNetworkTransport>();
 }
 
 // Default factory function (used by RaftNode)
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport() {
-  return std::make_unique<TcpNetworkTransport>();
+  return std::make_unique<AsioNetworkTransport>();
 }
 
 }  // namespace rollingraft

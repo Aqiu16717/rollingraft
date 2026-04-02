@@ -1,5 +1,10 @@
-add_executable(example_counter counter/counter.cpp)
-target_link_libraries(example_counter PRIVATE rollingraft)
+# Counter example
+add_executable(example_counter_server counter/counter_server.cpp)
+target_link_libraries(example_counter_server PRIVATE rollingraft)
 
+add_executable(example_counter_client counter/counter_client.cpp)
+target_link_libraries(example_counter_client PRIVATE rollingraft)
+
+# Server thread example
 add_executable(example_server_thread server_thread/server_thread.cpp)
 target_link_libraries(example_server_thread PRIVATE rollingraft)

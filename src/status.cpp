@@ -58,3 +58,13 @@ std::string Status::ToString() const {
     return result;
   }
 }
+
+std::string Status::GetMessage() const {
+  if (state_ == nullptr) {
+    return "";
+  } else {
+    uint32_t length;
+    std::memcpy(&length, state_, sizeof(length));
+    return std::string(state_ + 5, length);
+  }
+}

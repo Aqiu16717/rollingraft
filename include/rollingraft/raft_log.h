@@ -47,13 +47,21 @@ class RaftLog {
 
   Term LastLogTerm() const { return GetLastLogInfo().second; }
 
+  // Snapshot support: get the first available log index
+  // Returns 1 for fresh logs, or (last_included_index + 1) after snapshot
+  Index GetFirstIndex() const { return start_index_; }
+
+  // Snapshot support: set new start index after installing snapshot
+  // This discards all entries before the new start index
+  void SetStartIndex(Index index);
+
  private:
   size_t ToPhysicalIndex(Index logical_index) const;
   bool IsInRange(Index index) const;
 
  private:
   std::deque<RaftLogEntry> entries_;
-  Index start_index_ = 1;
+  Index start_index_ = 1;  // First available log index (may be > 1 after snapshot)
 };
 
 }  // namespace rollingraft

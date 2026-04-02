@@ -96,4 +96,10 @@ bool RaftLog::IsInRange(Index index) const {
          index < start_index_ + static_cast<Index>(entries_.size());
 }
 
+void RaftLog::SetStartIndex(Index index) {
+  // Clear all existing entries - they are now covered by snapshot
+  entries_.clear();
+  start_index_ = index;
+}
+
 }  // namespace rollingraft

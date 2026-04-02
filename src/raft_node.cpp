@@ -8,6 +8,7 @@
 #include <random>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/log_persister.h"
 #include "rollingraft/network_transport.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/protocol.h"
@@ -174,6 +175,7 @@ class RaftNode::RaftNodeImpl {
   std::unique_ptr<NetworkTransport> network_;
   std::unique_ptr<TimerService> timer_;
   std::unique_ptr<Persister> persister_;
+  std::unique_ptr<LogPersister> log_persister_;
   std::unique_ptr<Protocol> protocol_;
 
   // ========== Runtime State ==========
@@ -268,6 +270,20 @@ Status RaftNode::RaftNodeImpl::Start() {
       LOG_INFO("Restored state: term={}, voted_for={}", current_term_,
                voted_for_);
     }
+
+    // Initialize and start LogPersister
+    LogPersistenceConfig log_config;
+    log_config.batch_size = config_.max_entries_per_append;
+    log_config.batch_interval_ms = config_.heartbeat_interval_ms / 2;
+    log_persister_ =
+        std::make_unique<LogPersister>(std::move(persister_), log_config);
+    log_persister_->Start();
+
+    // Restore log entries from disk
+    auto restored_entries = log_persister_->Restore(log_.GetFirstIndex());
+    for (const auto& entry : restored_entries) {
+      log_.AppendLogEntry(entry);
+    }
   }
 
   // 2. Initialize network layer
@@ -331,9 +347,9 @@ Status RaftNode::RaftNodeImpl::Stop() {
     network_->Stop();
   }
 
-  // 4. Close persistence
-  if (persister_) {
-    persister_->Close();
+  // 4. Stop LogPersister (flushes remaining entries)
+  if (log_persister_) {
+    log_persister_->Stop();
   }
 
   // 5. Clean up pending proposals
@@ -400,6 +416,14 @@ Status RaftNode::RaftNodeImpl::Propose(
   auto [index, status] = log_.Append(current_term_, command);
   if (!status.ok()) {
     return status;
+  }
+
+  // Persist log entry (async)
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      log_persister_->Append(*entry_opt);
+    }
   }
 
   // Record pending proposal
@@ -1285,6 +1309,11 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
         LOG_ERROR("Node {} failed to append entry: {}", server_id_,
                   status.ToString());
         return;
+      }
+
+      // Persist log entry (async)
+      if (log_persister_) {
+        log_persister_->Append(entry);
       }
     }
     resp.entries_count_ = req.entries_.size();

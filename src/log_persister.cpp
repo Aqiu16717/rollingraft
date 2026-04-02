@@ -77,9 +77,14 @@ Status LogPersister::FlushSync() {
   // Wait for current buffer to be flushed
   TriggerFlush();
 
-  // Wait for flush to complete
+  // Wait for flush to complete (with timeout)
   std::unique_lock<std::mutex> lock(buffer_mutex_);
-  flush_cv_.wait(lock, [this] { return buffer_.empty() || !healthy_; });
+  bool flushed = flush_cv_.wait_for(lock, std::chrono::seconds(5),
+                                    [this] { return buffer_.empty() || !healthy_; });
+
+  if (!flushed) {
+    return Status::Error("Flush timeout");
+  }
 
   if (!healthy_) {
     std::lock_guard<std::mutex> err_lock(error_mutex_);

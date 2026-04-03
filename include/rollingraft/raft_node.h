@@ -85,6 +85,11 @@ class RaftNode {
   // only for leader
   Status Propose(const std::string& command,
                  std::function<void(const ApplyResult& result)> callback);
+
+  // linearizable read (only for leader)
+  // callback is invoked when it's safe to read from state machine
+  Status ReadIndex(std::function<void()> callback);
+
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   NodeAddr GetLeaderAddr() const;

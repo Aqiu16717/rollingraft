@@ -6,6 +6,7 @@
 #include <functional>
 #include <future>
 #include <random>
+#include <set>
 
 #include "rollingraft/logger.h"
 #include "rollingraft/log_persister.h"
@@ -55,6 +56,15 @@ struct SnapshotSendState {
   Term last_included_term = 0;                              // Snapshot metadata
   bool in_progress = false;                                 // Transfer in progress
   size_t last_chunk_size = 0;                               // For progress tracking
+};
+
+// ========== Pending ReadIndex Request ==========
+struct PendingReadIndex {
+  Index read_index;                                         // The commit index to wait for
+  std::function<void()> callback;                           // Completion callback
+  std::chrono::steady_clock::time_point start_time;         // Request timestamp
+  std::set<NodeId> acks;                                    // Nodes that acknowledged
+  bool heartbeats_sent = false;                             // Whether heartbeats were sent
 };
 
 // ========== RaftNode Implementation ==========
@@ -114,6 +124,11 @@ class RaftNode::RaftNodeImpl {
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
+
+  // ReadIndex related
+  void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);
+  void HandleReadIndexAckLocked(NodeId from, uint64_t read_id);
+  void ProcessPendingReadsLocked();
 
   // Snapshot related
   void SendInstallSnapshotToPeerLocked(NodeId peer_id);
@@ -192,6 +207,10 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
+
+  // ========== Pending ReadIndex Requests ==========
+  std::unordered_map<uint64_t, PendingReadIndex> pending_reads_;
+  uint64_t next_read_id_ = 1;
 
   // ========== Snapshot Transfer State ==========
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
@@ -490,9 +509,33 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
-  // TODO: implement linearizable read
-  (void)callback;
-  return Status::Error("Not implemented");
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Create pending read request
+  uint64_t read_id = next_read_id_++;
+  PendingReadIndex read_req;
+  read_req.read_index = commit_index_;
+  read_req.callback = std::move(callback);
+  read_req.start_time = std::chrono::steady_clock::now();
+  read_req.acks.insert(server_id_);  // Leader acknowledges itself
+
+  pending_reads_[read_id] = std::move(read_req);
+
+  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_, read_id,
+           commit_index_);
+
+  // Send heartbeats to confirm leadership
+  BroadcastReadIndexHeartbeatsLocked(read_id);
+
+  return Status::OK();
 }
 
 // ========== State Transitions ==========
@@ -1092,6 +1135,9 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
       pending_proposals_.erase(it);
     }
   }
+
+  // Check if any pending reads can be completed
+  ProcessPendingReadsLocked();
 }
 
 // ========== RPC Handling ==========
@@ -1556,4 +1602,120 @@ Status RaftNode::Propose(
     const std::string& command,
     std::function<void(const ApplyResult& result)> callback) {
   return raft_node_impl_->Propose(command, std::move(callback));
+}
+
+Status RaftNode::ReadIndex(std::function<void()> callback) {
+  return raft_node_impl_->ReadIndex(std::move(callback));
+}
+
+// ========== ReadIndex Implementation ==========
+
+void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
+    uint64_t read_id) {
+  // Send empty AppendEntries (heartbeats) to all peers
+  for (const auto& [peer_id, addr] : peer_map_) {
+    (void)addr;
+
+    AppendEntriesRequest req;
+    req.term_ = current_term_;
+    req.leader_id_ = server_id_;
+    req.prev_log_index_ = next_index_[peer_id] - 1;
+    req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
+    req.leader_commit_ = commit_index_;
+    // Empty entries = heartbeat
+
+    std::string data;
+    auto status = protocol_->SerializeRequest(req, data);
+    if (!status.ok()) {
+      LOG_ERROR("Failed to serialize heartbeat: {}", status.ToString());
+      continue;
+    }
+
+    auto it_addr = peer_map_.find(peer_id);
+    if (it_addr == peer_map_.end()) continue;
+
+    network_->SendRpc(
+        peer_id, it_addr->second, data,
+        std::chrono::milliseconds(config_.rpc_timeout_ms),
+        [this, peer_id, read_id](const std::string& resp, bool success,
+                                 const std::string& error) {
+          if (!success) {
+            LOG_WARN("ReadIndex heartbeat to {} failed: {}", peer_id, error);
+            return;
+          }
+
+          AppendEntriesResponse response;
+          auto status = protocol_->DeserializeResponse(resp, response);
+          if (!status.ok()) {
+            LOG_ERROR("Failed to deserialize heartbeat response: {}",
+                      status.ToString());
+            return;
+          }
+
+          if (response.success_) {
+            std::lock_guard<std::mutex> lock(mtx_);
+            HandleReadIndexAckLocked(peer_id, read_id);
+          }
+        });
+  }
+
+  // Mark heartbeats as sent
+  auto it = pending_reads_.find(read_id);
+  if (it != pending_reads_.end()) {
+    it->second.heartbeats_sent = true;
+  }
+}
+
+void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
+                                                       uint64_t read_id) {
+  auto it = pending_reads_.find(read_id);
+  if (it == pending_reads_.end()) return;
+
+  auto& read_req = it->second;
+  read_req.acks.insert(from);
+
+  // Check if we have majority
+  int majority = (peer_addrs_.size() + 1) / 2 + 1;
+  if (static_cast<int>(read_req.acks.size()) >= majority) {
+    LOG_INFO("ReadIndex {} received majority acks ({}/{})", read_id,
+             read_req.acks.size(), peer_addrs_.size() + 1);
+
+    // Check if read_index is already applied
+    if (last_applied_ >= read_req.read_index) {
+      // Can complete immediately
+      auto callback = std::move(read_req.callback);
+      pending_reads_.erase(it);
+      mtx_.unlock();
+      callback();
+      mtx_.lock();
+    }
+    // Otherwise, will be completed when log is applied
+  }
+}
+
+void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
+  std::vector<uint64_t> completed_reads;
+
+  for (auto& [read_id, read_req] : pending_reads_) {
+    // Check if we have majority acks and log is applied
+    int majority = (peer_addrs_.size() + 1) / 2 + 1;
+    if (static_cast<int>(read_req.acks.size()) >= majority &&
+        last_applied_ >= read_req.read_index) {
+      completed_reads.push_back(read_id);
+    }
+  }
+
+  // Complete the reads (outside the loop to avoid iterator invalidation)
+  for (uint64_t read_id : completed_reads) {
+    auto it = pending_reads_.find(read_id);
+    if (it != pending_reads_.end()) {
+      auto callback = std::move(it->second.callback);
+      pending_reads_.erase(it);
+
+      LOG_DEBUG("Completing ReadIndex {}", read_id);
+      mtx_.unlock();
+      callback();
+      mtx_.lock();
+    }
+  }
 }

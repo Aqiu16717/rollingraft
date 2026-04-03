@@ -33,6 +33,24 @@ class TimerService;
 class Persister;
 class Protocol;
 
+/**
+ * Cluster configuration
+ * Represents the current set of nodes in the cluster
+ */
+struct ClusterConfig {
+  std::vector<NodeId> nodes;  // Current cluster nodes
+  uint64_t version = 0;       // Configuration version
+
+  bool Contains(NodeId id) const {
+    for (NodeId node : nodes) {
+      if (node == id) return true;
+    }
+    return false;
+  }
+
+  int GetMajority() const { return static_cast<int>(nodes.size()) / 2 + 1; }
+};
+
 struct RaftNodeConfig {
   NodeId node_id;
   std::string listen_addr;
@@ -89,6 +107,14 @@ class RaftNode {
   // linearizable read (only for leader)
   // callback is invoked when it's safe to read from state machine
   Status ReadIndex(std::function<void()> callback);
+
+  // Membership change (only for leader)
+  // One node at a time (add or remove)
+  Status AddNode(NodeId id, const NodeAddr& addr);
+  Status RemoveNode(NodeId id);
+
+  // Get current cluster configuration
+  ClusterConfig GetConfig() const;
 
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;

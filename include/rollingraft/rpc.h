@@ -16,7 +16,9 @@ enum class RaftMessageType : int8_t {
   KInstallSnapshotRequest = 4,
   KInstallSnapshotResponse = 5,
   KClientRequest = 6,
-  KClientResponse = 7
+  KClientResponse = 7,
+  KConfigChangeRequest = 8,
+  KConfigChangeResponse = 9
 };
 
 struct RaftRequest {
@@ -203,6 +205,32 @@ struct ClientResponse : public RaftResponse {
         success(false),
         last_applied_index(0),
         leader_id(-1) {}
+};
+
+/**
+ * Configuration change request
+ * Sent by client to leader to add/remove a node
+ */
+struct ConfigChangeRequest : public RaftRequest {
+  enum class Type : int8_t { kAddNode = 0, kRemoveNode = 1 };
+
+  Type type_;
+  NodeId node_id_;
+  NodeAddr node_addr_;  // Only used for kAddNode
+
+  ConfigChangeRequest()
+      : RaftRequest(RaftMessageType::KConfigChangeRequest),
+        type_(Type::kAddNode),
+        node_id_(-1) {}
+};
+
+struct ConfigChangeResponse : public RaftResponse {
+  bool success_;
+  std::string error_;
+
+  ConfigChangeResponse()
+      : RaftResponse(RaftMessageType::KConfigChangeResponse),
+        success_(false) {}
 };
 
 Status RpcCall(const std::string& addr, const ClientRequest& req,

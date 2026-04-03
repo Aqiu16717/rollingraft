@@ -94,6 +94,11 @@ class RaftNode::RaftNodeImpl {
   ApplyResult ProposeAndWaitLocked(const std::string& command);
   Status ReadIndex(std::function<void()> callback);
 
+  // Membership change (only for leader)
+  Status AddNode(NodeId id, const NodeAddr& addr);
+  Status RemoveNode(NodeId id);
+  ClusterConfig GetConfig() const;
+
   // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -144,6 +149,9 @@ class RaftNode::RaftNodeImpl {
   uint64_t GetLogTermLocked(uint64_t index);
   NodeId ParseNodeId(const NodeAddr& addr);
 
+  // Membership change
+  void ApplyConfigChangeLocked(const std::string& cmd);
+
   // Timeout handlers
   void OnElectionTimeout();
   void OnHeartbeatTimeout();
@@ -178,6 +186,10 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
   std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Idempotency
+
+  // ========== Cluster Config ==========
+  ClusterConfig cluster_config_;
+  mutable std::mutex config_mutex_;  // Protects cluster_config_
 
   // ========== Timer State ==========
   int election_timeout_ = 0;
@@ -252,6 +264,16 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   if (!timer_) {
     throw std::invalid_argument("TimerService cannot be null");
   }
+
+  // Initialize cluster config from peers
+  cluster_config_.nodes.push_back(server_id_);
+  for (const auto& addr : peer_addrs_) {
+    NodeId peer_id = ParseNodeId(addr);
+    if (peer_id >= 0) {
+      cluster_config_.nodes.push_back(peer_id);
+    }
+  }
+  cluster_config_.version = 1;
 
   LOG_INFO("RaftNodeImpl created for node {}", server_id_);
 }
@@ -1121,6 +1143,22 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
     const auto& entry = *entry_opt;
 
+    // Check if this is a config change command
+    if (entry.data_.find("CONFIG_CHANGE:") == 0) {
+      ApplyConfigChangeLocked(entry.data_);
+      
+      // Still need to callback for proposals
+      auto it = pending_proposals_.find(last_applied_);
+      if (it != pending_proposals_.end()) {
+        ApplyResult result;
+        result.success = true;
+        result.applied_index = last_applied_;
+        it->second.callback(result);
+        pending_proposals_.erase(it);
+      }
+      continue;
+    }
+
     // Apply to StateMachine
     auto result = state_machine_->Apply(
         std::span<const uint8_t>(
@@ -1557,59 +1595,6 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
     return -1;
   }
 }
-
-// ========== RaftNode Public Interface ==========
-
-RaftNode::RaftNode(const RaftNodeConfig& config,
-                   std::shared_ptr<StateMachine> sm)
-    : raft_node_impl_(std::make_unique<RaftNodeImpl>(
-          config, sm,
-          config.network_factory ? config.network_factory()
-                                 : CreateDefaultNetworkTransport(),
-          config.timer_factory ? config.timer_factory()
-                              : TimerService::CreateDefault(),
-          config.persister_factory ? config.persister_factory() : nullptr,
-          config.protocol_factory ? config.protocol_factory()
-                                 : std::make_unique<JsonProtocol>())) {}
-
-RaftNode::~RaftNode() = default;
-
-Status RaftNode::Start() { return raft_node_impl_->Start(); }
-
-Status RaftNode::Stop() { return raft_node_impl_->Stop(); }
-
-bool RaftNode::IsLeader() const { return raft_node_impl_->IsLeader(); }
-
-RaftNodeRole RaftNode::GetRole() const { return raft_node_impl_->GetRole(); }
-
-Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
-
-NodeAddr RaftNode::GetLeaderAddr() const {
-  return raft_node_impl_->GetLeaderAddr();
-}
-
-void RaftNode::SetRoleChangeCallback(
-    std::function<void(RaftNodeRole role, Term term)> callback) {
-  raft_node_impl_->SetRoleChangeCallback(std::move(callback));
-}
-
-void RaftNode::SetLeaderChangeCallback(
-    std::function<void(NodeId leader_id, const NodeAddr& addr)> callback) {
-  raft_node_impl_->SetLeaderChangeCallback(std::move(callback));
-}
-
-Status RaftNode::Propose(
-    const std::string& command,
-    std::function<void(const ApplyResult& result)> callback) {
-  return raft_node_impl_->Propose(command, std::move(callback));
-}
-
-Status RaftNode::ReadIndex(std::function<void()> callback) {
-  return raft_node_impl_->ReadIndex(std::move(callback));
-}
-
-// ========== ReadIndex Implementation ==========
-
 void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     uint64_t read_id) {
   // Send empty AppendEntries (heartbeats) to all peers
@@ -1718,4 +1703,269 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
       mtx_.lock();
     }
   }
+}
+
+// ========== Membership Change Implementation ==========
+
+Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node already exists
+  if (cluster_config_.Contains(id)) {
+    return Status::Error("Node already in cluster");
+  }
+
+  // Check if only changing one node at a time
+  // (This is a simplified check - in production, track pending changes)
+
+  // Create config change entry as a special command
+  std::string cmd = "CONFIG_CHANGE:ADD:" + std::to_string(id) + ":" + addr;
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      log_persister_->Append(*entry_opt);
+    }
+  }
+
+  // Add to peer map immediately (optimistic)
+  peer_map_[id] = addr;
+  next_index_[id] = log_.GetLastLogInfo().first + 1;
+  match_index_[id] = 0;
+
+  LOG_INFO("Node {} proposing AddNode for {} at index {}", server_id_, id,
+           index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node exists
+  if (!cluster_config_.Contains(id)) {
+    return Status::Error("Node not in cluster");
+  }
+
+  // Prevent removing ourselves while leader
+  // (We should step down first)
+  if (id == server_id_) {
+    LOG_WARN("Node {} removing itself from cluster - will step down", id);
+  }
+
+  // Create config change entry
+  std::string cmd = "CONFIG_CHANGE:REMOVE:" + std::to_string(id);
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      log_persister_->Append(*entry_opt);
+    }
+  }
+
+  // Remove from peer map immediately (optimistic)
+  peer_map_.erase(id);
+  next_index_.erase(id);
+  match_index_.erase(id);
+
+  // Remove from peer_addrs_
+  peer_addrs_.erase(
+      std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                     [id, this](const NodeAddr& a) {
+                       return ParseNodeId(a) == id;
+                     }),
+      peer_addrs_.end());
+
+  LOG_INFO("Node {} proposing RemoveNode for {} at index {}", server_id_, id,
+           index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  // If removing ourselves, step down
+  if (id == server_id_) {
+    BecomeFollowerLocked(current_term_);
+  }
+
+  return Status::OK();
+}
+
+ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
+  std::lock_guard<std::mutex> lock(config_mutex_);
+  return cluster_config_;
+}
+
+void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
+    const std::string& cmd) {
+  // Parse config change command
+  // Format: CONFIG_CHANGE:ADD:node_id:addr  or  CONFIG_CHANGE:REMOVE:node_id
+
+  if (cmd.find("CONFIG_CHANGE:ADD:") == 0) {
+    // Parse ADD command
+    size_t pos1 = strlen("CONFIG_CHANGE:ADD:");
+    size_t pos2 = cmd.find(':', pos1);
+    if (pos2 == std::string::npos) {
+      LOG_ERROR("Invalid ADD config change command: {}", cmd);
+      return;
+    }
+
+    NodeId id = std::stoll(cmd.substr(pos1, pos2 - pos1));
+    NodeAddr addr = cmd.substr(pos2 + 1);
+
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+
+    // Add to config if not already present
+    if (!cluster_config_.Contains(id)) {
+      cluster_config_.nodes.push_back(id);
+      cluster_config_.version++;
+
+      // Update peer map if not already present
+      if (id != server_id_ && peer_map_.find(id) == peer_map_.end()) {
+        peer_map_[id] = addr;
+        peer_addrs_.push_back(addr);
+
+        // Initialize leader state if leader
+        if (role_ == RaftNodeRole::LEADER) {
+          next_index_[id] = log_.GetLastLogInfo().first + 1;
+          match_index_[id] = 0;
+        }
+      }
+
+      LOG_INFO("Node {} applied AddNode for {} (config version {})",
+               server_id_, id, cluster_config_.version);
+    }
+
+  } else if (cmd.find("CONFIG_CHANGE:REMOVE:") == 0) {
+    // Parse REMOVE command
+    size_t pos = strlen("CONFIG_CHANGE:REMOVE:");
+    NodeId id = std::stoll(cmd.substr(pos));
+
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+
+    // Remove from config
+    cluster_config_.nodes.erase(
+        std::remove(cluster_config_.nodes.begin(), cluster_config_.nodes.end(),
+                    id),
+        cluster_config_.nodes.end());
+    cluster_config_.version++;
+
+    // Remove from peer map
+    peer_map_.erase(id);
+    next_index_.erase(id);
+    match_index_.erase(id);
+
+    // Remove from peer_addrs_
+    peer_addrs_.erase(
+        std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                       [id, this](const NodeAddr& a) {
+                         return ParseNodeId(a) == id;
+                       }),
+        peer_addrs_.end());
+
+    LOG_INFO("Node {} applied RemoveNode for {} (config version {})",
+             server_id_, id, cluster_config_.version);
+
+    // If we removed ourselves, stop
+    if (id == server_id_) {
+      LOG_INFO("Node {} removed from cluster, stopping", server_id_);
+      // Schedule stop (can't hold lock during Stop)
+      timer_->SetTimeout(std::chrono::milliseconds(0),
+                         [this]() { Stop(); });
+    }
+  }
+}
+
+// ========== RaftNode Public Interface ==========
+
+RaftNode::RaftNode(const RaftNodeConfig& config,
+                   std::shared_ptr<StateMachine> sm)
+    : raft_node_impl_(std::make_unique<RaftNodeImpl>(
+          config, sm,
+          config.network_factory ? config.network_factory()
+                                 : CreateDefaultNetworkTransport(),
+          config.timer_factory ? config.timer_factory()
+                              : TimerService::CreateDefault(),
+          config.persister_factory ? config.persister_factory() : nullptr,
+          config.protocol_factory ? config.protocol_factory()
+                                 : std::make_unique<JsonProtocol>())) {}
+
+RaftNode::~RaftNode() = default;
+
+Status RaftNode::Start() { return raft_node_impl_->Start(); }
+
+Status RaftNode::Stop() { return raft_node_impl_->Stop(); }
+
+bool RaftNode::IsLeader() const { return raft_node_impl_->IsLeader(); }
+
+RaftNodeRole RaftNode::GetRole() const { return raft_node_impl_->GetRole(); }
+
+Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
+
+NodeAddr RaftNode::GetLeaderAddr() const {
+  return raft_node_impl_->GetLeaderAddr();
+}
+
+void RaftNode::SetRoleChangeCallback(
+    std::function<void(RaftNodeRole role, Term term)> callback) {
+  raft_node_impl_->SetRoleChangeCallback(std::move(callback));
+}
+
+void RaftNode::SetLeaderChangeCallback(
+    std::function<void(NodeId leader_id, const NodeAddr& addr)> callback) {
+  raft_node_impl_->SetLeaderChangeCallback(std::move(callback));
+}
+
+Status RaftNode::Propose(
+    const std::string& command,
+    std::function<void(const ApplyResult& result)> callback) {
+  return raft_node_impl_->Propose(command, std::move(callback));
+}
+
+Status RaftNode::ReadIndex(std::function<void()> callback) {
+  return raft_node_impl_->ReadIndex(std::move(callback));
+}
+
+Status RaftNode::AddNode(NodeId id, const NodeAddr& addr) {
+  return raft_node_impl_->AddNode(id, addr);
+}
+
+Status RaftNode::RemoveNode(NodeId id) {
+  return raft_node_impl_->RemoveNode(id);
+}
+
+ClusterConfig RaftNode::GetConfig() const {
+  return raft_node_impl_->GetConfig();
 }

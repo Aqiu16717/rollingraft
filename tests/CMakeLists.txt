@@ -48,6 +48,22 @@ target_link_libraries(unit_tests
     ${GTEST_MAIN_LIBRARIES}
 )
 
+# Integration tests
+add_executable(integration_tests
+  integration/test_cluster_3nodes.cpp
+)
+
+target_include_directories(integration_tests
+  PRIVATE
+    ${GTEST_INCLUDE_DIRS}
+)
+
+target_link_libraries(integration_tests
+  PRIVATE
+    test_mocks
+    ${GTEST_MAIN_LIBRARIES}
+)
+
 # Register tests
 include(GoogleTest)
 gtest_discover_tests(unit_tests
@@ -55,8 +71,19 @@ gtest_discover_tests(unit_tests
   XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results
 )
 
-# Add test target
-add_custom_target(run_tests
-  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+gtest_discover_tests(integration_tests
+  TEST_PREFIX "integration."
+  XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results
+  PROPERTIES TIMEOUT 60
+)
+
+# Add test targets
+add_custom_target(run_unit_tests
+  COMMAND ${CMAKE_CTEST_COMMAND} -R "unit\\." --output-on-failure
   DEPENDS unit_tests
+)
+
+add_custom_target(run_integration_tests
+  COMMAND ${CMAKE_CTEST_COMMAND} -R "integration\\." --output-on-failure
+  DEPENDS integration_tests
 )

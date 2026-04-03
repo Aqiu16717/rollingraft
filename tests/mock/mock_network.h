@@ -78,6 +78,12 @@ class MockNetworkTransport : public NetworkTransport {
    */
   void SetPartitioned(NodeId peer_id, bool partitioned);
 
+  /**
+   * Inject a response as if it came from a peer.
+   * For testing: simulates receiving RPC response.
+   */
+  void InjectResponse(NodeId from, const std::string& response_data);
+
  private:
   RpcRequestHandler request_handler_;
   ConnectionCallback connection_callback_;

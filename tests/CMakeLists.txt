@@ -33,6 +33,8 @@ target_link_libraries(test_mocks
 # Unit tests
 add_executable(unit_tests
   unit/test_log_persister.cpp
+  unit/test_raft_election.cpp
+  unit/test_raft_log_replication.cpp
 )
 
 target_include_directories(unit_tests

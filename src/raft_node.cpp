@@ -1541,3 +1541,19 @@ Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
 NodeAddr RaftNode::GetLeaderAddr() const {
   return raft_node_impl_->GetLeaderAddr();
 }
+
+void RaftNode::SetRoleChangeCallback(
+    std::function<void(RaftNodeRole role, Term term)> callback) {
+  raft_node_impl_->SetRoleChangeCallback(std::move(callback));
+}
+
+void RaftNode::SetLeaderChangeCallback(
+    std::function<void(NodeId leader_id, const NodeAddr& addr)> callback) {
+  raft_node_impl_->SetLeaderChangeCallback(std::move(callback));
+}
+
+Status RaftNode::Propose(
+    const std::string& command,
+    std::function<void(const ApplyResult& result)> callback) {
+  return raft_node_impl_->Propose(command, std::move(callback));
+}

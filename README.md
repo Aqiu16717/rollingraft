@@ -15,7 +15,7 @@ A modern, production-ready C++ implementation of the [Raft consensus algorithm](
   - Leader election with randomized timeouts
   - Log replication with batching
   - Snapshot support for log compaction
-  - Membership changes (future)
+  - Membership changes (add/remove nodes dynamically)
   - Linearizable reads (read index)
 
 ## Quick Start
@@ -184,7 +184,27 @@ if (node.IsLeader()) {
 }
 ```
 
-### 4. Client RPC
+### 4. Linearizable Reads (Leader Only)
+
+Use `ReadIndex` for linearizable reads that won't return stale data:
+
+```cpp
+// Only the leader can perform linearizable reads
+if (node.IsLeader()) {
+  // ReadIndex confirms the leader is still valid by heartbeating to majority
+  auto status = node.ReadIndex([]() {
+    // Safe to read from state machine - we have confirmation from majority
+    int value = state_machine.GetCurrentValue();
+    std::cout << "Current value: " << value << std::endl;
+  });
+
+  if (!status.ok()) {
+    std::cerr << "ReadIndex failed: " << status.ToString() << std::endl;
+  }
+}
+```
+
+### 5. Client RPC
 
 ```cpp
 #include "rollingraft/rpc.h"
@@ -232,6 +252,10 @@ if (status.ok() && resp.success) {
 | `CurrentTerm()` | Get current Raft term |
 | `GetLeaderAddr()` | Get current leader's address |
 | `Propose(cmd, callback)` | Propose a command (leader only) |
+| `ReadIndex(callback)` | Linearizable read - callback when safe to read |
+| `AddNode(id, addr)` | Add a new node to the cluster (leader only) |
+| `RemoveNode(id)` | Remove a node from the cluster (leader only) |
+| `GetConfig()` | Get current cluster configuration |
 | `SetRoleChangeCallback(cb)` | Set callback for role changes |
 | `SetLeaderChangeCallback(cb)` | Set callback for leader changes |
 
@@ -262,8 +286,9 @@ rollingraft/
 ├── src/                   # Implementation
 │   ├── raft_node.cpp      # Core Raft logic
 │   ├── raft_log.cpp       # Log management
-│   ├── tcp_network_transport.cpp
+│   ├── asio_network_transport.cpp
 │   ├── leveldb_persister.cpp
+│   ├── raft_timer.cpp     # Timer service
 │   └── ...
 ├── example/               # Examples
 │   └── counter/           # Counter service demo

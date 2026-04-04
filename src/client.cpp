@@ -22,6 +22,8 @@ namespace rollingraft {
 
 // ========== ClientResult ==========
 
+ClientResult::ClientResult() : error_(Status::Error("Empty result")) {}
+
 ClientResult::ClientResult(const std::string& response) : response_(response) {}
 
 ClientResult::ClientResult(Status error) : error_(std::move(error)) {}

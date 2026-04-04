@@ -23,6 +23,11 @@ std::optional<std::string> LeaderTracker::GetLeader() const {
 
 void LeaderTracker::UpdateLeader(const std::string& addr) {
   std::lock_guard<std::mutex> lock(mutex_);
+  // Empty address clears the leader
+  if (addr.empty()) {
+    leader_addr_.clear();
+    return;
+  }
   leader_addr_ = addr;
   last_update_ = std::chrono::steady_clock::now();
 }

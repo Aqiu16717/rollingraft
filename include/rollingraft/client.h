@@ -35,8 +35,8 @@ namespace rollingraft {
  */
 class ClientResult {
  public:
-  /** Create an empty result (invalid state). */
-  ClientResult() = default;
+  /** Create an error result (default invalid state). */
+  ClientResult();
 
   /** Create a successful result. */
   explicit ClientResult(const std::string& response);

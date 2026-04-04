@@ -58,16 +58,21 @@ std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   auto base_delay = std::chrono::milliseconds(static_cast<int>(
       initial_delay_.count() * factor));
 
-  // Cap at max delay
+  // Cap at max delay (before jitter so final delay stays within bounds)
   base_delay = std::min(base_delay, max_delay_);
 
-  // Add jitter: random value between 0 and base_delay/2
-  // This prevents thundering herd when multiple clients retry simultaneously
+  // Add jitter: random value between 0 and min(base_delay/2, max_delay/4)
+  // This prevents thundering herd while ensuring we don't exceed max_delay
   thread_local std::mt19937 gen(std::random_device{}());
-  std::uniform_int_distribution<> dis(0, base_delay.count() / 2);
+  int jitter_max = std::min(base_delay.count() / 2, max_delay_.count() / 4);
+  if (jitter_max < 1) jitter_max = 1;
+  std::uniform_int_distribution<> dis(0, jitter_max);
   auto jitter = std::chrono::milliseconds(dis(gen));
 
-  return base_delay + jitter;
+  auto final_delay = base_delay + jitter;
+  
+  // Final safety cap
+  return std::min(final_delay, max_delay_);
 }
 
 }  // namespace rollingraft

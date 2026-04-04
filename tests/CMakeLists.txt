@@ -41,11 +41,17 @@ add_executable(unit_tests
   unit/test_network_partition.cpp
   unit/test_leader_stepdown.cpp
   unit/test_membership_edge_cases.cpp
+  unit/test_client_result.cpp
+  unit/test_leader_tracker.cpp
+  unit/test_retry_policy.cpp
+  unit/test_connection_pool.cpp
+  unit/test_client.cpp
 )
 
 target_include_directories(unit_tests
   PRIVATE
     ${GTEST_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/src
 )
 
 target_link_libraries(unit_tests

@@ -37,7 +37,17 @@ target_link_libraries(benchmark_latency_curve
     rollingraft
 )
 
+# Failover benchmark executable
+add_executable(benchmark_failover
+  failover_benchmark.cpp
+)
+
+target_link_libraries(benchmark_failover
+  PRIVATE
+    rollingraft
+)
+
 # Install benchmark executables
-install(TARGETS benchmark_client benchmark_latency_curve
+install(TARGETS benchmark_client benchmark_latency_curve benchmark_failover
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}/benchmark
 )

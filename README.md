@@ -11,6 +11,7 @@ A modern, production-ready C++ implementation of the [Raft consensus algorithm](
 - **Easy Integration** - Header-only public interface, just link and use
 - **Pluggable Architecture** - Customize network transport, persistent storage, timers, and protocol
 - **Production Defaults** - Built-in TCP transport, LevelDB persistence, ASIO timers, JSON protocol
+- **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, and connection pooling
 - **Complete Raft Features**:
   - Leader election with randomized timeouts
   - Log replication with batching
@@ -204,7 +205,52 @@ if (node.IsLeader()) {
 }
 ```
 
-### 5. Client RPC
+### 5. Client Library (Recommended)
+
+The easiest way to interact with a Raft cluster:
+
+```cpp
+#include "rollingraft/client.h"
+
+// Create client with cluster addresses
+rollingraft::Client client({
+  "127.0.0.1:8001",
+  "127.0.0.1:8002",
+  "127.0.0.1:8003"
+});
+
+// Execute command - automatically finds leader and retries
+auto result = client.Execute("inc");
+if (result.ok()) {
+  std::cout << "Response: " << result.value() << std::endl;
+} else {
+  std::cerr << "Error: " << result.error_message() << std::endl;
+}
+
+// Query for read-only operations
+auto query_result = client.Query("get counter");
+if (query_result.ok()) {
+  std::cout << "Value: " << query_result.value() << std::endl;
+}
+
+// Async execution
+client.ExecuteAsync("add 10", [](rollingraft::ClientResult result) {
+  if (result.ok()) {
+    std::cout << "Async response: " << result.value() << std::endl;
+  }
+});
+```
+
+**Client Features:**
+- Automatic leader discovery and failover
+- Exponential backoff with jitter for retries
+- Connection pooling and reuse
+- Configurable timeouts and retry policies
+- Thread-safe for concurrent use
+
+### 6. Low-Level Client RPC
+
+For direct RPC without the client library:
 
 ```cpp
 #include "rollingraft/rpc.h"
@@ -258,6 +304,19 @@ if (status.ok() && resp.success) {
 | `GetConfig()` | Get current cluster configuration |
 | `SetRoleChangeCallback(cb)` | Set callback for role changes |
 | `SetLeaderChangeCallback(cb)` | Set callback for leader changes |
+
+### Client
+
+| Method | Description |
+|--------|-------------|
+| `Execute(command)` | Execute command with automatic leader discovery |
+| `Execute(command, timeout)` | Execute with custom timeout |
+| `Query(command)` | Read-only query |
+| `ExecuteAsync(cmd, cb)` | Async execution with callback |
+| `RefreshLeader()` | Force refresh leader cache |
+| `GetLeaderAddr()` | Get current cached leader address |
+| `IsHealthy()` | Check if cluster is reachable |
+| `GetClientId()` | Get unique client ID |
 
 ### Status
 
@@ -354,14 +413,24 @@ config.protocol_factory = []() {
 
 ## Testing
 
+RollingRaft includes comprehensive unit tests covering all major components:
+
 ```bash
 # Build tests
 cmake .. -DBUILD_TESTING=ON
 make
 
-# Run tests
+# Run all tests
 ctest --output-on-failure
+
+# Run specific test suites
+./build/tests/unit_tests --gtest_filter="Client*"
+./build/tests/unit_tests --gtest_filter="RaftElection*"
 ```
+
+**Test Coverage:** 139 unit tests
+- Raft core: 59 tests (election, log replication, snapshots, membership)
+- Client library: 80 tests (result handling, leader tracking, retry policy, connection pool, client)
 
 ## License
 

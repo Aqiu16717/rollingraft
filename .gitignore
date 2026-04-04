@@ -38,5 +38,4 @@ out/
 # others
 .cache
 .vscode
-doc
 docs

@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_SHARED_LIBS "Build shared library" OFF)
 option(BUILD_TESTING "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_BENCHMARK "Build benchmarks" ON)
 
 # Compiler warnings
 if(MSVC)
@@ -105,6 +106,11 @@ endif()
 # Examples
 if(BUILD_EXAMPLES)
   add_subdirectory(example)
+endif()
+
+# Benchmarks
+if(BUILD_BENCHMARK)
+  add_subdirectory(benchmark)
 endif()
 
 # Installation (simplified - just library and headers)

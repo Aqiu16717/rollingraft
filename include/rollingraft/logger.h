@@ -50,21 +50,21 @@ class LoggerFactory {
   do {                                                         \
     Logger* logger = LoggerFactory::Instance().GetLogger();    \
     if (logger && logger->GetLogLevel() <= level) {            \
-      logger->Log(level, std::format(fmt_str, ##__VA_ARGS__)); \
+      logger->Log(level, std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)); \
     }                                                          \
   } while (0)
 
 #define LOG_TRACE(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::TRACE, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::TRACE, fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define LOG_DEBUG(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::DEBUG, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::DEBUG, fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define LOG_INFO(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::INFO, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::INFO, fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define LOG_WARN(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::WARN, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::WARN, fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define LOG_ERROR(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::ERROR, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::ERROR, fmt_str __VA_OPT__(,) __VA_ARGS__)
 #define LOG_FATAL(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::FATAL, fmt_str, ##__VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::FATAL, fmt_str __VA_OPT__(,) __VA_ARGS__)
 
 }  // namespace rollingraft

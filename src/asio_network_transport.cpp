@@ -122,7 +122,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   void DoReadBody(uint32_t length) {
     auto self = shared_from_this();
     asio::async_read(socket_, asio::buffer(body_buffer_),
-                     [this, self](std::error_code ec, std::size_t) {
+                     [this, self](std::error_code ec, std::size_t /*bytes_transferred*/) {
                        if (ec) {
                          LOG_ERROR("Read body error: {}", ec.message());
                          connected_ = false;

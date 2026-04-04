@@ -78,6 +78,14 @@ if(NOT TARGET leveldb::leveldb)
   endif()
 endif()
 
+# Disable warnings for LevelDB (third-party)
+if(TARGET leveldb)
+  target_compile_options(leveldb PRIVATE
+    -Wno-unused-parameter
+    -Wno-deprecated-declarations
+  )
+endif()
+
 # Link dependencies
 target_link_libraries(rollingraft
   PUBLIC

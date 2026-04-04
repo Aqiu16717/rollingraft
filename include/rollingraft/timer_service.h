@@ -1,57 +1,100 @@
+/**
+ * @file timer_service.h
+ * @brief Abstract timer service interface
+ *
+ * Provides timer functionality for Raft timeouts (election, heartbeat).
+ * Implementations can use different timer backends (Asio, etc.).
+ */
+
 #pragma once
 
+#include <chrono>
+#include <cstdint>
 #include <functional>
+#include <memory>
+
 #include <rollingraft/status.h>
 
 namespace rollingraft {
 
-// Timer identifier
+/** Timer identifier type. */
 using TimerId = uint64_t;
 
-// Invalid timer ID
+/** Invalid timer ID constant. */
 constexpr TimerId kInvalidTimerId = 0;
 
+/**
+ * Abstract timer service interface.
+ *
+ * Manages one-shot and periodic timers for Raft protocol timeouts.
+ * Used for election timeouts and heartbeat intervals.
+ *
+ * Thread-safety: Implementations must be thread-safe.
+ */
 class TimerService {
  public:
   virtual ~TimerService() = default;
 
-  // ========== 生命周期 ==========
+  // ==================== Lifecycle ====================
 
-  // Start timer service
-  // Must be started before calling any Set* methods
+  /**
+   * Start the timer service.
+   *
+   * Must be called before using any timer methods.
+   */
   virtual void Start() = 0;
 
-  // Stop timer service
-  // Cancel all pending timers, wait for executing callbacks to complete
+  /**
+   * Stop the timer service.
+   *
+   * Cancels all pending timers and waits for executing callbacks.
+   */
   virtual void Stop() = 0;
 
-  // ========== Timer Operations ==========
+  // ==================== Timer Operations ====================
 
-  // Set one-shot timer
-  // @param delay: delay duration
-  // @param callback: timeout callback
-  // @return: timer ID for cancellation
+  /**
+   * Set a one-shot timer.
+   *
+   * @param delay Duration to wait before triggering
+   * @param callback Function to call when timer expires
+   * @return Timer ID for cancellation
+   */
   virtual TimerId SetTimeout(std::chrono::milliseconds delay,
                              std::function<void()> callback) = 0;
 
-  // Set periodic timer
-  // @param interval: interval duration
-  // @param callback: callback triggered on each interval
-  // @return: timer ID
+  /**
+   * Set a periodic timer.
+   *
+   * @param interval Duration between triggers
+   * @param callback Function to call on each interval
+   * @return Timer ID for cancellation
+   */
   virtual TimerId SetInterval(std::chrono::milliseconds interval,
                               std::function<void()> callback) = 0;
 
-  // Cancel timer
-  // @param timer_id: timer ID to cancel
-  // @return: true if cancelled successfully, false if already triggered or not found
+  /**
+   * Cancel a pending timer.
+   *
+   * @param timer_id Timer ID to cancel
+   * @return True if cancelled, false if already triggered or not found
+   */
   virtual bool CancelTimer(TimerId timer_id) = 0;
 
-  // Check if timer exists
+  /**
+   * Check if a timer is still active.
+   *
+   * @param timer_id Timer ID to check
+   * @return True if timer exists and hasn't triggered
+   */
   virtual bool IsTimerActive(TimerId timer_id) const = 0;
 
-  // ========== Factory Methods ==========
+  // ==================== Factory Methods ====================
 
-  // Create default implementation (Asio-based)
+  /**
+   * Create default timer service implementation (Asio-based).
+   * @return Unique pointer to timer service
+   */
   static std::unique_ptr<TimerService> CreateDefault();
 };
 

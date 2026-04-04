@@ -1,3 +1,14 @@
+/**
+ * @file raft_node.h
+ * @brief Public API for Raft consensus node
+ *
+ * RollingRaft is a C++ implementation of the Raft consensus algorithm.
+ * This header provides the main RaftNode class for building distributed
+ * systems with strong consistency guarantees.
+ *
+ * @see https://raft.github.io/ for Raft algorithm details
+ */
+
 #pragma once
 
 #include <cassert>
@@ -13,20 +24,22 @@
 namespace rollingraft {
 
 /**
+ * Raft node role states.
+ *
  * At any given time each server is in one of three states:
- * leader, follower, or candidate.
- * In normal operation there is exactly one leader and all
- * of the other servers are followers.
- * Followers are passive: they issue no requests on
- * their own but simply respond to requests from leaders
- * and candidates.
- * The leader handles all client requests (if a client contacts
- * a follower, the follower redirects it to the leader).
- * The third state, candidate, is used to elect a new leader
- * as described in Section 5.2. Figure 4 shows the states and
- * their transitions; the transitions are discussed below.
+ * - Follower: passive, responds to requests from leaders and candidates
+ * - Candidate: initiates elections when timeout occurs
+ * - Leader: handles all client requests, replicates log entries
+ *
+ * In normal operation there is exactly one leader and all other
+ * servers are followers.
  */
-enum RaftNodeRole { FOLLOWER = 0, CANDIDATE = 1, LEADER = 2, RaftNodeRoleEnd };
+enum RaftNodeRole {
+  FOLLOWER = 0,
+  CANDIDATE = 1,
+  LEADER = 2,
+  RaftNodeRoleEnd
+};
 
 class NetworkTransport;
 class TimerService;
@@ -34,13 +47,20 @@ class Persister;
 class Protocol;
 
 /**
- * Cluster configuration
- * Represents the current set of nodes in the cluster
+ * Cluster configuration containing current node set.
+ *
+ * Thread-safe for read operations. Configuration changes are
+ * propagated through the Raft log.
  */
 struct ClusterConfig {
-  std::vector<NodeId> nodes;  // Current cluster nodes
-  uint64_t version = 0;       // Configuration version
+  std::vector<NodeId> nodes;  // Current cluster node IDs
+  uint64_t version = 0;       // Config version, incremented on each change
 
+  /**
+   * Check if a node ID is in the cluster.
+   * @param id Node ID to check
+   * @return true if node is in the cluster
+   */
   bool Contains(NodeId id) const {
     for (NodeId node : nodes) {
       if (node == id) return true;
@@ -48,27 +68,44 @@ struct ClusterConfig {
     return false;
   }
 
+  /**
+   * Get the majority size for the current cluster.
+   * @return Number of nodes needed for quorum (nodes/2 + 1)
+   */
   int GetMajority() const { return static_cast<int>(nodes.size()) / 2 + 1; }
 };
 
+/**
+ * Configuration for creating a RaftNode.
+ *
+ * All fields have sensible defaults except node_id, listen_addr,
+ * peers, and data_dir which must be explicitly set.
+ */
 struct RaftNodeConfig {
-  NodeId node_id;
-  std::string listen_addr;
-  std::vector<std::string> peers;
-  std::string data_dir;
+  NodeId node_id;                    // Unique node identifier
+  std::string listen_addr;           // Address to listen on, e.g., "0.0.0.0:8001"
+  std::vector<std::string> peers;    // Addresses of peer nodes
+  std::string data_dir;              // Directory for persistent storage
 
-  uint32_t election_timeout_ms = 300;
-  uint32_t heartbeat_interval_ms = 100;
-  uint32_t max_entries_per_append = 100;
-  uint32_t snapshot_threshold = 10000;
-  uint32_t rpc_timeout_ms = 1000;
+  // Timing parameters
+  uint32_t election_timeout_ms = 300;       // Base election timeout (randomized 1x-2x)
+  uint32_t heartbeat_interval_ms = 100;     // Leader heartbeat interval
+  uint32_t max_entries_per_append = 100;    // Max entries per AppendEntries RPC
+  uint32_t snapshot_threshold = 10000;      // Entries before triggering snapshot
+  uint32_t rpc_timeout_ms = 1000;           // RPC call timeout
 
+  // Factory functions for dependency injection (testing)
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;
   std::function<std::unique_ptr<Persister>()> persister_factory = nullptr;
   std::function<std::unique_ptr<Protocol>()> protocol_factory = nullptr;
 };
 
+/**
+ * Convert RaftNodeRole to human-readable string.
+ * @param role The role to convert
+ * @return String representation ("Follower", "Candidate", or "Leader")
+ */
 inline const char* RaftNodeRoleToString(RaftNodeRole role) {
   constexpr static const char* role_str[RaftNodeRoleEnd] = {
       "Follower", "Candidate", "Leader"};
@@ -76,53 +113,163 @@ inline const char* RaftNodeRoleToString(RaftNodeRole role) {
   return role_str[role];
 }
 
+/**
+ * Main Raft consensus node.
+ *
+ * Manages the Raft state machine including leader election, log replication,
+ * snapshot management, and dynamic membership changes.
+ *
+ * Thread-safety: All public methods are thread-safe.
+ * Lifecycle: Create -> Configure -> Start -> [Use] -> Stop.
+ */
 class RaftNode {
  public:
+  /**
+   * Create a new Raft node.
+   *
+   * @param config Node configuration (ID, peers, paths)
+   * @param sm User state machine for applying committed commands
+   */
   RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm);
+
   ~RaftNode();
 
-  // copy is not allowed
+  // Non-copyable, non-movable
   RaftNode(const RaftNode&) = delete;
   RaftNode& operator=(const RaftNode&) = delete;
-
-  // move is not allowed
   RaftNode(RaftNode&&) = delete;
   RaftNode& operator=(RaftNode&&) = delete;
 
+  /**
+   * Start the node and join the cluster.
+   *
+   * Initializes network transport, loads persistent state,
+   * and begins participating in the Raft protocol.
+   *
+   * @return Status::OK() on success, error otherwise
+   * @note Set callbacks before calling Start()
+   */
   Status Start();
+
+  /**
+   * Gracefully stop the node.
+   *
+   * Stops accepting new requests, flushes pending operations,
+   * and closes network connections.
+   *
+   * @return Status::OK() on success
+   */
   Status Stop();
 
+  /**
+   * Check if this node is the current leader.
+   * @return true if node is leader and can accept proposals
+   */
   bool IsLeader() const;
 
-  // set cb befor calling Start()
+  /**
+   * Set callback for role state changes.
+   *
+   * Called when the node transitions between follower/candidate/leader.
+   * Must be called before Start().
+   *
+   * @param callback Function called on role change (role, term)
+   */
   void SetRoleChangeCallback(
       std::function<void(RaftNodeRole role, Term term)> callback);
+
+  /**
+   * Set callback for leader changes.
+   *
+   * Called when a new leader is detected (even on followers).
+   * Must be called before Start().
+   *
+   * @param callback Function called on leader change (leader_id, leader_addr)
+   */
   void SetLeaderChangeCallback(
       std::function<void(NodeId leader_id, const NodeAddr& addr)> callback);
 
-  // only for leader
+  /**
+   * Propose a command for cluster-wide replication.
+   *
+   * Only the leader can propose commands. The command will be
+   * replicated to a majority of nodes before being applied to
+   * the state machine.
+   *
+   * @param command Opaque command data for state machine
+   * @param callback Invoked when command is applied or fails
+   * @return Status::OK() if proposal was accepted (not yet applied)
+   * @note Callback is called asynchronously from a different thread
+   */
   Status Propose(const std::string& command,
                  std::function<void(const ApplyResult& result)> callback);
 
-  // linearizable read (only for leader)
-  // callback is invoked when it's safe to read from state machine
+  /**
+   * Perform a linearizable read.
+   *
+   * Ensures the node is still the leader by exchanging heartbeats
+   * with a majority of the cluster. Callback is invoked when it's
+   * safe to read from the state machine.
+   *
+   * Only the leader can perform linearizable reads.
+   *
+   * @param callback Invoked when read is safe to proceed
+   * @return Status::OK() if read was initiated
+   */
   Status ReadIndex(std::function<void()> callback);
 
-  // Membership change (only for leader)
-  // One node at a time (add or remove)
+  /**
+   * Add a new node to the cluster.
+   *
+   * Only the leader can add nodes. The change is replicated as
+   * a configuration change log entry. One node at a time.
+   *
+   * @param id Node ID to add
+   * @param addr Network address of the new node
+   * @return Status::OK() if configuration change was proposed
+   */
   Status AddNode(NodeId id, const NodeAddr& addr);
+
+  /**
+   * Remove a node from the cluster.
+   *
+   * Only the leader can remove nodes. The change is replicated as
+   * a configuration change log entry. One node at a time.
+   *
+   * Cannot remove the leader itself.
+   *
+   * @param id Node ID to remove
+   * @return Status::OK() if configuration change was proposed
+   */
   Status RemoveNode(NodeId id);
 
-  // Get current cluster configuration
+  /**
+   * Get current cluster configuration.
+   * @return Current configuration including all nodes
+   */
   ClusterConfig GetConfig() const;
 
+  /**
+   * Get current role (follower/candidate/leader).
+   * @return Current Raft role
+   */
   RaftNodeRole GetRole() const;
+
+  /**
+   * Get current Raft term.
+   * @return Current term number
+   */
   Term CurrentTerm() const;
+
+  /**
+   * Get current leader's address.
+   * @return Leader address if known, empty string otherwise
+   */
   NodeAddr GetLeaderAddr() const;
 
  private:
   class RaftNodeImpl;
-  std::unique_ptr<RaftNodeImpl> raft_node_impl_;
+  std::unique_ptr<RaftNodeImpl> raft_node_impl_;  // PIMPL idiom
 };
 
 }  // namespace rollingraft

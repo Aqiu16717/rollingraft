@@ -192,7 +192,6 @@ class RaftNode::RaftNodeImpl {
   mutable std::mutex config_mutex_;  // Protects cluster_config_
 
   // ========== Timer State ==========
-  int election_timeout_ = 0;
   TimerId election_timer_ = 0;
   TimerId heartbeat_timer_ = 0;
 
@@ -1120,7 +1119,7 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
       if (match >= index) ++count;
     }
 
-    if (count > (peer_addrs_.size() + 1) / 2) {
+    if (static_cast<size_t>(count) > (peer_addrs_.size() + 1) / 2) {
       commit_index_ = index;
       LOG_INFO("Node {} commit index advanced to {}", server_id_,
                commit_index_);
@@ -1180,7 +1179,7 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
 // ========== RPC Handling ==========
 
-void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from,
+void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
                                                const std::string& data,
                                                std::string& response) {
   // First, peek at the message type to dispatch to the correct handler

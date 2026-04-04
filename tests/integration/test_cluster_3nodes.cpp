@@ -207,13 +207,6 @@ TEST_F(Cluster3NodesTest, RecoversAfterLeaderCrash) {
 
   auto* old_leader = GetLeader();
   ASSERT_NE(old_leader, nullptr);
-  NodeId old_leader_id = 0;
-  for (size_t i = 0; i < nodes_.size(); ++i) {
-    if (nodes_[i].get() == old_leader) {
-      old_leader_id = i + 1;
-      break;
-    }
-  }
 
   // Propose some commands
   for (int i = 0; i < 3; ++i) {

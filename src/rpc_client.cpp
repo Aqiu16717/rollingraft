@@ -87,7 +87,6 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
     auto endpoints = resolver.resolve(host, std::to_string(port));
 
     // Set connection timeout
-    std::atomic<bool> connected{false};
     std::error_code connect_ec;
 
     asio::steady_timer timer(io_context);

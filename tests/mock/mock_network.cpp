@@ -2,7 +2,7 @@
 
 namespace rollingraft {
 
-Status MockNetworkTransport::Initialize(const NodeAddr& listen_addr,
+Status MockNetworkTransport::Initialize(const NodeAddr& /*listen_addr*/,
                                         RpcRequestHandler handler) {
   request_handler_ = std::move(handler);
   return Status::OK();

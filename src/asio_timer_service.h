@@ -37,12 +37,12 @@ class AsioTimerService : public TimerService {
   std::unordered_map<TimerId, std::shared_ptr<Timer>> timers_;
   mutable std::mutex timers_mutex_;
 
+  bool owns_io_context_ = true;
   asio::io_context io_context_;
   asio::io_context* io_ptr_ = nullptr;
   std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_;
   std::thread io_thread_;
   std::atomic<bool> running_{false};
-  bool owns_io_context_ = true;
 };
 
 }  // namespace rollingraft

@@ -1,3 +1,8 @@
+/**
+ * @file asio_network_transport.cpp
+ * @brief Asio-based TCP network transport implementation
+ */
+
 #include <asio.hpp>
 #include <atomic>
 #include <chrono>

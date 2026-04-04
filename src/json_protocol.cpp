@@ -1,3 +1,11 @@
+/**
+ * @file json_protocol.cpp
+ * @brief JSON serialization protocol implementation
+ *
+ * Implements Protocol interface using nlohmann/json library
+ * for serializing/deserializing Raft RPC messages.
+ */
+
 #include "json_protocol.h"
 
 #include "rollingraft/rpc.h"

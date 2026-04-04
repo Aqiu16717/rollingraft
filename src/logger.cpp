@@ -1,3 +1,8 @@
+/**
+ * @file logger.cpp
+ * @brief Logger factory implementation
+ */
+
 #include "rollingraft/logger.h"
 #include "logger_spdlog_adapter.h"
 #include <memory>

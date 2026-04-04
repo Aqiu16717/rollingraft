@@ -1,3 +1,8 @@
+/**
+ * @file asio_timer_service.cpp
+ * @brief Asio-based timer service implementation
+ */
+
 #include "asio_timer_service.h"
 #include "rollingraft/logger.h"
 

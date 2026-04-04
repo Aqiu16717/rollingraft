@@ -1,3 +1,8 @@
+/**
+ * @file logger_spdlog_adapter.cpp
+ * @brief Spdlog-based logger adapter implementation
+ */
+
 #include "logger_spdlog_adapter.h"
 
 #include <spdlog/sinks/basic_file_sink.h>

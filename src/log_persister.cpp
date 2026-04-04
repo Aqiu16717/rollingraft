@@ -1,3 +1,11 @@
+/**
+ * @file log_persister.cpp
+ * @brief Batched log persistence implementation
+ *
+ * Implements asynchronous batched writes to persistent storage.
+ * Uses a background thread for flushing buffered entries.
+ */
+
 #include "rollingraft/log_persister.h"
 
 #include <chrono>

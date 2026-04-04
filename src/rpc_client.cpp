@@ -1,3 +1,11 @@
+/**
+ * @file rpc_client.cpp
+ * @brief Client-side RPC call implementation
+ *
+ * Implements synchronous RPC client for sending commands
+ * to the Raft cluster.
+ */
+
 #include "rollingraft/rpc.h"
 
 #include <arpa/inet.h>

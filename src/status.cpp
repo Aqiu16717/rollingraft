@@ -1,3 +1,8 @@
+/**
+ * @file status.cpp
+ * @brief Status implementation
+ */
+
 #include "rollingraft/status.h"
 
 #include <cassert>

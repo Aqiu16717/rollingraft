@@ -1,3 +1,8 @@
+/**
+ * @file raft_log.cpp
+ * @brief In-memory Raft log implementation
+ */
+
 #include "rollingraft/raft_log.h"
 
 #include <algorithm>

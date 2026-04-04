@@ -1,3 +1,12 @@
+/**
+ * @file leveldb_persister.cpp
+ * @brief LevelDB-based persistence implementation
+ *
+ * Implements the Persister interface using LevelDB as the
+ * underlying storage engine. Provides durable storage for
+ * Raft state, log entries, and snapshots.
+ */
+
 #include "rollingraft/persister.h"
 
 #include <leveldb/db.h>
@@ -126,7 +135,7 @@ class LevelDBPersister : public Persister {
       return Status::OK();
     }
 
-    // LevelDB 是有序的，我们可以使用迭代器
+    // LevelDB is sorted, use iterator for range scan
     std::string start_key = MakeLogKey(start);
     std::string end_key = MakeLogKey(end);
 
@@ -178,7 +187,7 @@ class LevelDBPersister : public Persister {
       return Status::Error("Persister not open");
     }
 
-    // 获取最后一个日志索引
+    // Get the last log index
     auto [last_index, _] = GetLastLogInfoLocked();
 
     if (from_index > last_index) {
@@ -187,7 +196,7 @@ class LevelDBPersister : public Persister {
 
     leveldb::WriteBatch batch;
 
-    // 删除 [from_index, last_index] 范围内的所有条目
+    // Delete all entries in range [from_index, last_index]
     for (uint64_t i = from_index; i <= last_index; ++i) {
       batch.Delete(MakeLogKey(i));
     }
@@ -213,7 +222,7 @@ class LevelDBPersister : public Persister {
 
     leveldb::WriteBatch batch;
 
-    // 删除 [1, before_index) 范围内的所有条目
+    // Delete all entries in range [1, before_index)
     for (uint64_t i = 1; i < before_index; ++i) {
       batch.Delete(MakeLogKey(i));
     }
@@ -317,10 +326,10 @@ class LevelDBPersister : public Persister {
       return {0, 0};
     }
 
-    // 找到最后一个日志条目
+    // Find the last log entry
     std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
 
-    // 定位到 log prefix 范围的末尾
+    // Position at the end of log prefix range
     std::string prefix = kLogPrefix;
     std::string limit = prefix;
     limit.back()++;  // log: -> log;

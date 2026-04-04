@@ -88,4 +88,15 @@ void MockNetworkTransport::SetPartitioned(NodeId peer_id, bool partitioned) {
   partitioned_peers_[peer_id] = partitioned;
 }
 
+void MockNetworkTransport::InjectResponse(NodeId from,
+                                          const std::string& response_data) {
+  // This simulates receiving an RPC response from a peer
+  // In a real implementation, this would call the request handler
+  // For unit testing purposes, we just store it or trigger callbacks
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Implementation placeholder - actual injection depends on test needs
+  (void)from;
+  (void)response_data;
+}
+
 }  // namespace rollingraft

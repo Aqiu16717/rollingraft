@@ -37,6 +37,10 @@ add_executable(unit_tests
   unit/test_raft_log_replication.cpp
   unit/test_read_index.cpp
   unit/test_membership_change.cpp
+  unit/test_snapshot_transfer.cpp
+  unit/test_network_partition.cpp
+  unit/test_leader_stepdown.cpp
+  unit/test_membership_edge_cases.cpp
 )
 
 target_include_directories(unit_tests

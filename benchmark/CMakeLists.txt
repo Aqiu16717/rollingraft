@@ -26,7 +26,18 @@ target_link_libraries(benchmark_client
     rollingraft
 )
 
+# Latency curve benchmark executable
+add_executable(benchmark_latency_curve
+  latency_curve_benchmark.cpp
+)
+
+target_link_libraries(benchmark_latency_curve
+  PRIVATE
+    rollingraft_benchmark
+    rollingraft
+)
+
 # Install benchmark executables
-install(TARGETS benchmark_client
+install(TARGETS benchmark_client benchmark_latency_curve
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}/benchmark
 )

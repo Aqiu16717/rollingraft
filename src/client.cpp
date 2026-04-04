@@ -5,7 +5,10 @@
 
 #include "rollingraft/client.h"
 
+#include <algorithm>
+#include <assert.h>
 #include <atomic>
+#include <chrono>
 #include <random>
 #include <thread>
 
@@ -24,7 +27,9 @@ ClientResult::ClientResult(const std::string& response) : response_(response) {}
 ClientResult::ClientResult(Status error) : error_(std::move(error)) {}
 
 const std::string& ClientResult::value() const {
-  static const std::string empty;
+  // As documented in header: precondition is ok() must be true
+  // In debug builds, assert. In release, return empty string.
+  assert(ok() && "Called value() on error result");
   return response_;
 }
 
@@ -58,7 +63,21 @@ class Client::Impl {
                       options.max_retry_delay,
                       options.retry_backoff_multiplier),
         connection_pool_(options.connect_timeout),
-        seq_counter_(0) {}
+        seq_counter_(0),
+        shutdown_(false) {}
+
+  ~Impl() {
+    shutdown_ = true;
+    // Wait for all async operations to complete
+    std::unique_lock<std::mutex> lock(async_mutex_);
+    for (auto& thread : async_threads_) {
+      if (thread.joinable()) {
+        lock.unlock();
+        thread.join();
+        lock.lock();
+      }
+    }
+  }
 
   ClientResult Execute(const std::string& command,
                        std::chrono::milliseconds timeout);
@@ -114,7 +133,11 @@ class Client::Impl {
   RetryPolicy retry_policy_;
   ConnectionPool connection_pool_;
   std::atomic<uint64_t> seq_counter_;
-  mutable std::mutex mutex_;
+
+  // Async operation tracking
+  std::atomic<bool> shutdown_;
+  std::mutex async_mutex_;
+  std::vector<std::thread> async_threads_;
 };
 
 ClientResult Client::Impl::Execute(const std::string& command,
@@ -137,6 +160,9 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
   req.seq = seq_counter_.fetch_add(1);
   req.read_only = read_only;
 
+  // Track overall deadline
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+
   // Try cached leader first
   if (auto leader = leader_tracker_.GetLeader()) {
     auto result = TryExecuteOnServer(*leader, req, timeout);
@@ -149,6 +175,11 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
 
   // Retry loop
   for (int attempt = 0; attempt <= options_.max_retries; ++attempt) {
+    // Check if we've exceeded the deadline
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return ClientResult(Status::Error("Request timeout"));
+    }
+
     // Try each server
     for (const auto& server : servers_) {
       auto result = TryExecuteOnServer(server, req, timeout);
@@ -162,10 +193,8 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
       // Check if we got NotLeader with hint
       if (result.has_error()) {
         auto& status = result.error();
-        std::string error_str = status.ToString();
 
-        if (error_str.find("Not leader") != std::string::npos ||
-            error_str.find("not leader") != std::string::npos) {
+        if (status.IsNotLeader()) {
           // Try to extract leader address from error or response
           // For now, clear cache and let next attempt find it
           leader_tracker_.ClearLeader();
@@ -176,12 +205,28 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
           return result;
         }
       }
+
+      // Check deadline after each server attempt
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return ClientResult(Status::Error("Request timeout"));
+      }
     }
 
     // Wait before retry (except on last attempt)
     if (attempt < options_.max_retries) {
       auto delay = retry_policy_.GetDelay(attempt);
-      std::this_thread::sleep_for(delay);
+      // Don't sleep past the deadline
+      auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now());
+      if (remaining.count() <= 0) {
+        return ClientResult(Status::Error("Request timeout"));
+      }
+      if (delay > remaining) {
+        delay = remaining;
+      }
+      if (delay.count() > 0) {
+        std::this_thread::sleep_for(delay);
+      }
     }
   }
 
@@ -191,8 +236,9 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
 ClientResult Client::Impl::TryExecuteOnServer(
     const std::string& server,
     const ClientRequest& req,
-    std::chrono::milliseconds timeout) {
+    std::chrono::milliseconds /*timeout*/) {
   // Use RpcCall (synchronous)
+  // TODO: Pass timeout to RpcCall once it supports configurable timeout
   ClientResponse resp;
   auto status = RpcCall(server, req, resp);
 
@@ -217,11 +263,24 @@ ClientResult Client::Impl::TryExecuteOnServer(
 void Client::Impl::ExecuteAsync(const std::string& command,
                                 std::function<void(ClientResult)> callback,
                                 std::chrono::milliseconds timeout) {
-  // Launch in background thread
-  std::thread([this, command, callback, timeout]() {
+  // Launch in background thread with proper lifecycle management
+  std::thread thread([this, command, callback, timeout]() {
+    if (shutdown_.load()) {
+      return;
+    }
     auto result = Execute(command, timeout);
-    callback(std::move(result));
-  }).detach();
+    if (!shutdown_.load()) {
+      callback(std::move(result));
+    }
+  });
+
+  std::lock_guard<std::mutex> lock(async_mutex_);
+  // Clean up completed threads first
+  async_threads_.erase(
+      std::remove_if(async_threads_.begin(), async_threads_.end(),
+                     [](const std::thread& t) { return !t.joinable(); }),
+      async_threads_.end());
+  async_threads_.push_back(std::move(thread));
 }
 
 // ========== Client Public API ==========

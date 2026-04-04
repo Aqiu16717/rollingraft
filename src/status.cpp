@@ -21,7 +21,7 @@ const char* Status::CopyState(const char* state) {
 }
 
 Status::Status(Code code, const std::string& msg, const std::string& msg2) {
-  assert(code != kOk);
+  assert(code != Code::kOk);
   const uint32_t len1 = static_cast<uint32_t>(msg.size());
   const uint32_t len2 = static_cast<uint32_t>(msg2.size());
   const uint32_t size = len1 + (len2 ? (2 + len2) : 0);
@@ -44,11 +44,38 @@ std::string Status::ToString() const {
     char tmp[30];
     const char* type;
     switch (code()) {
-      case kOk:
+      case Code::kOk:
         type = "OK";
         break;
-      case kCorruption:
+      case Code::kCorruption:
         type = "Corruption: ";
+        break;
+      case Code::kRequestVoteError:
+        type = "RequestVoteError: ";
+        break;
+      case Code::kAppendEntriesError:
+        type = "AppendEntriesError: ";
+        break;
+      case Code::kInstallSnapshotError:
+        type = "InstallSnapshotError: ";
+        break;
+      case Code::kSerializeError:
+        type = "SerializeError: ";
+        break;
+      case Code::kDeSerializeError:
+        type = "DeSerializeError: ";
+        break;
+      case Code::kProtocolError:
+        type = "ProtocolError: ";
+        break;
+      case Code::kRaftNodeStartError:
+        type = "RaftNodeStartError: ";
+        break;
+      case Code::kGenericError:
+        type = "Error: ";
+        break;
+      case Code::kNotLeader:
+        type = "NotLeader: ";
         break;
       default:
         std::snprintf(tmp, sizeof(tmp),
@@ -72,4 +99,12 @@ std::string Status::GetMessage() const {
     std::memcpy(&length, state_, sizeof(length));
     return std::string(state_ + 5, length);
   }
+}
+
+int Status::GetCode() const {
+  return static_cast<int>(code());
+}
+
+Status::Code Status::GetErrorCode() const {
+  return code();
 }

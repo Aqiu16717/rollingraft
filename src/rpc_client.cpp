@@ -86,14 +86,28 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
     // Resolve and connect with timeout
     auto endpoints = resolver.resolve(host, std::to_string(port));
 
-    // Set connection timeout
+    // Use async_connect with timeout
     std::error_code connect_ec;
-
     asio::steady_timer timer(io_context);
-    timer.expires_after(std::chrono::seconds(5));
-    timer.wait(connect_ec);
+    bool connect_done = false;
 
-    asio::connect(socket, endpoints, connect_ec);
+    timer.expires_after(std::chrono::seconds(5));
+    timer.async_wait([&](std::error_code ec) {
+      if (!ec && !connect_done) {
+        socket.close();
+      }
+    });
+
+    asio::async_connect(
+        socket, endpoints,
+        [&](std::error_code ec, const asio::ip::tcp::endpoint&) {
+          connect_done = true;
+          connect_ec = ec;
+          timer.cancel();
+        });
+
+    io_context.run();
+
     if (connect_ec) {
       return Status::Error("Failed to connect to " + addr + ": " +
                            connect_ec.message());

@@ -48,21 +48,35 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
   std::string port_str = addr.substr(colon_pos + 1);
 
   try {
-    asio::ip::tcp::resolver resolver(io_context_);
+    asio::io_context io_context;
+    asio::ip::tcp::resolver resolver(io_context);
     auto endpoints = resolver.resolve(host, port_str);
 
-    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context_);
+    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
 
-    // Connect with timeout
-    std::error_code ec;
-    asio::steady_timer timer(io_context_);
+    // Connect with timeout using async operations
+    std::error_code connect_ec;
+    asio::steady_timer timer(io_context);
+    bool connect_done = false;
+
     timer.expires_after(connect_timeout_);
+    timer.async_wait([&](std::error_code ec) {
+      if (!ec && !connect_done) {
+        socket->close();
+      }
+    });
 
-    asio::async_connect(*socket, endpoints,
-                        [&ec](std::error_code code, const auto&) { ec = code; });
+    asio::async_connect(
+        *socket, endpoints,
+        [&](std::error_code ec, const asio::ip::tcp::endpoint&) {
+          connect_done = true;
+          connect_ec = ec;
+          timer.cancel();
+        });
 
-    timer.wait();
-    if (ec) {
+    io_context.run();
+
+    if (connect_ec) {
       return nullptr;
     }
 

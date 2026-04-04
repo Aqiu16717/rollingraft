@@ -50,7 +50,6 @@ class ConnectionPool {
   std::shared_ptr<asio::ip::tcp::socket> CreateConnection(
       const std::string& addr);
 
-  asio::io_context io_context_;
   std::chrono::milliseconds connect_timeout_;
 
   mutable std::mutex mutex_;

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 
 namespace rollingraft {
 
@@ -20,25 +21,30 @@ RetryPolicy::RetryPolicy(int max_retries,
       backoff_multiplier_(backoff_multiplier) {}
 
 bool RetryPolicy::IsRetryableError(const Status& error) {
-  // Network errors are retryable
-  if (error.ToString().find("Network") != std::string::npos) {
+  // NotLeader is retryable (we'll redirect to the correct leader)
+  if (error.IsNotLeader()) {
     return true;
   }
-  // Timeout errors are retryable
-  if (error.ToString().find("timeout") != std::string::npos ||
-      error.ToString().find("Timeout") != std::string::npos) {
+
+  // Use error code classification instead of string matching
+  auto code = error.GetErrorCode();
+  if (code == Status::Code::kRequestVoteError ||
+      code == Status::Code::kAppendEntriesError ||
+      code == Status::Code::kInstallSnapshotError) {
     return true;
   }
-  // NotLeader is retryable (we'll redirect)
-  if (error.ToString().find("Not leader") != std::string::npos ||
-      error.ToString().find("not leader") != std::string::npos) {
+
+  // Generic errors may be retryable - check message content as fallback
+  std::string msg = error.GetMessage();
+  if (msg.find("network") != std::string::npos ||
+      msg.find("Network") != std::string::npos ||
+      msg.find("timeout") != std::string::npos ||
+      msg.find("Timeout") != std::string::npos ||
+      msg.find("connect") != std::string::npos ||
+      msg.find("Connect") != std::string::npos) {
     return true;
   }
-  // Connection errors are retryable
-  if (error.ToString().find("connect") != std::string::npos ||
-      error.ToString().find("Connect") != std::string::npos) {
-    return true;
-  }
+
   return false;
 }
 
@@ -49,11 +55,19 @@ bool RetryPolicy::ShouldRetry(int attempt_count) const {
 std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   // Exponential backoff: delay = initial * multiplier^attempt
   double factor = std::pow(backoff_multiplier_, attempt_count);
-  auto delay = std::chrono::milliseconds(static_cast<int>(
+  auto base_delay = std::chrono::milliseconds(static_cast<int>(
       initial_delay_.count() * factor));
 
   // Cap at max delay
-  return std::min(delay, max_delay_);
+  base_delay = std::min(base_delay, max_delay_);
+
+  // Add jitter: random value between 0 and base_delay/2
+  // This prevents thundering herd when multiple clients retry simultaneously
+  thread_local std::mt19937 gen(std::random_device{}());
+  std::uniform_int_distribution<> dis(0, base_delay.count() / 2);
+  auto jitter = std::chrono::milliseconds(dis(gen));
+
+  return base_delay + jitter;
 }
 
 }  // namespace rollingraft

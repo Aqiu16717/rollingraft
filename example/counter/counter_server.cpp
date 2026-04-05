@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -185,7 +187,17 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Stopping Raft node..." << std::endl;
-    raft_node.Stop();
+    
+    // Stop with timeout to avoid hanging on disk issues
+    auto stop_future = std::async(std::launch::async, [&raft_node]() {
+      raft_node.Stop();
+    });
+    
+    if (stop_future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+      std::cerr << "Warning: Stop() timed out, forcing exit..." << std::endl;
+      // Force exit if graceful shutdown fails
+      std::exit(1);
+    }
   } catch (const std::exception& e) {
     std::cerr << "Uncaught exception: " << e.what() << std::endl;
     return 1;

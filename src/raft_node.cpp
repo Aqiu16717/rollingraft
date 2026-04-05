@@ -773,10 +773,17 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
 
 void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     NodeId from, const RequestVoteResponse& resp, Term original_term) {
+  LOG_INFO("Node {} received RequestVoteResponse from {}: granted={}, term={}",
+           server_id_, from, resp.vote_granted_, resp.term_);
+  
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!IsRunning()) return;
-  if (role_ != RaftNodeRole::CANDIDATE) return;
+  if (role_ != RaftNodeRole::CANDIDATE) {
+    LOG_INFO("Node {} ignoring vote response, not a candidate (role={})", 
+             server_id_, static_cast<int>(role_));
+    return;
+  }
 
   // If response term is higher, revert to Follower
   if (resp.term_ > current_term_) {

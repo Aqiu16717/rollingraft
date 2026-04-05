@@ -39,3 +39,27 @@ out/
 .cache
 .vscode
 docs
+
+# Agent/IDE configuration
+.agents/
+.claude/
+
+# Log files
+*.log
+rollingraft.log
+
+# Temporary files
+prompt.md
+test.md
+
+# Design documents (development artifacts)
+doc/design_v*.md
+doc/*_design.md
+example/counter/DESIGN.md
+example/counter/READEME.md
+
+# Keep only essential documentation
+doc/todo.md
+!doc/user_guide.md
+!doc/testing_strategy.md
+!doc/comment_style_guide.md

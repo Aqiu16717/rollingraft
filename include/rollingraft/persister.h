@@ -193,4 +193,7 @@ class Persister {
 /** Factory function type for creating Persister instances. */
 using PersisterFactory = std::function<std::unique_ptr<Persister>()>;
 
+/** Create a LevelDB-backed persister. */
+std::unique_ptr<Persister> CreateLevelDBPersister();
+
 }  // namespace rollingraft

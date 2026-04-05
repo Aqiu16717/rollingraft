@@ -1,0 +1,142 @@
+# RollingRaft 3-Node Cluster for Integration Testing
+version: '3.8'
+
+services:
+  # Node 1 - Will become leader
+  raft-node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: raft-node-1
+    hostname: raft-node-1
+    command: >
+      sh -c "mkdir -p /app/data/node1 &&
+             /app/bin/example_counter_server 1 8001 8002 8003"
+    ports:
+      - "8001:8001"
+    volumes:
+      - node1-data:/app/data/node1
+    networks:
+      - raft-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8001"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Node 2
+  raft-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: raft-node-2
+    hostname: raft-node-2
+    command: >
+      sh -c "mkdir -p /app/data/node2 &&
+             /app/bin/example_counter_server 2 8002 8001 8003"
+    ports:
+      - "8002:8002"
+    volumes:
+      - node2-data:/app/data/node2
+    networks:
+      - raft-network
+    depends_on:
+      raft-node-1:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8002"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Node 3
+  raft-node-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: raft-node-3
+    hostname: raft-node-3
+    command: >
+      sh -c "mkdir -p /app/data/node3 &&
+             /app/bin/example_counter_server 3 8003 8001 8002"
+    ports:
+      - "8003:8003"
+    volumes:
+      - node3-data:/app/data/node3
+    networks:
+      - raft-network
+    depends_on:
+      raft-node-1:
+        condition: service_started
+      raft-node-2:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8003"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Integration test runner
+  integration-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: raft-integration-tests
+    command: >
+      sh -c "echo 'Waiting for cluster to be ready...' &&
+             sleep 10 &&
+             echo 'Running integration tests...' &&
+             /app/bin/integration_tests --gtest_filter='*'"
+    networks:
+      - raft-network
+    depends_on:
+      raft-node-1:
+        condition: service_healthy
+      raft-node-2:
+        condition: service_healthy
+      raft-node-3:
+        condition: service_healthy
+    profiles:
+      - test
+
+  # Client test runner
+  client-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: raft-client-tests
+    command: >
+      sh -c "echo 'Waiting for cluster to be ready...' &&
+             sleep 10 &&
+             echo 'Running client integration tests...' &&
+             /app/bin/example_counter_client raft-node-1:8001 raft-node-2:8002 raft-node-3:8003"
+    networks:
+      - raft-network
+    depends_on:
+      raft-node-1:
+        condition: service_healthy
+      raft-node-2:
+        condition: service_healthy
+      raft-node-3:
+        condition: service_healthy
+    profiles:
+      - client-test
+    stdin_open: true
+    tty: true
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  raft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

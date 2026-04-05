@@ -7,6 +7,7 @@
 #   ./build.sh debug        # Build Debug version
 #   ./build.sh clean        # Clean build directory
 #   ./build.sh test         # Build and run tests
+#   ./build.sh benchmark    # Build and run benchmarks
 #   ./build.sh install      # Build and install
 #
 
@@ -32,6 +33,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         test|Test|TEST)
             RUN_TESTS=1
+            shift
+            ;;
+        benchmark|Benchmark|BENCHMARK)
+            RUN_BENCHMARK=1
             shift
             ;;
         install|Install|INSTALL)
@@ -81,6 +86,18 @@ if [[ "${RUN_TESTS}" == "1" ]]; then
     ctest --output-on-failure
 fi
 
+# Run benchmark if requested
+if [[ "${RUN_BENCHMARK}" == "1" ]]; then
+    echo ""
+    echo "Building benchmarks..."
+    cmake --build "${BUILD_DIR}" --target benchmark_client benchmark_latency_curve benchmark_failover
+    echo ""
+    echo "Benchmarks built. To run:"
+    echo "  ./build/benchmark/benchmark_client <servers>"
+    echo "  ./build/benchmark/benchmark_latency_curve <servers>"
+    echo "  ./build/benchmark/benchmark_failover -k '<kill_cmd>' <servers>"
+fi
+
 # Install if requested
 if [[ "${DO_INSTALL}" == "1" ]]; then
     echo ""
@@ -99,7 +116,8 @@ echo "To run unit tests:"
 echo "  ./build/tests/unit_tests"
 echo ""
 echo "To run counter example (3 nodes):"
-echo "  Terminal 1: ./build/example/counter/counter_server 1 8001 8002 8003"
-echo "  Terminal 2: ./build/example/counter/counter_server 2 8002 8001 8003"
-echo "  Terminal 3: ./build/example/counter/counter_server 3 8003 8001 8002"
+echo "  Terminal 1: ./build/example/example_counter_server 1 8001 8002 8003"
+echo "  Terminal 2: ./build/example/example_counter_server 2 8002 8001 8003"
+echo "  Terminal 3: ./build/example/example_counter_server 3 8003 8001 8002"
+echo "  Terminal 4: ./build/example/example_counter_client 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003"
 echo ""

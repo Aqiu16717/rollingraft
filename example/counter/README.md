@@ -24,19 +24,19 @@ Open three terminals:
 **Terminal 1 (Node 1):**
 ```bash
 mkdir -p data/node1
-./build/example/counter/counter_server 1 8001 8002 8003
+./build/example/example_counter_server 1 8001 8002 8003
 ```
 
 **Terminal 2 (Node 2):**
 ```bash
 mkdir -p data/node2
-./build/example/counter/counter_server 2 8002 8001 8003
+./build/example/example_counter_server 2 8002 8001 8003
 ```
 
 **Terminal 3 (Node 3):**
 ```bash
 mkdir -p data/node3
-./build/example/counter/counter_server 3 8003 8001 8002
+./build/example/example_counter_server 3 8003 8001 8002
 ```
 
 Wait for leader election (you'll see "Current count value" messages from the leader).
@@ -45,7 +45,7 @@ Wait for leader election (you'll see "Current count value" messages from the lea
 
 **Terminal 4 (Client):**
 ```bash
-./build/example/counter/counter_client 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
+./build/example/example_counter_client 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
 ```
 
 ### 3. Try commands

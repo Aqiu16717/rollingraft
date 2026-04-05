@@ -84,6 +84,7 @@ if(TARGET leveldb)
   target_compile_options(leveldb PRIVATE
     -Wno-unused-parameter
     -Wno-deprecated-declarations
+    -Wno-unused-but-set-variable
   )
 endif()
 

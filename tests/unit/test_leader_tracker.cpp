@@ -140,14 +140,14 @@ TEST_F(LeaderTrackerTest, IsLeaderStale_AfterClear_True) {
 
 TEST_F(LeaderTrackerTest, Concurrent_ReadsAndWrites) {
   const int num_threads = 4;
-  const int ops_per_thread = 100;
   
   std::vector<std::thread> threads;
   
   // Some threads update
   for (int i = 0; i < num_threads / 2; ++i) {
-    threads.emplace_back([this, i, ops_per_thread]() {
-      for (int j = 0; j < ops_per_thread; ++j) {
+    threads.emplace_back([this, i]() {
+      const int ops = 100;  // ops_per_thread value
+      for (int j = 0; j < ops; ++j) {
         tracker_->UpdateLeader("127.0.0.1:" + std::to_string(8000 + i));
       }
     });
@@ -155,8 +155,9 @@ TEST_F(LeaderTrackerTest, Concurrent_ReadsAndWrites) {
   
   // Some threads read
   for (int i = num_threads / 2; i < num_threads; ++i) {
-    threads.emplace_back([this, ops_per_thread]() {
-      for (int j = 0; j < ops_per_thread; ++j) {
+    threads.emplace_back([this]() {
+      const int ops = 100;  // ops_per_thread value
+      for (int j = 0; j < ops; ++j) {
         tracker_->GetLeader();
         tracker_->IsLeaderStale();
       }

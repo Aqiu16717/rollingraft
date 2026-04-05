@@ -13,6 +13,7 @@
 
 #include "rollingraft/raft_node.h"
 #include "rollingraft/state_machine.h"
+#include "rollingraft/persister.h"
 
 class CounterSnapshot : public rollingraft::Snapshot {
  public:
@@ -157,6 +158,7 @@ int main(int argc, char** argv) {
   config.node_id = node_id;
   config.listen_addr = "127.0.0.1:" + listen_port;
   config.data_dir = "./data/node" + std::to_string(node_id);
+  config.persister_factory = []() { return rollingraft::CreateLevelDBPersister(); };
 
   for (int i = 3; i < argc; ++i) {
     config.peers.push_back("127.0.0.1:" + std::string(argv[i]));

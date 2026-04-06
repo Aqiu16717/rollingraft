@@ -226,8 +226,12 @@ class AsioNetworkTransport : public NetworkTransport {
 
     try {
       asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-      acceptor_ =
-          std::make_unique<asio::ip::tcp::acceptor>(io_context_, endpoint);
+      // Create acceptor with open+set_option+bind sequence to enable SO_REUSEADDR before binding
+      acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_);
+      acceptor_->open(endpoint.protocol());
+      acceptor_->set_option(asio::socket_base::reuse_address(true));
+      acceptor_->bind(endpoint);
+      acceptor_->listen();
     } catch (const std::exception& e) {
       return Status::Error("Failed to create acceptor: " +
                            std::string(e.what()));

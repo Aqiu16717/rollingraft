@@ -48,20 +48,35 @@ void AsioTimerService::Stop() {
 
   LOG_INFO("Stopping AsioTimerService...");
 
+  // Cancel all timers first
   {
     std::lock_guard<std::mutex> lock(timers_mutex_);
-    for (auto& [id, timer] : timers_) {
-      timer->asio_timer->cancel();
+    auto timers_copy = timers_;  // Copy to avoid iterator invalidation
+    for (auto& [id, timer] : timers_copy) {
+      try {
+        timer->asio_timer->cancel();
+      } catch (...) {
+        // Ignore errors during cleanup
+      }
     }
-    timers_.clear();
   }
 
   if (owns_io_context_) {
+    // Stop io_context before joining thread
     work_guard_.reset();
     io_context_.stop();
+    
     if (io_thread_.joinable()) {
+      // Use try_join_for to avoid indefinite blocking (C++20)
+      // For C++11/14/17, use a detached approach with atomic flag
       io_thread_.join();
     }
+  }
+
+  // Clear timers after stopping
+  {
+    std::lock_guard<std::mutex> lock(timers_mutex_);
+    timers_.clear();
   }
 
   LOG_INFO("AsioTimerService stopped");
@@ -89,7 +104,13 @@ TimerId AsioTimerService::SetTimeout(std::chrono::milliseconds delay,
   timer->asio_timer->async_wait([this, id, timer](std::error_code ec) {
     if (!ec) {
       if (timer->callback) {
-        timer->callback();
+        try {
+          timer->callback();
+        } catch (const std::exception& e) {
+          LOG_ERROR("Timer callback exception: {}", e.what());
+        } catch (...) {
+          LOG_ERROR("Timer callback unknown exception");
+        }
       }
     }
     std::lock_guard<std::mutex> lock(timers_mutex_);
@@ -119,25 +140,39 @@ TimerId AsioTimerService::SetInterval(std::chrono::milliseconds interval,
     timers_[id] = timer;
   }
 
-  std::function<void(std::error_code)> handler;
-  handler = [this, id, timer, &handler](std::error_code ec) {
+  // Use a shared_ptr to manage handler lifecycle
+  auto handler = std::make_shared<std::function<void(std::error_code)>>();
+  *handler = [this, id, timer, interval, handler](std::error_code ec) {
     if (ec) {
+      if (ec != asio::error::operation_aborted) {
+        LOG_DEBUG("Interval timer error: {}", ec.message());
+      }
       std::lock_guard<std::mutex> lock(timers_mutex_);
       timers_.erase(id);
       return;
     }
 
-    if (timer->callback) {
-      timer->callback();
+    if (timer->callback && running_) {
+      try {
+        timer->callback();
+      } catch (const std::exception& e) {
+        LOG_ERROR("Interval timer callback exception: {}", e.what());
+      } catch (...) {
+        LOG_ERROR("Interval timer callback unknown exception");
+      }
     }
 
     if (running_) {
-      timer->asio_timer->expires_after(timer->interval);
-      timer->asio_timer->async_wait(handler);
+      try {
+        timer->asio_timer->expires_after(interval);
+        timer->asio_timer->async_wait(*handler);
+      } catch (const std::exception& e) {
+        LOG_ERROR("Failed to reschedule interval timer: {}", e.what());
+      }
     }
   };
 
-  timer->asio_timer->async_wait(handler);
+  timer->asio_timer->async_wait(*handler);
 
   return id;
 }
@@ -153,7 +188,11 @@ bool AsioTimerService::CancelTimer(TimerId timer_id) {
     return false;
   }
 
-  it->second->asio_timer->cancel();
+  try {
+    it->second->asio_timer->cancel();
+  } catch (...) {
+    // Ignore errors during cancel
+  }
   timers_.erase(it);
   return true;
 }

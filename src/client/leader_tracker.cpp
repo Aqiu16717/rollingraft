@@ -14,6 +14,10 @@ std::optional<std::string> LeaderTracker::GetLeader() const {
   if (leader_addr_.empty()) {
     return std::nullopt;
   }
+  // Zero TTL means always expired
+  if (ttl_.count() == 0) {
+    return std::nullopt;
+  }
   auto now = std::chrono::steady_clock::now();
   if (now - last_update_ > ttl_) {
     return std::nullopt;
@@ -40,6 +44,10 @@ void LeaderTracker::ClearLeader() {
 bool LeaderTracker::IsLeaderStale() const {
   std::lock_guard<std::mutex> lock(mutex_);
   if (leader_addr_.empty()) {
+    return true;
+  }
+  // Zero TTL means always stale
+  if (ttl_.count() == 0) {
     return true;
   }
   auto now = std::chrono::steady_clock::now();

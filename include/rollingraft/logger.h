@@ -69,8 +69,11 @@ class LoggerFactory {
 
   /** Get the singleton instance. */
   static LoggerFactory& Instance() {
-    static LoggerFactory instance;
-    return instance;
+    // Intentionally leak the instance to avoid destruction order issues.
+    // The logger must be available until the very end of program execution
+    // since other singletons and static objects may log during destruction.
+    static LoggerFactory* instance = new LoggerFactory();
+    return *instance;
   }
 
   /** Get the current logger (may be nullptr if not set). */

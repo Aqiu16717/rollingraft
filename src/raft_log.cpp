@@ -14,7 +14,10 @@ std::pair<Index, Status> RaftLog::Append(Term term, std::string data) {
   auto [last_index, _] = GetLastLogInfo();
   Index new_index = (last_index == 0) ? start_index_ : last_index + 1;
 
-  RaftLogEntry entry(new_index, term, std::move(data));
+  RaftLogEntry entry;
+  entry.index_ = new_index;
+  entry.term_ = term;
+  entry.data_ = std::move(data);
   entries_.push_back(std::move(entry));
 
   return {new_index, Status::OK()};

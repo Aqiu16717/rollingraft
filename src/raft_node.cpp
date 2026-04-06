@@ -129,6 +129,7 @@ class RaftNode::RaftNodeImpl {
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
+  void ScheduleAppendEntriesRetry(NodeId peer_id);  // With exponential backoff
 
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);
@@ -186,6 +187,13 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
   std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Idempotency
+  
+  // Retry tracking for AppendEntries
+  struct RetryState {
+    int attempts = 0;
+    std::chrono::steady_clock::time_point last_retry;
+  };
+  std::unordered_map<NodeId, RetryState> retry_state_;
 
   // ========== Cluster Config ==========
   ClusterConfig cluster_config_;
@@ -628,6 +636,7 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   auto [last_index, _] = log_.GetLastLogInfo();
   next_index_.clear();
   match_index_.clear();
+  retry_state_.clear();  // Reset retry state for new leadership
 
   // Clear client sessions - new leader doesn't have old session state
   // Clients will retry with their next command, which will be treated as new
@@ -874,13 +883,18 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
 
+  // Capture current entries count for match_index calculation on retry
+  size_t entries_count = req.entries_.size();
+  
   network_->SendRpc(peer_id, it_addr->second, data,
                     std::chrono::milliseconds(config_.rpc_timeout_ms),
-                    [this, peer_id](const std::string& resp, bool success,
-                                    const std::string& error) {
+                    [this, peer_id, entries_count](const std::string& resp, 
+                                                   bool success,
+                                                   const std::string& error) {
                       if (!success) {
-                        LOG_WARN("AppendEntries to {} failed: {}", peer_id,
-                                 error);
+                        LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id, error);
+                        // Trigger retry with backoff
+                        ScheduleAppendEntriesRetry(peer_id);
                         return;
                       }
 
@@ -889,10 +903,44 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
                       if (!status.ok()) {
                         LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
                                   status.ToString());
+                        // Also retry on deserialization failure
+                        ScheduleAppendEntriesRetry(peer_id);
                         return;
                       }
+                      // Reset retry state on successful response
+                      retry_state_.erase(peer_id);
                       HandleAppendEntriesResponse(peer_id, response);
                     });
+}
+
+void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  
+  if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
+  
+  auto& retry = retry_state_[peer_id];
+  retry.attempts++;
+  
+  if (retry.attempts > static_cast<int>(config_.max_retry_attempts)) {
+    LOG_WARN("Node {}: max retry attempts ({}) reached for peer {}", 
+             server_id_, config_.max_retry_attempts, peer_id);
+    retry_state_.erase(peer_id);
+    return;
+  }
+  
+  // Exponential backoff: delay = base * 2^attempts, capped at max
+  uint32_t delay = config_.base_retry_delay_ms * (1u << retry.attempts);
+  delay = std::min(delay, config_.max_retry_delay_ms);
+  
+  LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms",
+            server_id_, retry.attempts, peer_id, delay);
+  
+  timer_->SetTimeout(std::chrono::milliseconds(delay), [this, peer_id]() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (role_ == RaftNodeRole::LEADER) {
+      SendAppendEntriesToPeerLocked(peer_id);
+    }
+  });
 }
 
 void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
@@ -913,6 +961,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     Index new_match = next_index_[from] - 1 + resp.entries_count_;
     match_index_[from] = std::max(match_index_[from], new_match);
     next_index_[from] = match_index_[from] + 1;
+    
+    // Reset retry state on success
+    retry_state_.erase(from);
 
     // Try to commit
     TryCommitLocked();
@@ -924,13 +975,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
       next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
     }
 
-    // Retry with delay
-    timer_->SetTimeout(std::chrono::milliseconds(10), [this, from]() {
-      std::lock_guard<std::mutex> lock(mtx_);
-      if (role_ == RaftNodeRole::LEADER) {
-        SendAppendEntriesToPeerLocked(from);
-      }
-    });
+    // Use exponential backoff retry for log mismatch too
+    ScheduleAppendEntriesRetry(from);
   }
 }
 

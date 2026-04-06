@@ -63,3 +63,5 @@ doc/todo.md
 !doc/user_guide.md
 !doc/testing_strategy.md
 !doc/comment_style_guide.md
+.DS_Store
+

@@ -67,6 +67,23 @@ target_include_directories(rollingraft_spdlog INTERFACE
 add_library(rollingraft::spdlog ALIAS rollingraft_spdlog)
 
 # LevelDB (bundled via submodule)
+# Apply macOS/C++20 compatibility patch if not already applied
+set(LEVELDB_PATCH_FILE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/leveldb-macos-cxx20.patch)
+set(LEVELDB_PATCH_MARKER ${CMAKE_CURRENT_SOURCE_DIR}/third_party/leveldb/.patched)
+if(EXISTS ${LEVELDB_PATCH_FILE} AND NOT EXISTS ${LEVELDB_PATCH_MARKER})
+  message(STATUS "Applying LevelDB macOS/C++20 compatibility patch...")
+  execute_process(
+    COMMAND git -C ${CMAKE_CURRENT_SOURCE_DIR}/third_party/leveldb apply ${LEVELDB_PATCH_FILE}
+    RESULT_VARIABLE PATCH_RESULT
+  )
+  if(PATCH_RESULT EQUAL 0)
+    file(WRITE ${LEVELDB_PATCH_MARKER} "patched")
+    message(STATUS "LevelDB patch applied successfully")
+  else()
+    message(WARNING "Failed to apply LevelDB patch, build may fail on macOS")
+  endif()
+endif()
+
 set(LEVELDB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LEVELDB_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(LEVELDB_INSTALL OFF CACHE BOOL "" FORCE)

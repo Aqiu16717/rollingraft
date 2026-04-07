@@ -65,3 +65,6 @@ doc/todo.md
 !doc/comment_style_guide.md
 .DS_Store
 
+# Submodule patch markers
+third_party/*/.patched
+

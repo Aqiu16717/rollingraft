@@ -8,8 +8,8 @@
 #include <random>
 #include <set>
 
-#include "rollingraft/logger.h"
 #include "rollingraft/log_persister.h"
+#include "rollingraft/logger.h"
 #include "rollingraft/network_transport.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/protocol.h"
@@ -20,9 +20,8 @@
 #include "rollingraft/types.h"
 
 // Default component implementations
-#include "json_protocol.h"
 #include "asio_timer_service.h"
-
+#include "json_protocol.h"
 #include "nlohmann/json.hpp"
 
 // Forward declaration for default network transport
@@ -41,30 +40,30 @@ struct PendingProposal {
 
 // ========== Client Session (for idempotency) ==========
 struct ClientSession {
-  uint64_t last_seq;                                        // Last processed seq
-  std::string last_response;                                // Cached response
-  Index last_index;                                         // Log index
-  Term last_term;                                           // Term when executed
-  std::chrono::steady_clock::time_point last_active;        // For cleanup
+  uint64_t last_seq;                                  // Last processed seq
+  std::string last_response;                          // Cached response
+  Index last_index;                                   // Log index
+  Term last_term;                                     // Term when executed
+  std::chrono::steady_clock::time_point last_active;  // For cleanup
 };
 
 // ========== Snapshot Transfer State (Leader side) ==========
 struct SnapshotSendState {
-  std::shared_ptr<Snapshot> snapshot;                       // Snapshot handle
-  uint64_t offset = 0;                                      // Current offset
-  Index last_included_index = 0;                            // Snapshot metadata
-  Term last_included_term = 0;                              // Snapshot metadata
-  bool in_progress = false;                                 // Transfer in progress
-  size_t last_chunk_size = 0;                               // For progress tracking
+  std::shared_ptr<Snapshot> snapshot;  // Snapshot handle
+  uint64_t offset = 0;                 // Current offset
+  Index last_included_index = 0;       // Snapshot metadata
+  Term last_included_term = 0;         // Snapshot metadata
+  bool in_progress = false;            // Transfer in progress
+  size_t last_chunk_size = 0;          // For progress tracking
 };
 
 // ========== Pending ReadIndex Request ==========
 struct PendingReadIndex {
-  Index read_index;                                         // The commit index to wait for
-  std::function<void()> callback;                           // Completion callback
-  std::chrono::steady_clock::time_point start_time;         // Request timestamp
-  std::set<NodeId> acks;                                    // Nodes that acknowledged
-  bool heartbeats_sent = false;                             // Whether heartbeats were sent
+  Index read_index;                // The commit index to wait for
+  std::function<void()> callback;  // Completion callback
+  std::chrono::steady_clock::time_point start_time;  // Request timestamp
+  std::set<NodeId> acks;                             // Nodes that acknowledged
+  bool heartbeats_sent = false;  // Whether heartbeats were sent
 };
 
 // ========== RaftNode Implementation ==========
@@ -139,7 +138,8 @@ class RaftNode::RaftNodeImpl {
   // Snapshot related
   void SendInstallSnapshotToPeerLocked(NodeId peer_id);
   void SendNextSnapshotChunkLocked(NodeId peer_id);
-  void HandleInstallSnapshotResponse(NodeId from, const InstallSnapshotResponse& resp,
+  void HandleInstallSnapshotResponse(NodeId from,
+                                     const InstallSnapshotResponse& resp,
                                      bool rpc_success);
 
   // Commit and apply
@@ -187,7 +187,7 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
   std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Idempotency
-  
+
   // Retry tracking for AppendEntries
   struct RetryState {
     int attempts = 0;
@@ -233,7 +233,7 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Snapshot Transfer State ==========
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
-  std::string snapshot_temp_data_;                                // Follower side (chunk buffer)
+  std::string snapshot_temp_data_;  // Follower side (chunk buffer)
 
   // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
@@ -558,8 +558,8 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
 
   pending_reads_[read_id] = std::move(read_req);
 
-  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_, read_id,
-           commit_index_);
+  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
+           read_id, commit_index_);
 
   // Send heartbeats to confirm leadership
   BroadcastReadIndexHeartbeatsLocked(read_id);
@@ -784,12 +784,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     NodeId from, const RequestVoteResponse& resp, Term original_term) {
   LOG_INFO("Node {} received RequestVoteResponse from {}: granted={}, term={}",
            server_id_, from, resp.vote_granted_, resp.term_);
-  
+
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::CANDIDATE) {
-    LOG_INFO("Node {} ignoring vote response, not a candidate (role={})", 
+    LOG_INFO("Node {} ignoring vote response, not a candidate (role={})",
              server_id_, static_cast<int>(role_));
     return;
   }
@@ -851,8 +851,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   // Check if we need to send snapshot instead
   Index first_log_index = log_.GetFirstIndex();
   if (next_idx < first_log_index) {
-    LOG_INFO("Node {}: next_idx {} < first_log_index {}, sending snapshot to {}",
-             server_id_, next_idx, first_log_index, peer_id);
+    LOG_INFO(
+        "Node {}: next_idx {} < first_log_index {}, sending snapshot to {}",
+        server_id_, next_idx, first_log_index, peer_id);
     SendInstallSnapshotToPeerLocked(peer_id);
     return;
   }
@@ -876,65 +877,64 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   std::string data;
   auto status = protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
-    LOG_ERROR("Failed to serialize AppendEntriesRequest: {}", status.ToString());
+    LOG_ERROR("Failed to serialize AppendEntriesRequest: {}",
+              status.ToString());
     return;
   }
 
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
 
-  // Capture current entries count for match_index calculation on retry
-  size_t entries_count = req.entries_.size();
-  
-  network_->SendRpc(peer_id, it_addr->second, data,
-                    std::chrono::milliseconds(config_.rpc_timeout_ms),
-                    [this, peer_id, entries_count](const std::string& resp, 
-                                                   bool success,
-                                                   const std::string& error) {
-                      if (!success) {
-                        LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id, error);
-                        // Trigger retry with backoff
-                        ScheduleAppendEntriesRetry(peer_id);
-                        return;
-                      }
+  network_->SendRpc(
+      peer_id, it_addr->second, data,
+      std::chrono::milliseconds(config_.rpc_timeout_ms),
+      [this, peer_id](const std::string& resp, bool success,
+                      const std::string& error) {
+        if (!success) {
+          LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
+                   error);
+          // Trigger retry with backoff
+          ScheduleAppendEntriesRetry(peer_id);
+          return;
+        }
 
-                      AppendEntriesResponse response;
-                      auto status = protocol_->DeserializeResponse(resp, response);
-                      if (!status.ok()) {
-                        LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
-                                  status.ToString());
-                        // Also retry on deserialization failure
-                        ScheduleAppendEntriesRetry(peer_id);
-                        return;
-                      }
-                      // Reset retry state on successful response
-                      retry_state_.erase(peer_id);
-                      HandleAppendEntriesResponse(peer_id, response);
-                    });
+        AppendEntriesResponse response;
+        auto status = protocol_->DeserializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
+                    status.ToString());
+          // Also retry on deserialization failure
+          ScheduleAppendEntriesRetry(peer_id);
+          return;
+        }
+        // Reset retry state on successful response
+        retry_state_.erase(peer_id);
+        HandleAppendEntriesResponse(peer_id, response);
+      });
 }
 
 void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
   std::lock_guard<std::mutex> lock(mtx_);
-  
+
   if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
-  
+
   auto& retry = retry_state_[peer_id];
   retry.attempts++;
-  
+
   if (retry.attempts > static_cast<int>(config_.max_retry_attempts)) {
-    LOG_WARN("Node {}: max retry attempts ({}) reached for peer {}", 
-             server_id_, config_.max_retry_attempts, peer_id);
+    LOG_WARN("Node {}: max retry attempts ({}) reached for peer {}", server_id_,
+             config_.max_retry_attempts, peer_id);
     retry_state_.erase(peer_id);
     return;
   }
-  
+
   // Exponential backoff: delay = base * 2^attempts, capped at max
   uint32_t delay = config_.base_retry_delay_ms * (1u << retry.attempts);
   delay = std::min(delay, config_.max_retry_delay_ms);
-  
+
   LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms",
-            server_id_, retry.attempts, peer_id, delay);
-  
+           server_id_, retry.attempts, peer_id, delay);
+
   timer_->SetTimeout(std::chrono::milliseconds(delay), [this, peer_id]() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (role_ == RaftNodeRole::LEADER) {
@@ -961,7 +961,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     Index new_match = next_index_[from] - 1 + resp.entries_count_;
     match_index_[from] = std::max(match_index_[from], new_match);
     next_index_[from] = match_index_[from] + 1;
-    
+
     // Reset retry state on success
     retry_state_.erase(from);
 
@@ -1030,7 +1030,8 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   // Read chunk
   std::vector<char> buffer(kSnapshotChunkSize);
   size_t bytes_read = state.snapshot->Read(
-      state.offset, reinterpret_cast<uint8_t*>(buffer.data()), kSnapshotChunkSize);
+      state.offset, reinterpret_cast<uint8_t*>(buffer.data()),
+      kSnapshotChunkSize);
   buffer.resize(bytes_read);
   state.last_chunk_size = bytes_read;
 
@@ -1065,8 +1066,9 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
     return;
   }
 
-  LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
-            server_id_, peer_id, state.offset, bytes_read, is_last);
+  LOG_DEBUG(
+      "Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
+      server_id_, peer_id, state.offset, bytes_read, is_last);
 
   // Send
   network_->SendRpc(peer_id, it_addr->second, data,
@@ -1076,11 +1078,13 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
                       // Deserialize response first (outside lock)
                       InstallSnapshotResponse response;
                       if (success) {
-                        auto status = protocol_->DeserializeResponse(resp, response);
+                        auto status =
+                            protocol_->DeserializeResponse(resp, response);
                         if (!status.ok()) {
-                          LOG_ERROR("Node {}: failed to deserialize "
-                                    "InstallSnapshotResponse: {}",
-                                    server_id_, status.ToString());
+                          LOG_ERROR(
+                              "Node {}: failed to deserialize "
+                              "InstallSnapshotResponse: {}",
+                              server_id_, status.ToString());
                           success = false;
                         }
                       } else {
@@ -1106,7 +1110,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
 
   // RPC failed: retry with backoff
   if (!rpc_success) {
-    LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_, from);
+    LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_,
+             from);
     timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
       std::lock_guard<std::mutex> lock(mtx_);
       if (role_ == RaftNodeRole::LEADER) {
@@ -1118,8 +1123,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
 
   // Term check: if follower has higher term, revert to follower
   if (resp.term_ > current_term_) {
-    LOG_INFO("Node {}: follower {} has higher term {} vs {}, reverting to Follower",
-             server_id_, from, resp.term_, current_term_);
+    LOG_INFO(
+        "Node {}: follower {} has higher term {} vs {}, reverting to Follower",
+        server_id_, from, resp.term_, current_term_);
     BecomeFollowerLocked(resp.term_);
     return;
   }
@@ -1127,13 +1133,14 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
   // Check if we're done
   if (state.offset + state.last_chunk_size >=
       state.snapshot->GetMeta().last_included_index_) {
-    // Actually we need to track total size, not index. Let 'done' flag drive this.
-    // But we don't store total size. Use the done flag from last send.
+    // Actually we need to track total size, not index. Let 'done' flag drive
+    // this. But we don't store total size. Use the done flag from last send.
     // Simpler: check if last chunk was smaller than chunk size
     if (state.last_chunk_size < kSnapshotChunkSize) {
       // Transfer complete
-      LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}",
-               server_id_, from, state.last_included_index);
+      LOG_INFO(
+          "Node {}: snapshot send to {} completed, updating progress to {}",
+          server_id_, from, state.last_included_index);
 
       match_index_[from] = state.last_included_index;
       next_index_[from] = state.last_included_index + 1;
@@ -1198,7 +1205,7 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
     // Check if this is a config change command
     if (entry.data_.find("CONFIG_CHANGE:") == 0) {
       ApplyConfigChangeLocked(entry.data_);
-      
+
       // Still need to callback for proposals
       auto it = pending_proposals_.find(last_applied_);
       if (it != pending_proposals_.end()) {
@@ -1512,9 +1519,10 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
   // Final chunk: restore state machine
   if (req.done_) {
-    LOG_INFO("Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-             server_id_, snapshot_temp_data_.size(), req.last_included_index_,
-             req.last_included_term_);
+    LOG_INFO(
+        "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
+        server_id_, snapshot_temp_data_.size(), req.last_included_index_,
+        req.last_included_term_);
 
     // Restore state machine
     std::vector<uint8_t> snapshot_bytes(snapshot_temp_data_.begin(),
@@ -1549,14 +1557,15 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     // Clear buffer
     snapshot_temp_data_.clear();
 
-    LOG_INFO("Node {} successfully restored from snapshot, log start={}, "
-             "commit_index={}",
-             server_id_, log_.GetFirstIndex(), commit_index_);
+    LOG_INFO(
+        "Node {} successfully restored from snapshot, log start={}, "
+        "commit_index={}",
+        server_id_, log_.GetFirstIndex(), commit_index_);
   }
 }
 
 void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
-                                                  ClientResponse& resp) {
+                                                 ClientResponse& resp) {
   mtx_.lock();
 
   // Check if we are the leader
@@ -1704,7 +1713,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
 }
 
 void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
-                                                       uint64_t read_id) {
+                                                      uint64_t read_id) {
   auto it = pending_reads_.find(read_id);
   if (it == pending_reads_.end()) return;
 
@@ -1854,12 +1863,11 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   match_index_.erase(id);
 
   // Remove from peer_addrs_
-  peer_addrs_.erase(
-      std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
-                     [id, this](const NodeAddr& a) {
-                       return ParseNodeId(a) == id;
-                     }),
-      peer_addrs_.end());
+  peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                                   [id, this](const NodeAddr& a) {
+                                     return ParseNodeId(a) == id;
+                                   }),
+                    peer_addrs_.end());
 
   LOG_INFO("Node {} proposing RemoveNode for {} at index {}", server_id_, id,
            index);
@@ -1880,8 +1888,7 @@ ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
   return cluster_config_;
 }
 
-void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
-    const std::string& cmd) {
+void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
   // Parse config change command
   // Format: CONFIG_CHANGE:ADD:node_id:addr  or  CONFIG_CHANGE:REMOVE:node_id
 
@@ -1916,8 +1923,8 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
         }
       }
 
-      LOG_INFO("Node {} applied AddNode for {} (config version {})",
-               server_id_, id, cluster_config_.version);
+      LOG_INFO("Node {} applied AddNode for {} (config version {})", server_id_,
+               id, cluster_config_.version);
     }
 
   } else if (cmd.find("CONFIG_CHANGE:REMOVE:") == 0) {
@@ -1928,10 +1935,9 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
     std::lock_guard<std::mutex> config_lock(config_mutex_);
 
     // Remove from config
-    cluster_config_.nodes.erase(
-        std::remove(cluster_config_.nodes.begin(), cluster_config_.nodes.end(),
-                    id),
-        cluster_config_.nodes.end());
+    cluster_config_.nodes.erase(std::remove(cluster_config_.nodes.begin(),
+                                            cluster_config_.nodes.end(), id),
+                                cluster_config_.nodes.end());
     cluster_config_.version++;
 
     // Remove from peer map
@@ -1940,12 +1946,11 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
     match_index_.erase(id);
 
     // Remove from peer_addrs_
-    peer_addrs_.erase(
-        std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
-                       [id, this](const NodeAddr& a) {
-                         return ParseNodeId(a) == id;
-                       }),
-        peer_addrs_.end());
+    peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                                     [id, this](const NodeAddr& a) {
+                                       return ParseNodeId(a) == id;
+                                     }),
+                      peer_addrs_.end());
 
     LOG_INFO("Node {} applied RemoveNode for {} (config version {})",
              server_id_, id, cluster_config_.version);
@@ -1954,8 +1959,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(
     if (id == server_id_) {
       LOG_INFO("Node {} removed from cluster, stopping", server_id_);
       // Schedule stop (can't hold lock during Stop)
-      timer_->SetTimeout(std::chrono::milliseconds(0),
-                         [this]() { Stop(); });
+      timer_->SetTimeout(std::chrono::milliseconds(0), [this]() { Stop(); });
     }
   }
 }
@@ -1969,10 +1973,10 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
           config.network_factory ? config.network_factory()
                                  : CreateDefaultNetworkTransport(),
           config.timer_factory ? config.timer_factory()
-                              : TimerService::CreateDefault(),
+                               : TimerService::CreateDefault(),
           config.persister_factory ? config.persister_factory() : nullptr,
           config.protocol_factory ? config.protocol_factory()
-                                 : std::make_unique<JsonProtocol>())) {}
+                                  : std::make_unique<JsonProtocol>())) {}
 
 RaftNode::~RaftNode() = default;
 

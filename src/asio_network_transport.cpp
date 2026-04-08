@@ -32,7 +32,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   asio::ip::tcp::socket& Socket() { return socket_; }
 
   void Start() {
-    LOG_INFO("TcpConnection::Start: peer_id={}, socket_open={}", peer_id_, socket_.is_open());
+    LOG_INFO("TcpConnection::Start: peer_id={}, socket_open={}", peer_id_,
+             socket_.is_open());
     connected_ = true;
     DoReadHeader();
     LOG_INFO("TcpConnection::Start completed: peer_id={}", peer_id_);
@@ -134,24 +135,26 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   void DoReadBody(uint32_t /*length*/) {
     auto self = shared_from_this();
-    asio::async_read(socket_, asio::buffer(body_buffer_),
-                     [this, self](std::error_code ec, std::size_t /*bytes_transferred*/) {
-                       if (ec) {
-                         LOG_ERROR("Read body error: {}", ec.message());
-                         connected_ = false;
-                         return;
-                       }
+    asio::async_read(
+        socket_, asio::buffer(body_buffer_),
+        [this, self](std::error_code ec, std::size_t /*bytes_transferred*/) {
+          if (ec) {
+            LOG_ERROR("Read body error: {}", ec.message());
+            connected_ = false;
+            return;
+          }
 
-                       HandleMessage();
-                       DoReadHeader();
-                     });
+          HandleMessage();
+          DoReadHeader();
+        });
   }
 
   void HandleMessage() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    LOG_INFO("HandleMessage: peer_id={}, has_handler={}, pending_callbacks={}", 
-             peer_id_, (request_handler_ ? "yes" : "no"), pending_callbacks_.size());
+
+    LOG_INFO("HandleMessage: peer_id={}, has_handler={}, pending_callbacks={}",
+             peer_id_, (request_handler_ ? "yes" : "no"),
+             pending_callbacks_.size());
 
     if (request_handler_) {
       // This is a server connection, handle request
@@ -226,7 +229,8 @@ class AsioNetworkTransport : public NetworkTransport {
 
     try {
       asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-      // Create acceptor with open+set_option+bind sequence to enable SO_REUSEADDR before binding
+      // Create acceptor with open+set_option+bind sequence to enable
+      // SO_REUSEADDR before binding
       acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_);
       acceptor_->open(endpoint.protocol());
       acceptor_->set_option(asio::socket_base::reuse_address(true));
@@ -312,27 +316,29 @@ class AsioNetworkTransport : public NetworkTransport {
     return Status::OK();
   }
 
-  void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
+  void SendRpc([[maybe_unused]] NodeId to, const NodeAddr& addr,
+               const std::string& request_data,
                std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override {
     // Use synchronous RPC for reliable request-response
-    // This avoids the race condition where response arrives before async_read starts
+    // This avoids the race condition where response arrives before async_read
+    // starts
     std::thread([addr, request_data, timeout, callback]() {
       try {
         asio::io_context io_context;
         asio::ip::tcp::socket socket(io_context);
-        
+
         auto pos = addr.find(':');
         if (pos == std::string::npos) {
           callback("", false, "Invalid address format");
           return;
         }
-        
+
         std::string host = addr.substr(0, pos);
         uint16_t port = static_cast<uint16_t>(std::stoi(addr.substr(pos + 1)));
-        
+
         asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-        
+
         // Connect with timeout
         std::error_code ec;
         socket.connect(endpoint, ec);
@@ -340,7 +346,7 @@ class AsioNetworkTransport : public NetworkTransport {
           callback("", false, "Connect failed: " + ec.message());
           return;
         }
-        
+
         // Prepare and send request
         uint32_t length = static_cast<uint32_t>(request_data.size());
         char header[4];
@@ -348,37 +354,39 @@ class AsioNetworkTransport : public NetworkTransport {
         header[1] = static_cast<char>((length >> 16) & 0xFF);
         header[2] = static_cast<char>((length >> 8) & 0xFF);
         header[3] = static_cast<char>(length & 0xFF);
-        
+
         asio::write(socket, asio::buffer(header, 4), ec);
         if (ec) {
           callback("", false, "Write header failed: " + ec.message());
           return;
         }
-        
+
         asio::write(socket, asio::buffer(request_data), ec);
         if (ec) {
           callback("", false, "Write body failed: " + ec.message());
           return;
         }
-        
+
         // Read response with timeout using select-like approach
         socket.non_blocking(true);
-        
+
         char resp_header[4];
         size_t header_read = 0;
         auto start = std::chrono::steady_clock::now();
-        
+
         while (header_read < 4) {
           auto elapsed = std::chrono::steady_clock::now() - start;
           if (elapsed > timeout) {
             callback("", false, "Response timeout");
             return;
           }
-          
-          size_t n = socket.read_some(asio::buffer(resp_header + header_read, 4 - header_read), ec);
+
+          size_t n = socket.read_some(
+              asio::buffer(resp_header + header_read, 4 - header_read), ec);
           if (!ec) {
             header_read += n;
-          } else if (ec == asio::error::would_block || ec == asio::error::try_again) {
+          } else if (ec == asio::error::would_block ||
+                     ec == asio::error::try_again) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             ec.clear();
           } else {
@@ -386,32 +394,34 @@ class AsioNetworkTransport : public NetworkTransport {
             return;
           }
         }
-        
+
         uint32_t resp_length = (static_cast<uint8_t>(resp_header[0]) << 24) |
                                (static_cast<uint8_t>(resp_header[1]) << 16) |
                                (static_cast<uint8_t>(resp_header[2]) << 8) |
                                static_cast<uint8_t>(resp_header[3]);
-        
+
         if (resp_length > 100 * 1024 * 1024) {
           callback("", false, "Response too large");
           return;
         }
-        
+
         std::string resp_body(resp_length, '\0');
         size_t body_read = 0;
         start = std::chrono::steady_clock::now();
-        
+
         while (body_read < resp_length) {
           auto elapsed = std::chrono::steady_clock::now() - start;
           if (elapsed > timeout) {
             callback("", false, "Response body timeout");
             return;
           }
-          
-          size_t n = socket.read_some(asio::buffer(&resp_body[body_read], resp_length - body_read), ec);
+
+          size_t n = socket.read_some(
+              asio::buffer(&resp_body[body_read], resp_length - body_read), ec);
           if (!ec) {
             body_read += n;
-          } else if (ec == asio::error::would_block || ec == asio::error::try_again) {
+          } else if (ec == asio::error::would_block ||
+                     ec == asio::error::try_again) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             ec.clear();
           } else {
@@ -419,7 +429,7 @@ class AsioNetworkTransport : public NetworkTransport {
             return;
           }
         }
-        
+
         callback(resp_body, true, "");
       } catch (const std::exception& e) {
         callback("", false, std::string("RPC exception: ") + e.what());
@@ -476,7 +486,7 @@ class AsioNetworkTransport : public NetworkTransport {
       asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
 
       auto conn = std::make_shared<TcpConnection>(io_context_, peer_id, addr);
-      
+
       // Use synchronous connect to ensure connection is ready before returning
       std::error_code ec;
       conn->Socket().connect(endpoint, ec);
@@ -484,7 +494,7 @@ class AsioNetworkTransport : public NetworkTransport {
         LOG_WARN("Failed to connect to {}: {}", addr, ec.message());
         return nullptr;
       }
-      
+
       // Start reading immediately after successful connection
       conn->Start();
       connections_[peer_id] = conn;

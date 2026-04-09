@@ -141,12 +141,12 @@ class Example {
  public:  // Public interface first
   Example();
   ~Example();
-  
+
   void PublicMethod();
-  
+
  private:  // Private implementation
   void PrivateMethod();
-  
+
   int member_variable_;
 };
 ```
@@ -157,8 +157,6 @@ class Example {
 * Use `/** */` Doxygen style for public APIs
 * Use `//` for inline comments
 * Explain "why", not "what"
-
-See [doc/comment_style_guide.md](doc/comment_style_guide.md) for details.
 
 ## Commit Message Guidelines
 

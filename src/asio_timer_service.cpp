@@ -4,11 +4,13 @@
  */
 
 #include "asio_timer_service.h"
+
 #include "rollingraft/logger.h"
 
 namespace rollingraft {
 
-AsioTimerService::AsioTimerService() : owns_io_context_(true), io_ptr_(&io_context_) {}
+AsioTimerService::AsioTimerService()
+    : owns_io_context_(true), io_ptr_(&io_context_) {}
 
 AsioTimerService::AsioTimerService(asio::io_context& external_io)
     : owns_io_context_(false), io_ptr_(&external_io) {}
@@ -27,7 +29,8 @@ void AsioTimerService::Start() {
   LOG_INFO("Starting AsioTimerService...");
 
   if (owns_io_context_) {
-    work_guard_ = std::make_unique<asio::executor_work_guard<asio::io_context::executor_type>>(
+    work_guard_ = std::make_unique<
+        asio::executor_work_guard<asio::io_context::executor_type>>(
         io_context_.get_executor());
     io_thread_ = std::thread([this]() {
       try {
@@ -49,15 +52,18 @@ void AsioTimerService::Stop() {
   LOG_INFO("Stopping AsioTimerService...");
 
   // Cancel all timers first
+  // Copy timers outside lock, then cancel without holding lock
+  // to avoid deadlock if cancel() immediately invokes handler
+  std::unordered_map<TimerId, std::shared_ptr<Timer>> timers_copy;
   {
     std::lock_guard<std::mutex> lock(timers_mutex_);
-    auto timers_copy = timers_;  // Copy to avoid iterator invalidation
-    for (auto& [id, timer] : timers_copy) {
-      try {
-        timer->asio_timer->cancel();
-      } catch (...) {
-        // Ignore errors during cleanup
-      }
+    timers_copy = timers_;
+  }
+  for (auto& [id, timer] : timers_copy) {
+    try {
+      timer->asio_timer->cancel();
+    } catch (...) {
+      // Ignore errors during cleanup
     }
   }
 
@@ -65,7 +71,7 @@ void AsioTimerService::Stop() {
     // Stop io_context before joining thread
     work_guard_.reset();
     io_context_.stop();
-    
+
     if (io_thread_.joinable()) {
       // Use try_join_for to avoid indefinite blocking (C++20)
       // For C++11/14/17, use a detached approach with atomic flag
@@ -198,6 +204,9 @@ bool AsioTimerService::CancelTimer(TimerId timer_id) {
 }
 
 bool AsioTimerService::IsTimerActive(TimerId timer_id) const {
+  if (timer_id == kInvalidTimerId) {
+    return false;
+  }
   std::lock_guard<std::mutex> lock(timers_mutex_);
   return timers_.find(timer_id) != timers_.end();
 }

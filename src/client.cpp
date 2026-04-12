@@ -9,14 +9,16 @@
 #include <assert.h>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <queue>
 #include <random>
 #include <thread>
 
-#include "rollingraft/logger.h"
 #include "rollingraft/rpc.h"
+
+#include "client/connection_pool.h"
 #include "client/leader_tracker.h"
 #include "client/retry_policy.h"
-#include "client/connection_pool.h"
 
 namespace rollingraft {
 
@@ -60,23 +62,33 @@ class Client::Impl {
         client_id_(options.client_id == 0 ? GenerateClientId()
                                           : options.client_id),
         leader_tracker_(options.leader_cache_ttl),
-        retry_policy_(options.max_retries,
-                      options.initial_retry_delay,
+        retry_policy_(options.max_retries, options.initial_retry_delay,
                       options.max_retry_delay,
                       options.retry_backoff_multiplier),
         connection_pool_(options.connect_timeout),
         seq_counter_(0),
-        shutdown_(false) {}
+        shutdown_(false) {
+    // Start worker threads for async operations
+    size_t num_workers = std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
+    if (num_workers < 1) num_workers = 1;
+    
+    for (size_t i = 0; i < num_workers; ++i) {
+      worker_threads_.emplace_back([this]() { WorkerLoop(); });
+    }
+  }
 
   ~Impl() {
-    shutdown_ = true;
-    // Wait for all async operations to complete
-    std::unique_lock<std::mutex> lock(async_mutex_);
-    for (auto& thread : async_threads_) {
+    // Signal shutdown and wake all workers
+    {
+      std::lock_guard<std::mutex> lock(task_mutex_);
+      shutdown_ = true;
+    }
+    task_cv_.notify_all();
+    
+    // Wait for all workers to finish
+    for (auto& thread : worker_threads_) {
       if (thread.joinable()) {
-        lock.unlock();
         thread.join();
-        lock.lock();
       }
     }
   }
@@ -110,8 +122,15 @@ class Client::Impl {
   uint64_t GetClientId() const { return client_id_; }
 
  private:
-  ClientResult DoExecute(const std::string& command,
-                         bool read_only,
+  struct AsyncTask {
+    std::string command;
+    std::function<void(ClientResult)> callback;
+    std::chrono::milliseconds timeout;
+  };
+
+  void WorkerLoop();
+
+  ClientResult DoExecute(const std::string& command, bool read_only,
                          std::chrono::milliseconds timeout);
 
   ClientResult TryExecuteOnServer(const std::string& server,
@@ -138,8 +157,10 @@ class Client::Impl {
 
   // Async operation tracking
   std::atomic<bool> shutdown_;
-  std::mutex async_mutex_;
-  std::vector<std::thread> async_threads_;
+  std::mutex task_mutex_;
+  std::condition_variable task_cv_;
+  std::queue<AsyncTask> task_queue_;
+  std::vector<std::thread> worker_threads_;
 };
 
 ClientResult Client::Impl::Execute(const std::string& command,
@@ -152,8 +173,7 @@ ClientResult Client::Impl::Query(const std::string& query,
   return DoExecute(query, true, timeout);
 }
 
-ClientResult Client::Impl::DoExecute(const std::string& command,
-                                     bool read_only,
+ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
                                      std::chrono::milliseconds timeout) {
   // Build request
   ClientRequest req;
@@ -236,8 +256,7 @@ ClientResult Client::Impl::DoExecute(const std::string& command,
 }
 
 ClientResult Client::Impl::TryExecuteOnServer(
-    const std::string& server,
-    const ClientRequest& req,
+    const std::string& server, const ClientRequest& req,
     std::chrono::milliseconds /*timeout*/) {
   // Use RpcCall (synchronous)
   // TODO: Pass timeout to RpcCall once it supports configurable timeout
@@ -262,27 +281,42 @@ ClientResult Client::Impl::TryExecuteOnServer(
   return ClientResult(Status::Error(resp.error));
 }
 
+void Client::Impl::WorkerLoop() {
+  while (true) {
+    AsyncTask task;
+    {
+      std::unique_lock<std::mutex> lock(task_mutex_);
+      task_cv_.wait(lock, [this] { return shutdown_ || !task_queue_.empty(); });
+      
+      if (shutdown_ && task_queue_.empty()) {
+        return;
+      }
+      
+      if (!task_queue_.empty()) {
+        task = std::move(task_queue_.front());
+        task_queue_.pop();
+      }
+    }
+    
+    // Execute the task outside the lock
+    if (task.callback) {
+      auto result = Execute(task.command, task.timeout);
+      task.callback(std::move(result));
+    }
+  }
+}
+
 void Client::Impl::ExecuteAsync(const std::string& command,
                                 std::function<void(ClientResult)> callback,
                                 std::chrono::milliseconds timeout) {
-  // Launch in background thread with proper lifecycle management
-  std::thread thread([this, command, callback, timeout]() {
-    if (shutdown_.load()) {
+  {
+    std::lock_guard<std::mutex> lock(task_mutex_);
+    if (shutdown_) {
       return;
     }
-    auto result = Execute(command, timeout);
-    if (!shutdown_.load()) {
-      callback(std::move(result));
-    }
-  });
-
-  std::lock_guard<std::mutex> lock(async_mutex_);
-  // Clean up completed threads first
-  async_threads_.erase(
-      std::remove_if(async_threads_.begin(), async_threads_.end(),
-                     [](const std::thread& t) { return !t.joinable(); }),
-      async_threads_.end());
-  async_threads_.push_back(std::move(thread));
+    task_queue_.push({command, std::move(callback), timeout});
+  }
+  task_cv_.notify_one();
 }
 
 // ========== Client Public API ==========

@@ -300,8 +300,15 @@ void Client::Impl::WorkerLoop() {
     
     // Execute the task outside the lock
     if (task.callback) {
-      auto result = Execute(task.command, task.timeout);
-      task.callback(std::move(result));
+      try {
+        auto result = Execute(task.command, task.timeout);
+        task.callback(std::move(result));
+      } catch (const std::exception& e) {
+        task.callback(ClientResult(
+            Status::Error(std::string("Execute exception: ") + e.what())));
+      } catch (...) {
+        task.callback(ClientResult(Status::Error("Execute unknown exception")));
+      }
     }
   }
 }
@@ -312,6 +319,13 @@ void Client::Impl::ExecuteAsync(const std::string& command,
   {
     std::lock_guard<std::mutex> lock(task_mutex_);
     if (shutdown_) {
+      callback(ClientResult(Status::Error("Client is shutdown")));
+      return;
+    }
+    // Check queue size limit
+    if (options_.max_async_queue_size > 0 &&
+        task_queue_.size() >= options_.max_async_queue_size) {
+      callback(ClientResult(Status::Error("Client async queue full")));
       return;
     }
     task_queue_.push({command, std::move(callback), timeout});

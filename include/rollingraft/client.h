@@ -97,6 +97,9 @@ struct ClientOptions {
 
   /** Client ID for deduplication (0 = auto-generate). */
   uint64_t client_id = 0;
+
+  /** Maximum async task queue size (0 = unlimited). */
+  size_t max_async_queue_size = 10000;
 };
 
 /**

@@ -5,21 +5,51 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A modern, production-ready C++ implementation of the [Raft consensus algorithm](https://raft.github.io/).
+A modern C++ implementation of the [Raft consensus algorithm](https://raft.github.io/) for learning and experimentation.
+
+> ⚠️ **Development Status**: This project is currently in development/testing phase. It is **NOT production-ready** and should not be used for critical systems without extensive testing and validation.
 
 ## Features
 
 - **Modern C++20** - Clean, type-safe implementation with modern C++ idioms
 - **Easy Integration** - Header-only public interface, just link and use
 - **Pluggable Architecture** - Customize network transport, persistent storage, timers, and protocol
-- **Production Defaults** - Built-in TCP transport, LevelDB persistence, ASIO timers, JSON protocol
+- **Built-in Components** - TCP transport, LevelDB persistence, ASIO timers, JSON protocol
 - **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, and connection pooling
-- **Complete Raft Features**:
+- **Raft Features** (Implemented):
   - Leader election with randomized timeouts
   - Log replication with batching
   - Snapshot support for log compaction
   - Membership changes (add/remove nodes dynamically)
-  - Linearizable reads (read index)
+  - ReadIndex for linearizable reads (partial)
+
+## Current Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Leader Election | ✅ Implemented | Passes unit tests |
+| Log Replication | ✅ Implemented | With persistence |
+| Snapshot Transfer | ✅ Implemented | Manual trigger only |
+| Membership Change | ✅ Implemented | Add/remove nodes |
+| ReadIndex | ⚠️ Partial | Core logic done, Query API pending |
+| Auto Snapshot | ❌ Not Implemented | Planned |
+| Performance Tests | ❌ Not Implemented | Planned |
+| Chaos Tests | ❌ Not Implemented | Planned |
+
+**Known Limitations:**
+- Automatic snapshot triggering is not yet implemented
+- Client `Query()` API returns error (ReadIndex not fully integrated)
+- No performance benchmarks available
+- Limited long-running stability testing
+- Not battle-tested in production environments
+
+**Use Cases:**
+- ✅ Learning Raft consensus algorithm
+- ✅ Educational projects
+- ✅ Prototyping distributed systems
+- ❌ Production financial systems
+- ❌ Critical infrastructure
+- ❌ Large-scale deployment without extensive testing
 
 ## Quick Start
 
@@ -284,7 +314,7 @@ if (status.ok() && resp.success) {
 | `election_timeout_ms` | 300 | Base election timeout (randomized 1x-2x) |
 | `heartbeat_interval_ms` | 100 | Leader heartbeat interval |
 | `max_entries_per_append` | 100 | Max entries per AppendEntries RPC |
-| `snapshot_threshold` | 10000 | Entries before triggering snapshot |
+| `snapshot_threshold` | 10000 | Entries before triggering snapshot (⚠️ Not yet implemented) |
 | `rpc_timeout_ms` | 1000 | RPC call timeout |
 
 ## API Reference

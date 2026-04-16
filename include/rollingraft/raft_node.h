@@ -34,12 +34,7 @@ namespace rollingraft {
  * In normal operation there is exactly one leader and all other
  * servers are followers.
  */
-enum RaftNodeRole {
-  FOLLOWER = 0,
-  CANDIDATE = 1,
-  LEADER = 2,
-  RaftNodeRoleEnd
-};
+enum RaftNodeRole { FOLLOWER = 0, CANDIDATE = 1, LEADER = 2, RaftNodeRoleEnd };
 
 class NetworkTransport;
 class TimerService;
@@ -82,20 +77,23 @@ struct ClusterConfig {
  * peers, and data_dir which must be explicitly set.
  */
 struct RaftNodeConfig {
-  NodeId node_id;                    // Unique node identifier
-  std::string listen_addr;           // Address to listen on, e.g., "0.0.0.0:8001"
-  std::vector<std::string> peers;    // Addresses of peer nodes
-  std::string data_dir;              // Directory for persistent storage
+  NodeId node_id;                  // Unique node identifier
+  std::string listen_addr;         // Address to listen on, e.g., "0.0.0.0:8001"
+  std::vector<std::string> peers;  // Addresses of peer nodes
+  std::string data_dir;            // Directory for persistent storage
 
   // Timing parameters
-  uint32_t election_timeout_ms = 300;       // Base election timeout (randomized 1x-2x)
-  uint32_t heartbeat_interval_ms = 50;      // Leader heartbeat interval (faster for quick replication)
-  uint32_t max_entries_per_append = 100;    // Max entries per AppendEntries RPC
-  uint32_t snapshot_threshold = 10000;      // Entries before triggering snapshot
-  uint32_t rpc_timeout_ms = 500;            // RPC call timeout (shorter for faster fail detection)
-  uint32_t max_retry_attempts = 5;          // Max retry attempts for AppendEntries
-  uint32_t base_retry_delay_ms = 10;        // Base delay for exponential backoff
-  uint32_t max_retry_delay_ms = 500;        // Max retry delay
+  uint32_t election_timeout_ms =
+      300;  // Base election timeout (randomized 1x-2x)
+  uint32_t heartbeat_interval_ms =
+      50;  // Leader heartbeat interval (faster for quick replication)
+  uint32_t max_entries_per_append = 100;  // Max entries per AppendEntries RPC
+  uint32_t snapshot_threshold = 10000;    // Entries before triggering snapshot
+  uint32_t rpc_timeout_ms =
+      500;  // RPC call timeout (shorter for faster fail detection)
+  uint32_t max_retry_attempts = 5;    // Max retry attempts for AppendEntries
+  uint32_t base_retry_delay_ms = 10;  // Base delay for exponential backoff
+  uint32_t max_retry_delay_ms = 500;  // Max retry delay
 
   // Factory functions for dependency injection (testing)
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;

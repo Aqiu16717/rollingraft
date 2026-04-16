@@ -11,10 +11,9 @@
 
 #include <chrono>
 #include <functional>
-#include <string>
-
 #include <rollingraft/status.h>
 #include <rollingraft/types.h>
+#include <string>
 
 namespace rollingraft {
 

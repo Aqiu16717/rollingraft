@@ -60,13 +60,12 @@ struct RaftResponse {
  * Invoked by candidates to gather votes during elections (Section 5.2).
  */
 struct RequestVoteRequest : public RaftRequest {
-  Term term_;            // Candidate's term
-  NodeId candidate_id_;  // Candidate requesting vote
-  Index last_log_index_; // Index of candidate's last log entry (Section 5.4)
-  Term last_log_term_;   // Term of candidate's last log entry (Section 5.4)
+  Term term_;             // Candidate's term
+  NodeId candidate_id_;   // Candidate requesting vote
+  Index last_log_index_;  // Index of candidate's last log entry (Section 5.4)
+  Term last_log_term_;    // Term of candidate's last log entry (Section 5.4)
 
-  RequestVoteRequest()
-      : RaftRequest(RaftMessageType::KRequestVoteRequest) {}
+  RequestVoteRequest() : RaftRequest(RaftMessageType::KRequestVoteRequest) {}
   RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index,
                      Term last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),
@@ -82,8 +81,8 @@ struct RequestVoteRequest : public RaftRequest {
  * Returned by followers to candidates.
  */
 struct RequestVoteResponse : RaftResponse {
-  Term term_;         // Current term, for candidate to update itself
-  bool vote_granted_; // True means candidate received vote
+  Term term_;          // Current term, for candidate to update itself
+  bool vote_granted_;  // True means candidate received vote
 
   RequestVoteResponse()
       : RaftResponse(RaftMessageType::KRequestVoteResponse),
@@ -98,15 +97,17 @@ struct RequestVoteResponse : RaftResponse {
 /**
  * AppendEntries RPC request.
  *
- * Invoked by leaders to replicate log entries and send heartbeats (Section 5.3).
+ * Invoked by leaders to replicate log entries and send heartbeats
+ * (Section 5.3).
  */
 struct AppendEntriesRequest : public RaftRequest {
-  Term term_;              // Leader's term
-  NodeId leader_id_;       // So follower can redirect clients
-  Index prev_log_index_;   // Index of log entry immediately preceding new ones
-  Term prev_log_term_;     // Term of prev_log_index entry
-  std::vector<RaftLogEntry> entries_;  // Log entries to store (empty for heartbeat)
-  Index leader_commit_;    // Leader's commit index
+  Term term_;             // Leader's term
+  NodeId leader_id_;      // So follower can redirect clients
+  Index prev_log_index_;  // Index of log entry immediately preceding new ones
+  Term prev_log_term_;    // Term of prev_log_index entry
+  std::vector<RaftLogEntry>
+      entries_;          // Log entries to store (empty for heartbeat)
+  Index leader_commit_;  // Leader's commit index
 
   AppendEntriesRequest()
       : RaftRequest(RaftMessageType::KAppendEntriesRequest) {}
@@ -128,10 +129,10 @@ struct AppendEntriesRequest : public RaftRequest {
  * Returned by followers to leaders.
  */
 struct AppendEntriesResponse : public RaftResponse {
-  Term term_;              // Current term, for leader to update itself
-  bool success_;           // True if follower contained matching prev log entry
-  Index conflict_index_;   // Index of conflicting entry (optimization)
-  Index entries_count_;    // Number of entries successfully replicated
+  Term term_;             // Current term, for leader to update itself
+  bool success_;          // True if follower contained matching prev log entry
+  Index conflict_index_;  // Index of conflicting entry (optimization)
+  Index entries_count_;   // Number of entries successfully replicated
 
   AppendEntriesResponse()
       : RaftResponse(RaftMessageType::KAppendEntriesResponse),
@@ -155,13 +156,13 @@ struct AppendEntriesResponse : public RaftResponse {
  * Leaders always send chunks in order.
  */
 struct InstallSnapshotRequest : public RaftRequest {
-  Term term_;                 // Leader's term
-  NodeId leader_id_;          // So follower can redirect clients
-  Index last_included_index_; // Snapshot replaces entries up to this index
-  Term last_included_term_;   // Term of last_included_index
-  uint32_t offset_;           // Byte offset in snapshot file
-  std::vector<char> data_;    // Raw bytes of snapshot chunk
-  bool done_;                 // True if this is the last chunk
+  Term term_;                  // Leader's term
+  NodeId leader_id_;           // So follower can redirect clients
+  Index last_included_index_;  // Snapshot replaces entries up to this index
+  Term last_included_term_;    // Term of last_included_index
+  uint32_t offset_;            // Byte offset in snapshot file
+  std::vector<char> data_;     // Raw bytes of snapshot chunk
+  bool done_;                  // True if this is the last chunk
 
   InstallSnapshotRequest()
       : RaftRequest(RaftMessageType::KInstallSnapshotRequest) {}
@@ -196,10 +197,10 @@ struct InstallSnapshotResponse : public RaftResponse {
  * Client request sent to the Raft cluster.
  */
 struct ClientRequest : public RaftRequest {
-  std::string command;   // Command data for state machine
-  uint64_t client_id;    // Unique client identifier
-  uint64_t seq;          // Monotonic sequence number for deduplication
-  bool read_only;        // True if this is a read-only query
+  std::string command;  // Command data for state machine
+  uint64_t client_id;   // Unique client identifier
+  uint64_t seq;         // Monotonic sequence number for deduplication
+  bool read_only;       // True if this is a read-only query
 
   ClientRequest()
       : RaftRequest(RaftMessageType::KClientRequest),
@@ -212,12 +213,12 @@ struct ClientRequest : public RaftRequest {
  * Client response from the Raft cluster.
  */
 struct ClientResponse : public RaftResponse {
-  bool success;            // Whether the command was applied
-  std::string response;    // Response data from state machine
-  std::string error;       // Error message if failed
-  Index last_applied_index;// Index at which command was applied
-  NodeId leader_id;        // Current leader ID (for redirection)
-  std::string leader_addr; // Current leader address (for redirection)
+  bool success;              // Whether the command was applied
+  std::string response;      // Response data from state machine
+  std::string error;         // Error message if failed
+  Index last_applied_index;  // Index at which command was applied
+  NodeId leader_id;          // Current leader ID (for redirection)
+  std::string leader_addr;   // Current leader address (for redirection)
 
   ClientResponse()
       : RaftResponse(RaftMessageType::KClientResponse),
@@ -234,9 +235,9 @@ struct ClientResponse : public RaftResponse {
 struct ConfigChangeRequest : public RaftRequest {
   enum class Type : int8_t { kAddNode = 0, kRemoveNode = 1 };
 
-  Type type_;        // Add or remove
-  NodeId node_id_;   // Target node ID
-  NodeAddr node_addr_;// Target node address (for add operations)
+  Type type_;           // Add or remove
+  NodeId node_id_;      // Target node ID
+  NodeAddr node_addr_;  // Target node address (for add operations)
 
   ConfigChangeRequest()
       : RaftRequest(RaftMessageType::KConfigChangeRequest),
@@ -248,12 +249,11 @@ struct ConfigChangeRequest : public RaftRequest {
  * Configuration change response.
  */
 struct ConfigChangeResponse : public RaftResponse {
-  bool success_;   // Whether the change was accepted
+  bool success_;       // Whether the change was accepted
   std::string error_;  // Error message if failed
 
   ConfigChangeResponse()
-      : RaftResponse(RaftMessageType::KConfigChangeResponse),
-        success_(false) {}
+      : RaftResponse(RaftMessageType::KConfigChangeResponse), success_(false) {}
 };
 
 /**

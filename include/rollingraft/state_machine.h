@@ -69,10 +69,10 @@ class Snapshot {
  * and provide response data to the client.
  */
 struct ApplyResult {
-  bool success = false;           // Whether application succeeded
-  std::string response;           // Response data to return to client
-  uint64_t applied_index = 0;     // Log index that was applied
-  std::string error_message;      // Error message if success is false
+  bool success = false;        // Whether application succeeded
+  std::string response;        // Response data to return to client
+  uint64_t applied_index = 0;  // Log index that was applied
+  std::string error_message;   // Error message if success is false
 };
 
 /**

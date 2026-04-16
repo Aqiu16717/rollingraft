@@ -134,7 +134,9 @@ class Status {
   bool IsRequestVoteError() const { return code() == Code::kRequestVoteError; }
 
   /** Returns true if the status indicates an AppendEntries error. */
-  bool IsAppendEntriesError() const { return code() == Code::kAppendEntriesError; }
+  bool IsAppendEntriesError() const {
+    return code() == Code::kAppendEntriesError;
+  }
 
   /** Returns true if the status indicates an InstallSnapshot error. */
   bool IsInstallSnapshotError() const {
@@ -154,7 +156,9 @@ class Status {
   bool IsNotLeader() const { return code() == Code::kNotLeader; }
 
   /** Returns true if the status indicates a RaftNodeStart error. */
-  bool IsRaftNodeStartError() const { return code() == Code::kRaftNodeStartError; }
+  bool IsRaftNodeStartError() const {
+    return code() == Code::kRaftNodeStartError;
+  }
 
   /**
    * Return a string representation of this status.

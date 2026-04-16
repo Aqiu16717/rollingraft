@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-
 #include <rollingraft/status.h>
 
 namespace rollingraft {

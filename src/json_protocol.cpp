@@ -22,7 +22,8 @@ RaftMessageType IntToMessageType(int type_id) {
 }
 
 // Helper to serialize RaftLogEntry entries
-void SerializeEntries(nlohmann::json& j, const std::vector<RaftLogEntry>& entries) {
+void SerializeEntries(nlohmann::json& j,
+                      const std::vector<RaftLogEntry>& entries) {
   j["entries"] = nlohmann::json::array();
   for (const auto& entry : entries) {
     nlohmann::json entry_json;
@@ -34,7 +35,8 @@ void SerializeEntries(nlohmann::json& j, const std::vector<RaftLogEntry>& entrie
 }
 
 // Helper to deserialize RaftLogEntry entries
-Status DeserializeEntries(const nlohmann::json& j, std::vector<RaftLogEntry>& entries) {
+Status DeserializeEntries(const nlohmann::json& j,
+                          std::vector<RaftLogEntry>& entries) {
   if (!j.contains("entries") || !j["entries"].is_array()) {
     return Status::OK();  // Empty entries is OK
   }
@@ -96,7 +98,8 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         j["last_included_index"] = snapshot_req.last_included_index_;
         j["last_included_term"] = snapshot_req.last_included_term_;
         j["offset"] = snapshot_req.offset_;
-        j["data"] = std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
+        j["data"] =
+            std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
         j["done"] = snapshot_req.done_;
         break;
       }
@@ -168,7 +171,8 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
               "Missing required fields for AppendEntries");
         }
 
-        AppendEntriesRequest& append_req = static_cast<AppendEntriesRequest&>(req);
+        AppendEntriesRequest& append_req =
+            static_cast<AppendEntriesRequest&>(req);
         append_req.term_ = j["term"];
         append_req.leader_id_ = j["leader_id"];
         append_req.prev_log_index_ = j["prev_log_index"];
@@ -191,7 +195,8 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
               "Missing required fields for InstallSnapshot");
         }
 
-        InstallSnapshotRequest& snapshot_req = static_cast<InstallSnapshotRequest&>(req);
+        InstallSnapshotRequest& snapshot_req =
+            static_cast<InstallSnapshotRequest&>(req);
         snapshot_req.term_ = j["term"];
         snapshot_req.leader_id_ = j["leader_id"];
         snapshot_req.last_included_index_ = j["last_included_index"];
@@ -200,7 +205,8 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         snapshot_req.done_ = j["done"];
 
         std::string data_str = j["data"];
-        snapshot_req.data_ = std::vector<char>(data_str.begin(), data_str.end());
+        snapshot_req.data_ =
+            std::vector<char>(data_str.begin(), data_str.end());
         break;
       }
 
@@ -332,7 +338,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
               "Missing required fields for AppendEntriesResponse");
         }
 
-        AppendEntriesResponse& append_res = static_cast<AppendEntriesResponse&>(res);
+        AppendEntriesResponse& append_res =
+            static_cast<AppendEntriesResponse&>(res);
         append_res.term_ = j["term"];
         append_res.success_ = j["success"];
         if (j.contains("conflict_index")) {
@@ -350,7 +357,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
               "Missing required fields for InstallSnapshotResponse");
         }
 
-        InstallSnapshotResponse& snapshot_res = static_cast<InstallSnapshotResponse&>(res);
+        InstallSnapshotResponse& snapshot_res =
+            static_cast<InstallSnapshotResponse&>(res);
         snapshot_res.term_ = j["term"];
         break;
       }

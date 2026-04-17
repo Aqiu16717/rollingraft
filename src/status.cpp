@@ -6,8 +6,8 @@
 #include "rollingraft/status.h"
 
 #include <cassert>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 using namespace rollingraft;
@@ -101,10 +101,6 @@ std::string Status::GetMessage() const {
   }
 }
 
-int Status::GetCode() const {
-  return static_cast<int>(code());
-}
+int Status::GetCode() const { return static_cast<int>(code()); }
 
-Status::Code Status::GetErrorCode() const {
-  return code();
-}
+Status::Code Status::GetErrorCode() const { return code(); }

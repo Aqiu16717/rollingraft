@@ -87,8 +87,9 @@ Status LogPersister::FlushSync() {
 
   // Wait for flush to complete (with timeout)
   std::unique_lock<std::mutex> lock(buffer_mutex_);
-  bool flushed = flush_cv_.wait_for(lock, std::chrono::seconds(5),
-                                    [this] { return buffer_.empty() || !healthy_; });
+  bool flushed = flush_cv_.wait_for(lock, std::chrono::seconds(5), [this] {
+    return buffer_.empty() || !healthy_;
+  });
 
   if (!flushed) {
     return Status::Error("Flush timeout");
@@ -152,9 +153,7 @@ size_t LogPersister::GetPendingCount() const {
   return buffer_.size();
 }
 
-bool LogPersister::IsHealthy() const {
-  return healthy_.load();
-}
+bool LogPersister::IsHealthy() const { return healthy_.load(); }
 
 std::string LogPersister::GetLastError() const {
   std::lock_guard<std::mutex> lock(error_mutex_);

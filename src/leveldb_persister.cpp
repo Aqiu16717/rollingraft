@@ -7,15 +7,13 @@
  * Raft state, log entries, and snapshots.
  */
 
-#include "rollingraft/persister.h"
-
+#include <cstring>
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
-
-#include <cstring>
 #include <shared_mutex>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/persister.h"
 
 namespace rollingraft {
 
@@ -139,7 +137,8 @@ class LevelDBPersister : public Persister {
     std::string start_key = MakeLogKey(start);
     std::string end_key = MakeLogKey(end);
 
-    std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+    std::unique_ptr<leveldb::Iterator> it(
+        db_->NewIterator(leveldb::ReadOptions()));
     for (it->Seek(start_key); it->Valid() && it->key().ToString() < end_key;
          it->Next()) {
       RaftLogEntry entry;
@@ -149,7 +148,8 @@ class LevelDBPersister : public Persister {
     }
 
     if (!it->status().ok()) {
-      return Status::Error("Failed to read entries: " + it->status().ToString());
+      return Status::Error("Failed to read entries: " +
+                           it->status().ToString());
     }
 
     return Status::OK();
@@ -279,7 +279,8 @@ class LevelDBPersister : public Persister {
     }
 
     // Load snapshot data
-    leveldb::Status s = db_->Get(leveldb::ReadOptions(), kSnapshotKey, &snapshot_data);
+    leveldb::Status s =
+        db_->Get(leveldb::ReadOptions(), kSnapshotKey, &snapshot_data);
     if (s.IsNotFound()) {
       return Status::Error("No snapshot available");
     }
@@ -315,8 +316,10 @@ class LevelDBPersister : public Persister {
     leveldb::Status s = db_->Get(leveldb::ReadOptions(), kStateKey, &value);
 
     if (s.ok() && value.size() == 16) {
-      std::memcpy(&cached_state_.current_term, value.data(), sizeof(cached_state_.current_term));
-      std::memcpy(&cached_state_.voted_for, value.data() + 8, sizeof(cached_state_.voted_for));
+      std::memcpy(&cached_state_.current_term, value.data(),
+                  sizeof(cached_state_.current_term));
+      std::memcpy(&cached_state_.voted_for, value.data() + 8,
+                  sizeof(cached_state_.voted_for));
     }
     // If not found or error, use default values (0, -1)
   }
@@ -327,7 +330,8 @@ class LevelDBPersister : public Persister {
     }
 
     // Find the last log entry
-    std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+    std::unique_ptr<leveldb::Iterator> it(
+        db_->NewIterator(leveldb::ReadOptions()));
 
     // Position at the end of log prefix range
     std::string prefix = kLogPrefix;
@@ -369,7 +373,8 @@ class LevelDBPersister : public Persister {
     uint32_t term = entry.term_;
     uint32_t data_len = static_cast<uint32_t>(entry.data_.size());
 
-    result.append(reinterpret_cast<const char*>(&entry.index_), sizeof(entry.index_));
+    result.append(reinterpret_cast<const char*>(&entry.index_),
+                  sizeof(entry.index_));
     result.append(reinterpret_cast<const char*>(&term), sizeof(term));
     result.append(reinterpret_cast<const char*>(&data_len), sizeof(data_len));
     result.append(entry.data_);

@@ -69,9 +69,10 @@ class Client::Impl {
         seq_counter_(0),
         shutdown_(false) {
     // Start worker threads for async operations
-    size_t num_workers = std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
+    size_t num_workers =
+        std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
     if (num_workers < 1) num_workers = 1;
-    
+
     for (size_t i = 0; i < num_workers; ++i) {
       worker_threads_.emplace_back([this]() { WorkerLoop(); });
     }
@@ -84,7 +85,7 @@ class Client::Impl {
       shutdown_ = true;
     }
     task_cv_.notify_all();
-    
+
     // Wait for all workers to finish
     for (auto& thread : worker_threads_) {
       if (thread.joinable()) {
@@ -287,17 +288,17 @@ void Client::Impl::WorkerLoop() {
     {
       std::unique_lock<std::mutex> lock(task_mutex_);
       task_cv_.wait(lock, [this] { return shutdown_ || !task_queue_.empty(); });
-      
+
       if (shutdown_ && task_queue_.empty()) {
         return;
       }
-      
+
       if (!task_queue_.empty()) {
         task = std::move(task_queue_.front());
         task_queue_.pop();
       }
     }
-    
+
     // Execute the task outside the lock
     if (task.callback) {
       try {

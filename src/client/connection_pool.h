@@ -34,8 +34,7 @@ class ConnectionPool {
    * @param addr Server address (host:port)
    * @return Socket pointer, or nullptr on failure
    */
-  std::shared_ptr<asio::ip::tcp::socket> GetConnection(
-      const std::string& addr);
+  std::shared_ptr<asio::ip::tcp::socket> GetConnection(const std::string& addr);
 
   /** Close and remove connection. */
   void CloseConnection(const std::string& addr);

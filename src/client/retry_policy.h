@@ -16,10 +16,8 @@ namespace rollingraft {
  */
 class RetryPolicy {
  public:
-  RetryPolicy(int max_retries,
-              std::chrono::milliseconds initial_delay,
-              std::chrono::milliseconds max_delay,
-              double backoff_multiplier);
+  RetryPolicy(int max_retries, std::chrono::milliseconds initial_delay,
+              std::chrono::milliseconds max_delay, double backoff_multiplier);
 
   /** Check if error is retryable. */
   static bool IsRetryableError(const Status& error);

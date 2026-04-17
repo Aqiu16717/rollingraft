@@ -55,8 +55,8 @@ bool RetryPolicy::ShouldRetry(int attempt_count) const {
 std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   // Exponential backoff: delay = initial * multiplier^attempt
   double factor = std::pow(backoff_multiplier_, attempt_count);
-  auto base_delay = std::chrono::milliseconds(static_cast<int>(
-      initial_delay_.count() * factor));
+  auto base_delay = std::chrono::milliseconds(
+      static_cast<int>(initial_delay_.count() * factor));
 
   // Cap at max delay (before jitter so final delay stays within bounds)
   base_delay = std::min(base_delay, max_delay_);
@@ -70,7 +70,7 @@ std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   auto jitter = std::chrono::milliseconds(dis(gen));
 
   auto final_delay = base_delay + jitter;
-  
+
   // Final safety cap
   return std::min(final_delay, max_delay_);
 }

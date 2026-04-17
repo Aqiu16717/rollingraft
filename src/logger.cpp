@@ -4,8 +4,10 @@
  */
 
 #include "rollingraft/logger.h"
-#include "logger_spdlog_adapter.h"
+
 #include <memory>
+
+#include "logger_spdlog_adapter.h"
 
 using namespace rollingraft;
 

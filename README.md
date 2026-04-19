@@ -32,12 +32,11 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 | Snapshot Transfer | ✅ Implemented | Manual trigger only |
 | Membership Change | ✅ Implemented | Add/remove nodes |
 | ReadIndex | ⚠️ Partial | Core logic done, Query API pending |
-| Auto Snapshot | ❌ Not Implemented | Planned |
+| Auto Snapshot | ✅ Implemented | Entry/byte threshold with log truncation |
 | Performance Tests | ❌ Not Implemented | Planned |
 | Chaos Tests | ❌ Not Implemented | Planned |
 
 **Known Limitations:**
-- Automatic snapshot triggering is not yet implemented
 - Client `Query()` API returns error (ReadIndex not fully integrated)
 - No performance benchmarks available
 - Limited long-running stability testing

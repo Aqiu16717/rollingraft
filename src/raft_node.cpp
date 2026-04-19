@@ -116,6 +116,11 @@ class RaftNode::RaftNodeImpl {
   void CancelElectionTimerLocked();
   void StartHeartbeatTimerLocked();
   void StopHeartbeatTimerLocked();
+  void StartSnapshotCheckTimerLocked();
+  void StopSnapshotCheckTimerLocked();
+
+  // Snapshot related
+  void MaybeTriggerAutoSnapshotLocked();
 
   // Election related
   void BroadcastRequestVoteLocked();
@@ -202,6 +207,10 @@ class RaftNode::RaftNodeImpl {
   // ========== Timer State ==========
   TimerId election_timer_ = 0;
   TimerId heartbeat_timer_ = 0;
+  TimerId snapshot_check_timer_ = 0;
+
+  // ========== Snapshot State ==========
+  Index last_snapshot_index_ = 0;  // For auto-snapshot trigger
 
   // ========== Dependencies ==========
   RaftNodeConfig config_;
@@ -579,8 +588,9 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   leader_id_ = -1;
   leader_addr_.clear();
 
-  // Stop leader timer
+  // Stop leader timers
   StopHeartbeatTimerLocked();
+  StopSnapshotCheckTimerLocked();
 
   // Reset and start election timer
   ResetElectionTimerLocked();
@@ -655,6 +665,9 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   // Start heartbeat timer
   StartHeartbeatTimerLocked();
 
+  // Start auto-snapshot check timer
+  StartSnapshotCheckTimerLocked();
+
   // Invoke callback
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
@@ -705,6 +718,85 @@ void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
   if (heartbeat_timer_ != 0) {
     timer_->CancelTimer(heartbeat_timer_);
     heartbeat_timer_ = 0;
+  }
+}
+
+void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
+  if (snapshot_check_timer_ != 0) {
+    return;  // Already running
+  }
+
+  snapshot_check_timer_ = timer_->SetInterval(
+      std::chrono::milliseconds(config_.snapshot_check_interval_ms),
+      [this]() { MaybeTriggerAutoSnapshotLocked(); });
+
+  LOG_INFO("Node {} started auto-snapshot check (every {}ms)", server_id_,
+           config_.snapshot_check_interval_ms);
+}
+
+void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
+  if (snapshot_check_timer_ != 0) {
+    timer_->CancelTimer(snapshot_check_timer_);
+    snapshot_check_timer_ = 0;
+  }
+}
+
+void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
+  if (role_ != RaftNodeRole::LEADER) {
+    return;  // Only leader triggers auto-snapshot
+  }
+
+  auto [entry_count, byte_size] = log_.GetLogStats();
+
+  // Calculate entries since last snapshot
+  Index entries_since_snapshot = 0;
+  if (last_snapshot_index_ > 0) {
+    entries_since_snapshot =
+        static_cast<Index>(entry_count) -
+        (last_snapshot_index_ - log_.GetFirstIndex() + 1);
+  } else {
+    entries_since_snapshot = static_cast<Index>(entry_count);
+  }
+
+  bool should_trigger = false;
+  std::string reason;
+
+  // Check entry count threshold
+  if (entries_since_snapshot >= config_.snapshot_threshold_entries) {
+    should_trigger = true;
+    reason = std::to_string(entries_since_snapshot) +
+             " entries since last snapshot (threshold: " +
+             std::to_string(config_.snapshot_threshold_entries) + ")";
+  }
+
+  // Check byte size threshold
+  if (!should_trigger && byte_size >= config_.snapshot_threshold_bytes) {
+    should_trigger = true;
+    reason = std::to_string(byte_size) +
+             " bytes since last snapshot (threshold: " +
+             std::to_string(config_.snapshot_threshold_bytes) + ")";
+  }
+
+  if (should_trigger) {
+    LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
+
+    // Create snapshot
+    auto snapshot = state_machine_->CreateSnapshot();
+    if (!snapshot) {
+      LOG_ERROR("Node {} failed to create auto-snapshot", server_id_);
+      return;
+    }
+
+    // Update tracking
+    auto meta = snapshot->GetMeta();
+    last_snapshot_index_ = meta.last_included_index_;
+
+    // Persist snapshot
+    if (persister_) {
+      // TODO: Implement async snapshot persistence
+      LOG_INFO("Node {} auto-snapshot created at index {} ({} bytes)",
+               server_id_, last_snapshot_index_, byte_size);
+    }
   }
 }
 

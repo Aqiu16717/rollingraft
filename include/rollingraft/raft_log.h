@@ -135,6 +135,13 @@ class RaftLog {
    */
   void SetStartIndex(Index index);
 
+  /**
+   * Get log statistics for snapshot trigger decision.
+   *
+   * @return Pair of (entry count since last snapshot, estimated bytes)
+   */
+  std::pair<size_t, size_t> GetLogStats() const;
+
  private:
   /** Convert logical log index to physical deque index. */
   size_t ToPhysicalIndex(Index logical_index) const;

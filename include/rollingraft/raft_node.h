@@ -88,7 +88,15 @@ struct RaftNodeConfig {
   uint32_t heartbeat_interval_ms =
       50;  // Leader heartbeat interval (faster for quick replication)
   uint32_t max_entries_per_append = 100;  // Max entries per AppendEntries RPC
-  uint32_t snapshot_threshold = 10000;    // Entries before triggering snapshot
+
+  // Auto-snapshot configuration
+  uint32_t snapshot_threshold_entries =
+      10000;  // Entries since last snapshot to trigger
+  uint32_t snapshot_threshold_bytes =
+      10 * 1024 * 1024;  // Bytes since last snapshot to trigger (10MB)
+  uint32_t snapshot_check_interval_ms =
+      5000;  // How often to check (leader only)
+
   uint32_t rpc_timeout_ms =
       500;  // RPC call timeout (shorter for faster fail detection)
   uint32_t max_retry_attempts = 5;    // Max retry attempts for AppendEntries

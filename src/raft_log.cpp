@@ -110,4 +110,17 @@ void RaftLog::SetStartIndex(Index index) {
   start_index_ = index;
 }
 
+std::pair<size_t, size_t> RaftLog::GetLogStats() const {
+  size_t entry_count = entries_.size();
+  size_t estimated_bytes = 0;
+
+  // Estimate total bytes (entry metadata + data)
+  for (const auto& entry : entries_) {
+    estimated_bytes += sizeof(entry.index_) + sizeof(entry.term_);
+    estimated_bytes += entry.data_.size();
+  }
+
+  return {entry_count, estimated_bytes};
+}
+
 }  // namespace rollingraft

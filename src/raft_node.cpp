@@ -746,17 +746,15 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
     return;  // Only leader triggers auto-snapshot
   }
 
-  auto [entry_count, byte_size] = log_.GetLogStats();
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+  (void)last_term;
 
   // Calculate entries since last snapshot
-  Index entries_since_snapshot = 0;
-  if (last_snapshot_index_ > 0) {
-    entries_since_snapshot =
-        static_cast<Index>(entry_count) -
-        (last_snapshot_index_ - log_.GetFirstIndex() + 1);
-  } else {
-    entries_since_snapshot = static_cast<Index>(entry_count);
-  }
+  Index entries_since_snapshot = last_index - last_snapshot_index_;
+
+  // Get byte size for logging
+  auto [entry_count, byte_size] = log_.GetLogStats();
+  (void)entry_count;
 
   bool should_trigger = false;
   std::string reason;
@@ -777,27 +775,59 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
              std::to_string(config_.snapshot_threshold_bytes) + ")";
   }
 
-  if (should_trigger) {
-    LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
+  if (!should_trigger) {
+    return;
+  }
 
-    // Create snapshot
-    auto snapshot = state_machine_->CreateSnapshot();
-    if (!snapshot) {
-      LOG_ERROR("Node {} failed to create auto-snapshot", server_id_);
+  LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
+
+  // Create snapshot
+  auto snapshot = state_machine_->CreateSnapshot();
+  if (!snapshot) {
+    LOG_ERROR("Node {} failed to create auto-snapshot", server_id_);
+    return;
+  }
+
+  // Get snapshot metadata
+  auto meta = snapshot->GetMeta();
+  Index snapshot_index = meta.last_included_index_;
+  Term snapshot_term = meta.last_included_term_;
+
+  // Read full snapshot data
+  std::string snapshot_data;
+  constexpr size_t kReadChunkSize = 64 * 1024;  // 64KB chunks
+  std::vector<uint8_t> buffer(kReadChunkSize);
+  uint64_t offset = 0;
+
+  while (true) {
+    size_t bytes_read = snapshot->Read(offset, buffer.data(), kReadChunkSize);
+    if (bytes_read == 0) {
+      break;
+    }
+    snapshot_data.append(reinterpret_cast<char*>(buffer.data()), bytes_read);
+    offset += bytes_read;
+  }
+
+  // Persist snapshot
+  if (persister_ && !snapshot_data.empty()) {
+    auto status = persister_->SaveSnapshot(snapshot_data, snapshot_index,
+                                           snapshot_term);
+    if (!status.ok()) {
+      LOG_ERROR("Node {} failed to persist auto-snapshot: {}", server_id_,
+                status.ToString());
       return;
     }
-
-    // Update tracking
-    auto meta = snapshot->GetMeta();
-    last_snapshot_index_ = meta.last_included_index_;
-
-    // Persist snapshot
-    if (persister_) {
-      // TODO: Implement async snapshot persistence
-      LOG_INFO("Node {} auto-snapshot created at index {} ({} bytes)",
-               server_id_, last_snapshot_index_, byte_size);
-    }
   }
+
+  // Truncate log - entries before snapshot_index are now covered by snapshot
+  log_.SetStartIndex(snapshot_index + 1);
+  last_snapshot_index_ = snapshot_index;
+
+  LOG_INFO(
+      "Node {} auto-snapshot completed at index {} term {} ({} bytes, "
+      "{} entries truncated)",
+      server_id_, snapshot_index, snapshot_term, snapshot_data.size(),
+      entries_since_snapshot);
 }
 
 // ========== Election Handling ==========

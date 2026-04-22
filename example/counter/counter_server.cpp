@@ -132,9 +132,11 @@ class CounterMachine : public rollingraft::StateMachine {
 
 void PrintUsage(const char* prog) {
   std::cout << "Usage: " << prog
-            << " <node_id> <listen_port> <peer1_port> [peer2_port ...]\n";
-  std::cout << "Example:\n";
+            << " <node_id> <listen_addr> <peer1_addr> [peer2_addr ...]\n";
+  std::cout << "Examples:\n";
   std::cout << "  " << prog << " 1 8001 8002 8003\n";
+  std::cout << "  " << prog
+            << " 1 0.0.0.0:8001 raft-node-2:8002 raft-node-3:8003\n";
 }
 
 std::atomic<bool> g_running{true};
@@ -152,16 +154,25 @@ int main(int argc, char** argv) {
   }
 
   rollingraft::NodeId node_id = std::stoll(argv[1]);
-  std::string listen_port = argv[2];
+  std::string listen_addr = argv[2];
+
+  // Backward-compatible: plain port numbers default to 127.0.0.1
+  if (listen_addr.find(':') == std::string::npos) {
+    listen_addr = "127.0.0.1:" + listen_addr;
+  }
 
   rollingraft::RaftNodeConfig config;
   config.node_id = node_id;
-  config.listen_addr = "127.0.0.1:" + listen_port;
+  config.listen_addr = listen_addr;
   config.data_dir = "./data/node" + std::to_string(node_id);
   config.persister_factory = []() { return rollingraft::CreateLevelDBPersister(); };
 
   for (int i = 3; i < argc; ++i) {
-    config.peers.push_back("127.0.0.1:" + std::string(argv[i]));
+    std::string peer = argv[i];
+    if (peer.find(':') == std::string::npos) {
+      peer = "127.0.0.1:" + peer;
+    }
+    config.peers.push_back(peer);
   }
 
   // handler ctrl-c

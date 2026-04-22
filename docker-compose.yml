@@ -12,7 +12,7 @@ services:
     hostname: raft-node-1
     command: >
       sh -c "mkdir -p /app/data/node1 &&
-             /app/bin/example_counter_server 1 8001 8002 8003"
+             /app/bin/example_counter_server 1 0.0.0.0:8001 raft-node-2:8002 raft-node-3:8003"
     ports:
       - "8001:8001"
     volumes:
@@ -35,7 +35,7 @@ services:
     hostname: raft-node-2
     command: >
       sh -c "mkdir -p /app/data/node2 &&
-             /app/bin/example_counter_server 2 8002 8001 8003"
+             /app/bin/example_counter_server 2 0.0.0.0:8002 raft-node-1:8001 raft-node-3:8003"
     ports:
       - "8002:8002"
     volumes:
@@ -61,7 +61,7 @@ services:
     hostname: raft-node-3
     command: >
       sh -c "mkdir -p /app/data/node3 &&
-             /app/bin/example_counter_server 3 8003 8001 8002"
+             /app/bin/example_counter_server 3 0.0.0.0:8003 raft-node-1:8001 raft-node-2:8002"
     ports:
       - "8003:8003"
     volumes:
@@ -79,7 +79,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # Integration test runner
+  # Integration test runner (self-contained, creates its own 3-node cluster)
   integration-tests:
     build:
       context: .
@@ -87,19 +87,10 @@ services:
       target: runtime
     container_name: raft-integration-tests
     command: >
-      sh -c "echo 'Waiting for cluster to be ready...' &&
-             sleep 10 &&
-             echo 'Running integration tests...' &&
+      sh -c "echo 'Running integration tests...' &&
              /app/bin/integration_tests --gtest_filter='*'"
     networks:
       - raft-network
-    depends_on:
-      raft-node-1:
-        condition: service_healthy
-      raft-node-2:
-        condition: service_healthy
-      raft-node-3:
-        condition: service_healthy
     profiles:
       - test
 

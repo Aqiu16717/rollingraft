@@ -19,6 +19,9 @@
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
+#include "rollingraft/metrics.h"
+#include "metrics_http_server.h"
+
 // Default component implementations
 #include "asio_timer_service.h"
 #include "json_protocol.h"
@@ -244,6 +247,10 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
   std::string snapshot_temp_data_;  // Follower side (chunk buffer)
 
+  // ========== Metrics ==========
+  std::unique_ptr<MetricsRegistry> metrics_;
+  std::unique_ptr<MetricsHttpServer> metrics_server_;
+
   // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
   std::function<void(NodeId, std::string)> leader_change_callback_;
@@ -279,6 +286,11 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   }
   if (!timer_) {
     throw std::invalid_argument("TimerService cannot be null");
+  }
+
+  // Initialize metrics if enabled
+  if (config.metrics_enabled) {
+    metrics_ = std::make_unique<MetricsRegistry>();
   }
 
   // Initialize cluster config from peers
@@ -366,7 +378,14 @@ Status RaftNode::RaftNodeImpl::Start() {
   // 3. Start timer service
   timer_->Start();
 
-  // 4. Enter Follower state
+  // 4. Start metrics HTTP server
+  if (metrics_ && !config_.metrics_addr.empty()) {
+    metrics_server_ = std::make_unique<MetricsHttpServer>(
+        config_.metrics_addr, metrics_.get());
+    metrics_server_->Start();
+  }
+
+  // 5. Enter Follower state
   {
     std::lock_guard<std::mutex> lock(mtx_);
     BecomeFollowerLocked(current_term_);
@@ -387,29 +406,35 @@ Status RaftNode::RaftNodeImpl::Stop() {
 
   LOG_INFO("Stopping RaftNode {}...", config_.node_id);
 
-  // 1. Stop timers (with lock)
+  // 1. Stop metrics server
+  if (metrics_server_) {
+    metrics_server_->Stop();
+    metrics_server_.reset();
+  }
+
+  // 2. Stop timers (with lock)
   {
     std::lock_guard<std::mutex> lock(mtx_);
     CancelElectionTimerLocked();
     StopHeartbeatTimerLocked();
   }
 
-  // 2. Stop TimerService
+  // 3. Stop TimerService
   if (timer_) {
     timer_->Stop();
   }
 
-  // 3. Stop NetworkTransport
+  // 4. Stop NetworkTransport
   if (network_) {
     network_->Stop();
   }
 
-  // 4. Stop LogPersister (flushes remaining entries)
+  // 5. Stop LogPersister (flushes remaining entries)
   if (log_persister_) {
     log_persister_->Stop();
   }
 
-  // 5. Clean up pending proposals
+  // 6. Clean up pending proposals
   {
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
@@ -466,6 +491,10 @@ Status RaftNode::RaftNodeImpl::Propose(
   }
 
   if (role_ != RaftNodeRole::LEADER) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "rejected_not_leader"}})
+          .Increment();
+    }
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
@@ -489,6 +518,11 @@ Status RaftNode::RaftNodeImpl::Propose(
   proposal.callback = std::move(callback);
   proposal.propose_time = std::chrono::steady_clock::now();
   pending_proposals_[index] = std::move(proposal);
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
+        .Increment();
+  }
 
   // Trigger log replication
   BroadcastAppendEntriesLocked();
@@ -535,6 +569,10 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
   mtx_.lock();
 
   if (wait_status == std::future_status::timeout) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
+          .Increment();
+    }
     // Remove pending proposal on timeout
     pending_proposals_.erase(index);
     ApplyResult timeout_result;
@@ -569,6 +607,11 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
 
   LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
            read_id, commit_index_);
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
 
   // Send heartbeats to confirm leadership
   BroadcastReadIndexHeartbeatsLocked(read_id);
@@ -605,6 +648,12 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
     role_change_callback_(role_, current_term_);
   }
 
+  if (metrics_) {
+    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(RaftNodeRole::FOLLOWER));
+    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(current_term_));
+  }
   LOG_INFO("Node {} became Follower at term {}", server_id_, current_term_);
 }
 
@@ -626,6 +675,14 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
     role_change_callback_(role_, current_term_);
   }
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_elections_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(RaftNodeRole::CANDIDATE));
+    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(current_term_));
+  }
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
 
   // Send request vote
@@ -676,6 +733,12 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     leader_change_callback_(server_id_, config_.listen_addr);
   }
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_leader_elected_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(RaftNodeRole::LEADER));
+  }
   LOG_INFO("Node {} became Leader at term {} (cleared {} client sessions)",
            server_id_, current_term_, cleared_sessions);
 
@@ -779,6 +842,11 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
     return;
   }
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_snapshots_created_total",
+                         {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+        .Increment();
+  }
   LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
 
   // Create snapshot
@@ -841,6 +909,10 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   LOG_INFO("Node {} election timeout at term {}, becoming Candidate",
            server_id_, current_term_);
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_election_timeouts_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
   BecomeCandidateLocked();
 }
 
@@ -878,6 +950,11 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   if (!status.ok()) {
     LOG_ERROR("Failed to serialize RequestVoteRequest: {}", status.ToString());
     return;
+  }
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_requestvote_sent_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
   }
 
   Term original_term = current_term_;  // Save current term for comparison
@@ -935,6 +1012,10 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   }
 
   if (resp.vote_granted_) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_votes_received_total", {{"node_id", std::to_string(server_id_)}, {"granted", "true"}})
+          .Increment();
+    }
     ++vote_count_;
     LOG_INFO("Node {} got vote from {}, total: {}/{}", server_id_, from,
              vote_count_, peer_addrs_.size() + 1);
@@ -1007,6 +1088,12 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_appendentries_sent_total",
+                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+        .Increment();
+  }
+
   network_->SendRpc(
       peer_id, it_addr->second, data,
       std::chrono::milliseconds(config_.rpc_timeout_ms),
@@ -1054,6 +1141,11 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
   uint32_t delay = config_.base_retry_delay_ms * (1u << retry.attempts);
   delay = std::min(delay, config_.max_retry_delay_ms);
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_appendentries_retries_total",
+                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+        .Increment();
+  }
   LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms",
            server_id_, retry.attempts, peer_id, delay);
 
@@ -1079,6 +1171,11 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
   }
 
   if (resp.success_) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_appendentries_success_total",
+                           {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+          .Increment();
+    }
     // Update progress
     Index new_match = next_index_[from] - 1 + resp.entries_count_;
     match_index_[from] = std::max(match_index_[from], new_match);
@@ -1090,6 +1187,11 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     // Try to commit
     TryCommitLocked();
   } else {
+    if (metrics_) {
+      metrics_->GetCounter("raft_appendentries_failure_total",
+                           {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+          .Increment();
+    }
     // Log mismatch, back off
     if (resp.conflict_index_ > 0) {
       next_index_[from] = resp.conflict_index_;
@@ -1129,6 +1231,11 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
     state.last_included_term = state.snapshot->GetMeta().last_included_term_;
   }
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_snapshot_sends_started_total",
+                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+        .Increment();
+  }
   state.in_progress = true;
   LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?",
            server_id_, peer_id, state.last_included_index,
@@ -1188,6 +1295,11 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
     return;
   }
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_snapshot_chunks_sent_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
   LOG_DEBUG(
       "Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
       server_id_, peer_id, state.offset, bytes_read, is_last);
@@ -1264,6 +1376,11 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
           "Node {}: snapshot send to {} completed, updating progress to {}",
           server_id_, from, state.last_included_index);
 
+      if (metrics_) {
+        metrics_->GetCounter("raft_snapshot_sends_completed_total",
+                             {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+            .Increment();
+      }
       match_index_[from] = state.last_included_index;
       next_index_[from] = state.last_included_index + 1;
 
@@ -1303,6 +1420,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
 
     if (static_cast<size_t>(count) > (peer_addrs_.size() + 1) / 2) {
       commit_index_ = index;
+      if (metrics_) {
+        metrics_->GetCounter("raft_commits_total", {{"node_id", std::to_string(server_id_)}})
+            .Increment();
+        metrics_->GetGauge("raft_commit_index", {{"node_id", std::to_string(server_id_)}})
+            .Set(static_cast<double>(commit_index_));
+      }
       LOG_INFO("Node {} commit index advanced to {}", server_id_,
                commit_index_);
       ApplyCommittedLocked();
@@ -1353,6 +1476,11 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
       it->second.callback(result);
       pending_proposals_.erase(it);
     }
+  }
+
+  if (metrics_) {
+    metrics_->GetGauge("raft_applied_index", {{"node_id", std::to_string(server_id_)}})
+        .Set(static_cast<double>(last_applied_));
   }
 
   // Check if any pending reads can be completed
@@ -1467,6 +1595,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   resp.term_ = current_term_;
   resp.vote_granted_ = false;
 
+  if (metrics_) {
+    metrics_->GetCounter("raft_requestvote_received_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
+
   // If request term is higher, revert to Follower
   if (req.term_ > current_term_) {
     BecomeFollowerLocked(req.term_);
@@ -1495,6 +1629,11 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   // Check if already voted
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
+    if (metrics_) {
+      metrics_->GetCounter("raft_votes_granted_total",
+                           {{"node_id", std::to_string(server_id_)}})
+          .Increment();
+    }
     resp.vote_granted_ = true;
 
     // Reset election timer
@@ -1513,6 +1652,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 void RaftNode::RaftNodeImpl::HandleAppendEntries(
     const AppendEntriesRequest& req, AppendEntriesResponse& resp) {
   std::lock_guard<std::mutex> lock(mtx_);
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_appendentries_received_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
 
   resp.term_ = current_term_;
   resp.success_ = false;
@@ -1625,6 +1770,12 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
   // Reset election timer (we have a valid leader)
   ResetElectionTimerLocked();
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_snapshots_received_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
 
   // Handle snapshot chunk
   if (req.offset_ == 0) {
@@ -1780,6 +1931,12 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
 }
 void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     uint64_t read_id) {
+  if (metrics_) {
+    metrics_->GetCounter("raft_readindex_heartbeats_sent_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
+
   // Send empty AppendEntries (heartbeats) to all peers
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
@@ -1836,6 +1993,12 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
 
 void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
                                                       uint64_t read_id) {
+  if (metrics_) {
+    metrics_->GetCounter("raft_readindex_acks_received_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
+
   auto it = pending_reads_.find(read_id);
   if (it == pending_reads_.end()) return;
 
@@ -1879,6 +2042,12 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
     if (it != pending_reads_.end()) {
       auto callback = std::move(it->second.callback);
       pending_reads_.erase(it);
+
+      if (metrics_) {
+        metrics_->GetCounter("raft_readindex_completed_total",
+                             {{"node_id", std::to_string(server_id_)}})
+            .Increment();
+      }
 
       LOG_DEBUG("Completing ReadIndex {}", read_id);
       mtx_.unlock();

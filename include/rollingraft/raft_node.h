@@ -108,6 +108,10 @@ struct RaftNodeConfig {
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;
   std::function<std::unique_ptr<Persister>()> persister_factory = nullptr;
   std::function<std::unique_ptr<Protocol>()> protocol_factory = nullptr;
+
+  // Metrics configuration
+  bool metrics_enabled = false;
+  std::string metrics_addr;  // e.g., "0.0.0.0:9001", empty = disabled
 };
 
 /**

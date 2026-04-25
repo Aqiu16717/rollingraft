@@ -46,6 +46,7 @@ add_executable(unit_tests
   unit/test_retry_policy.cpp
   unit/test_connection_pool.cpp
   unit/test_client.cpp
+  unit/test_metrics.cpp
 )
 
 target_include_directories(unit_tests
@@ -63,6 +64,7 @@ target_link_libraries(unit_tests
 # Integration tests
 add_executable(integration_tests
   integration/test_cluster_3nodes.cpp
+  integration/test_metrics_endpoint.cpp
 )
 
 target_include_directories(integration_tests

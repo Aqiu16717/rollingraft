@@ -28,11 +28,15 @@
 - [x] **Unit Test Coverage** ✅ COMPLETED
   - Core Raft: 59 tests (election, log replication, snapshots, membership)
   - Client Library: 80 tests (result, leader tracker, retry policy, connection pool, client)
-  - **Total: 139 tests, all passing**
+  - Metrics: 6 tests (counter, gauge, histogram, registry, thread-safety)
+  - **Total: 145 tests, all passing**
 
-- [ ] **Metrics & Monitoring**
-  - Optional metrics export (prometheus-style)
-  - Key metrics: commit rate, election count, RPC latency
+- [x] **Metrics & Monitoring** ✅ COMPLETED
+  - Self-contained Prometheus-style metrics (Counter, Gauge, Histogram, Registry)
+  - Minimal Asio-based HTTP /metrics endpoint
+  - Optional and zero-cost when disabled
+  - Key metrics: role, term, commit rate, election count, propose, RPC, snapshot, ReadIndex
+  - Integration tests for HTTP endpoint
 
 - [ ] **Log Compaction Policy**
   - Automatic snapshot triggering based on log size/entry count
@@ -65,6 +69,6 @@
 
 ---
 
-**Last Updated:** 2026-04-02
+**Last Updated:** 2026-04-22
 **Current Version:** v0.1.0
-**Test Status:** 139/139 passing
+**Test Status:** 145/145 passing (9 integration tests passing)

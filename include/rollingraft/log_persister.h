@@ -107,6 +107,17 @@ class LogPersister {
   void TriggerFlush();
 
   /**
+   * Delete persisted log entries before the given index.
+   *
+   * Drains the write buffer first, then delegates to the underlying
+   * persister. Safe to call concurrently with Append().
+   *
+   * @param before_index Delete entries with index < before_index
+   * @return Status::OK() on success
+   */
+  Status TruncatePrefix(uint64_t before_index);
+
+  /**
    * Restore log entries from persistent storage.
    *
    * @param start_index Index to start restoring from (typically after snapshot)

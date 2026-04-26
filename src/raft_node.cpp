@@ -891,6 +891,28 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   log_.SetStartIndex(snapshot_index + 1);
   last_snapshot_index_ = snapshot_index;
 
+  // Truncate persisted log with retention buffer
+  if (log_persister_) {
+    uint64_t compact_before = 1;
+    if (snapshot_index + 1 > config_.log_retention_entries) {
+      compact_before = snapshot_index + 1 - config_.log_retention_entries;
+    }
+    auto status = log_persister_->TruncatePrefix(compact_before);
+    if (!status.ok()) {
+      LOG_WARN("Node {} failed to truncate persisted log: {}", server_id_,
+               status.ToString());
+    }
+  }
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_log_compactions_total",
+                         {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+        .Increment();
+    metrics_->GetCounter("raft_log_entries_compacted_total",
+                         {{"node_id", std::to_string(server_id_)}})
+        .Increment(entries_since_snapshot);
+  }
+
   LOG_INFO(
       "Node {} auto-snapshot completed at index {} term {} ({} bytes, "
       "{} entries truncated)",
@@ -1810,6 +1832,22 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
     // Update log: discard all entries covered by snapshot
     log_.SetStartIndex(req.last_included_index_ + 1);
+    last_snapshot_index_ = req.last_included_index_;
+
+    // Truncate persisted log
+    if (log_persister_) {
+      auto status = log_persister_->TruncatePrefix(req.last_included_index_ + 1);
+      if (!status.ok()) {
+        LOG_WARN("Node {} failed to truncate persisted log after snapshot: {}",
+                 server_id_, status.ToString());
+      }
+    }
+
+    if (metrics_) {
+      metrics_->GetCounter("raft_log_compactions_total",
+                           {{"node_id", std::to_string(server_id_)}, {"trigger", "snapshot"}})
+          .Increment();
+    }
 
     // Update indices
     last_applied_ = req.last_included_index_;

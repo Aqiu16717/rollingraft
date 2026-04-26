@@ -47,6 +47,7 @@ add_executable(unit_tests
   unit/test_connection_pool.cpp
   unit/test_client.cpp
   unit/test_metrics.cpp
+  unit/test_log_compaction.cpp
 )
 
 target_include_directories(unit_tests

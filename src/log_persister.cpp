@@ -108,6 +108,20 @@ void LogPersister::TriggerFlush() {
   flush_cv_.notify_one();
 }
 
+Status LogPersister::TruncatePrefix(uint64_t before_index) {
+  // Ensure all buffered entries are persisted before truncation
+  auto status = FlushSync();
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (!persister_) {
+    return Status::Error("Persister is null");
+  }
+
+  return persister_->TruncatePrefix(before_index);
+}
+
 std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
   std::vector<RaftLogEntry> entries;
 
@@ -241,6 +255,9 @@ bool LogPersister::DoFlush() {
 
   LOG_DEBUG("Flushed {} log entries (total_flushed={})", entries.size(),
             total_flushed_.load());
+
+  // Wake up any threads waiting for buffer to drain (e.g. FlushSync)
+  flush_cv_.notify_all();
 
   return true;
 }

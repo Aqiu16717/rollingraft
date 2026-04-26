@@ -103,6 +103,10 @@ struct RaftNodeConfig {
   uint32_t base_retry_delay_ms = 10;  // Base delay for exponential backoff
   uint32_t max_retry_delay_ms = 500;  // Max retry delay
 
+  // Log compaction retention: number of entries to keep preceding the
+  // snapshot index. 0 = delete everything covered by snapshot.
+  uint32_t log_retention_entries = 0;
+
   // Factory functions for dependency injection (testing)
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;

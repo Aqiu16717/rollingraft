@@ -82,13 +82,17 @@ void LogPersister::Append(const RaftLogEntry& entry) {
 }
 
 Status LogPersister::FlushSync() {
+  return FlushSync(std::chrono::seconds(5));
+}
+
+Status LogPersister::FlushSync(std::chrono::milliseconds timeout) {
   // Wait for current buffer to be flushed
   TriggerFlush();
 
   // Wait for flush to complete (with timeout)
   std::unique_lock<std::mutex> lock(buffer_mutex_);
-  bool flushed = flush_cv_.wait_for(lock, std::chrono::seconds(5), [this] {
-    return buffer_.empty() || !healthy_;
+  bool flushed = flush_cv_.wait_for(lock, timeout, [this] {
+    return (buffer_.empty() && !flush_in_progress_) || !healthy_;
   });
 
   if (!flushed) {
@@ -109,8 +113,9 @@ void LogPersister::TriggerFlush() {
 }
 
 Status LogPersister::TruncatePrefix(uint64_t before_index) {
-  // Ensure all buffered entries are persisted before truncation
-  auto status = FlushSync();
+  // Ensure all buffered entries are persisted before truncation.
+  // Use a shorter timeout to avoid blocking Raft event loop.
+  auto status = FlushSync(std::chrono::seconds(1));
   if (!status.ok()) {
     return status;
   }
@@ -207,6 +212,7 @@ bool LogPersister::DoFlush() {
       return true;
     }
     batch.swap(buffer_);
+    flush_in_progress_ = true;
   }
 
   // Check disk space
@@ -220,8 +226,12 @@ bool LogPersister::DoFlush() {
     healthy_ = false;
 
     // Put entries back to buffer
-    std::lock_guard<std::mutex> lock(buffer_mutex_);
-    buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+    {
+      std::lock_guard<std::mutex> lock(buffer_mutex_);
+      buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+      flush_in_progress_ = false;
+    }
+    flush_cv_.notify_all();  // Wake waiters so they see !healthy_
     return false;
   }
 
@@ -244,14 +254,23 @@ bool LogPersister::DoFlush() {
     healthy_ = false;
 
     // Put entries back to buffer for retry
-    std::lock_guard<std::mutex> lock(buffer_mutex_);
-    buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+    {
+      std::lock_guard<std::mutex> lock(buffer_mutex_);
+      buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+      flush_in_progress_ = false;
+    }
+    flush_cv_.notify_all();  // Wake waiters so they see !healthy_
     return false;
   }
 
   // Success
   total_flushed_ += entries.size();
   ++total_flush_ops_;
+
+  {
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    flush_in_progress_ = false;
+  }
 
   LOG_DEBUG("Flushed {} log entries (total_flushed={})", entries.size(),
             total_flushed_.load());

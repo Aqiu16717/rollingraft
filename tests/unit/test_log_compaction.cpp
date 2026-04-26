@@ -19,6 +19,9 @@ class MockPersister : public Persister {
   Status AppendEntries(const std::vector<RaftLogEntry>& entries) override {
     for (const auto& e : entries) {
       entries_[e.index_] = e;
+      if (e.index_ > last_index_) {
+        last_index_ = e.index_;
+      }
     }
     return Status::OK();
   }

@@ -1831,6 +1831,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     }
 
     // Update log: discard all entries covered by snapshot
+    uint64_t old_first_index = log_.GetFirstIndex();
     log_.SetStartIndex(req.last_included_index_ + 1);
     last_snapshot_index_ = req.last_included_index_;
 
@@ -1847,6 +1848,12 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
       metrics_->GetCounter("raft_log_compactions_total",
                            {{"node_id", std::to_string(server_id_)}, {"trigger", "snapshot"}})
           .Increment();
+      if (req.last_included_index_ >= old_first_index) {
+        uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+        metrics_->GetCounter("raft_log_entries_compacted_total",
+                             {{"node_id", std::to_string(server_id_)}})
+            .Increment(compacted);
+      }
     }
 
     // Update indices

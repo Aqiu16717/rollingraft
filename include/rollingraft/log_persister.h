@@ -10,6 +10,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -100,6 +101,14 @@ class LogPersister {
   Status FlushSync();
 
   /**
+   * Force flush with a custom timeout.
+   *
+   * @param timeout Maximum time to wait for flush
+   * @return Status indicating success or failure
+   */
+  Status FlushSync(std::chrono::milliseconds timeout);
+
+  /**
    * Trigger an asynchronous flush (non-blocking).
    *
    * Wakes up the background thread to flush immediately.
@@ -167,6 +176,7 @@ class LogPersister {
   std::atomic<bool> running_{false};
   std::thread flush_thread_;
   std::condition_variable flush_cv_;
+  bool flush_in_progress_ = false;
 
   // Error tracking
   std::atomic<bool> healthy_{true};

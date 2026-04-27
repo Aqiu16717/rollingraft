@@ -38,9 +38,12 @@
   - Key metrics: role, term, commit rate, election count, propose, RPC, snapshot, ReadIndex
   - Integration tests for HTTP endpoint
 
-- [ ] **Log Compaction Policy**
-  - Automatic snapshot triggering based on log size/entry count
-  - Configurable retention policy
+- [x] **Log Compaction Policy** ✅ COMPLETED
+  - `LogPersister::TruncatePrefix()` with mandatory `FlushSync` drain
+  - Configurable `log_retention_entries` safety buffer
+  - Wired into leader auto-snapshot and follower InstallSnapshot
+  - Metrics: `raft_log_compactions_total`, `raft_log_entries_compacted_total`
+  - 3 unit tests
 
 ## Medium-term (Features)
 
@@ -71,4 +74,4 @@
 
 **Last Updated:** 2026-04-22
 **Current Version:** v0.1.0
-**Test Status:** 145/145 passing (9 integration tests passing)
+**Test Status:** 148/148 passing (9 integration tests passing)

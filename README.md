@@ -16,12 +16,14 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 - **Pluggable Architecture** - Customize network transport, persistent storage, timers, and protocol
 - **Built-in Components** - TCP transport, LevelDB persistence, ASIO timers, JSON protocol
 - **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, and connection pooling
-- **Raft Features** (Implemented):
+- **Raft Features**:
   - Leader election with randomized timeouts
   - Log replication with batching
-  - Snapshot support for log compaction
+  - Snapshot support with automatic triggering
+  - Log compaction with configurable retention
   - Membership changes (add/remove nodes dynamically)
-  - ReadIndex for linearizable reads (partial)
+  - ReadIndex for linearizable reads
+- **Observability**: Built-in Prometheus-style metrics with HTTP `/metrics` endpoint
 
 ## Current Status
 
@@ -31,15 +33,15 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 | Log Replication | ✅ Implemented | With persistence |
 | Snapshot Transfer | ✅ Implemented | Manual trigger only |
 | Membership Change | ✅ Implemented | Add/remove nodes |
-| ReadIndex | ⚠️ Partial | Core logic done, Query API pending |
+| ReadIndex | ✅ Implemented | Heartbeat confirmation to majority |
 | Auto Snapshot | ✅ Implemented | Entry/byte threshold with log truncation |
-| Performance Tests | ❌ Not Implemented | Planned |
-| Chaos Tests | ❌ Not Implemented | Planned |
+| Log Compaction | ✅ Implemented | `TruncatePrefix` with retention buffer |
+| Performance Tests | ✅ Implemented | Throughput / latency / failover benchmarks |
+| Metrics | ✅ Implemented | Prometheus HTTP `/metrics` endpoint |
 
 **Known Limitations:**
-- Client `Query()` API returns error (ReadIndex not fully integrated)
-- No performance benchmarks available
-- Limited long-running stability testing
+- No TLS encryption for node-to-node communication
+- No runtime configuration hot-reload
 - Not battle-tested in production environments
 
 **Use Cases:**
@@ -313,7 +315,11 @@ if (status.ok() && resp.success) {
 | `election_timeout_ms` | 300 | Base election timeout (randomized 1x-2x) |
 | `heartbeat_interval_ms` | 100 | Leader heartbeat interval |
 | `max_entries_per_append` | 100 | Max entries per AppendEntries RPC |
-| `snapshot_threshold` | 10000 | Entries before triggering snapshot (⚠️ Not yet implemented) |
+| `snapshot_threshold` | 10000 | Entries before triggering auto-snapshot |
+| `snapshot_max_size` | 1048576 | Max bytes before triggering auto-snapshot |
+| `log_retention_entries` | 0 | Entries to keep before snapshot index |
+| `metrics_enabled` | false | Enable Prometheus metrics endpoint |
+| `metrics_addr` | `""` | Metrics HTTP listen address (e.g. "0.0.0.0:9090") |
 | `rpc_timeout_ms` | 1000 | RPC call timeout |
 
 ## API Reference
@@ -369,24 +375,30 @@ if (status.ok()) {
 rollingraft/
 ├── include/rollingraft/    # Public headers
 │   ├── raft_node.h        # Main Raft node interface
+│   ├── client.h           # High-level client library
 │   ├── state_machine.h    # State machine interface
+│   ├── metrics.h          # Prometheus-style metrics
 │   ├── rpc.h              # RPC message definitions
 │   ├── status.h           # Status codes
 │   └── types.h            # Type definitions
 ├── src/                   # Implementation
 │   ├── raft_node.cpp      # Core Raft logic
 │   ├── raft_log.cpp       # Log management
+│   ├── log_persister.cpp  # Batched async log persistence
 │   ├── asio_network_transport.cpp
 │   ├── leveldb_persister.cpp
-│   ├── raft_timer.cpp     # Timer service
+│   ├── client/            # Client library internals
 │   └── ...
 ├── example/               # Examples
 │   └── counter/           # Counter service demo
-├── tests/                 # Unit tests
+├── tests/                 # Unit & integration tests
+├── benchmark/             # Performance benchmarks
+├── doc/                   # Design docs
 └── third_party/           # Dependencies
     ├── asio/              # Networking
     ├── nlohmann_json/     # JSON
     ├── spdlog/            # Logging
+    ├── leveldb/           # Persistence
     └── googletest/        # Testing
 ```
 
@@ -459,9 +471,11 @@ ctest --output-on-failure
 ./build/tests/unit_tests --gtest_filter="RaftElection*"
 ```
 
-**Test Coverage:** 139 unit tests
+**Test Coverage:** 148 unit tests + 9 integration tests
 - Raft core: 59 tests (election, log replication, snapshots, membership)
 - Client library: 80 tests (result handling, leader tracking, retry policy, connection pool, client)
+- Metrics: 6 tests (counter, gauge, histogram, registry)
+- Log compaction: 3 tests (truncate prefix, buffer safety, retention math)
 
 ## License
 

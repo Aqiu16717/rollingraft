@@ -344,6 +344,14 @@ class AsioNetworkTransport : public NetworkTransport {
 
         asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
 
+        // Set send timeout to avoid blocking on unreachable hosts
+        // (Linux connect() can block for ~75s by default)
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        ::setsockopt(socket.native_handle(), SOL_SOCKET, SO_SNDTIMEO,
+                     &tv, sizeof(tv));
+
         // Connect with timeout
         std::error_code ec;
         socket.connect(endpoint, ec);

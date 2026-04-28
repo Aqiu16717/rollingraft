@@ -17,6 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
+# Detect docker compose command (v1 or v2)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,44 +45,44 @@ log_error() {
 # Build Docker images
 cmd_build() {
     log_info "Building Docker images..."
-    docker-compose -f "$COMPOSE_FILE" build --no-cache
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" build --no-cache
     log_info "Build complete!"
 }
 
 # Start the cluster
 cmd_up() {
     log_info "Starting 3-node Raft cluster..."
-    docker-compose -f "$COMPOSE_FILE" up -d raft-node-1 raft-node-2 raft-node-3
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d raft-node-1 raft-node-2 raft-node-3
     
     log_info "Waiting for cluster to be healthy..."
     sleep 5
     
     # Check health
-    if docker-compose -f "$COMPOSE_FILE" ps | grep -q "healthy"; then
+    if $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps | grep -q "healthy"; then
         log_info "Cluster is healthy!"
         show_cluster_status
     else
-        log_warn "Cluster may still be starting, check status with: docker-compose -f $COMPOSE_FILE ps"
+        log_warn "Cluster may still be starting, check status with: $DOCKER_COMPOSE -f $COMPOSE_FILE ps"
     fi
 }
 
 # Stop the cluster
 cmd_down() {
     log_info "Stopping cluster and cleaning up..."
-    docker-compose -f "$COMPOSE_FILE" down -v
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" down -v
     log_info "Cleanup complete!"
 }
 
 # Show cluster status
 cmd_status() {
     log_info "Cluster status:"
-    docker-compose -f "$COMPOSE_FILE" ps
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps
 }
 
 # Show logs
 cmd_logs() {
     log_info "Showing logs (Ctrl+C to exit)..."
-    docker-compose -f "$COMPOSE_FILE" logs -f raft-node-1 raft-node-2 raft-node-3
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" logs -f raft-node-1 raft-node-2 raft-node-3
 }
 
 # Run integration tests
@@ -83,14 +90,14 @@ cmd_test() {
     log_info "Running integration tests..."
     
     # Ensure cluster is running
-    if ! docker-compose -f "$COMPOSE_FILE" ps | grep -q "raft-node-1"; then
+    if ! $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps | grep -q "raft-node-1"; then
         log_warn "Cluster not running, starting..."
         cmd_up
         sleep 10
     fi
     
     # Run tests
-    docker-compose -f "$COMPOSE_FILE" --profile test run --rm integration-tests
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --profile test run --rm integration-tests
     
     TEST_RESULT=$?
     
@@ -108,13 +115,13 @@ cmd_client() {
     log_info "Starting interactive client..."
     
     # Ensure cluster is running
-    if ! docker-compose -f "$COMPOSE_FILE" ps | grep -q "raft-node-1"; then
+    if ! $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps | grep -q "raft-node-1"; then
         log_warn "Cluster not running, starting..."
         cmd_up
         sleep 10
     fi
     
-    docker-compose -f "$COMPOSE_FILE" --profile client-test run --rm client-tests
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --profile client-test run --rm client-tests
 }
 
 # Run full test suite

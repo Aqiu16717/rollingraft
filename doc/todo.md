@@ -63,6 +63,23 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
   - No automated network partition / disk failure / slow disk tests
   - Fix: Docker-based chaos tests + 24h soak test harness
 
+### 🔧 Known Workarounds / Technical Debt
+
+- [ ] **`SO_SNDTIMEO` in `SendRpc` is a workaround**
+  - Current: `setsockopt(SO_SNDTIMEO, 1s)` caps `connect()` timeout on Linux
+  - Problem: affects all send operations, not portable to Windows
+  - Proper fix: Asio `async_connect` + `steady_timer` for per-operation timeout
+
+- [ ] **`JoinRpcThreads()` is synchronous**
+  - Current: `Stop()` blocks up to 1s per RPC thread (due to `SO_SNDTIMEO`)
+  - Problem: if N threads time out, `Stop()` blocks N seconds
+  - Proper fix: interruptible threads (`std::jthread` stop_token) or async join with timeout
+
+- [ ] **CI cache may skip `gtest_discover_tests`**
+  - Current: `actions/cache@v4` caches entire `build/` directory including CMake generated files
+  - Problem: if cache hits, `gtest_discover_tests` may not re-run, new tests invisible to ctest
+  - Proper fix: cache only `ccache` / object files, not `CTestTestfile.cmake`
+
 ---
 
 ## Immediate (Next Steps)

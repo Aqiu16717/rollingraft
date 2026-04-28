@@ -284,33 +284,38 @@ class AsioNetworkTransport : public NetworkTransport {
   }
 
   Status Stop() override {
-    std::lock_guard<std::mutex> lock(mutex_);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
 
-    if (!running_) {
-      return Status::OK();
+      if (!running_) {
+        return Status::OK();
+      }
+
+      running_ = false;
+
+      // Stop acceptor
+      if (acceptor_ && acceptor_->is_open()) {
+        std::error_code ec;
+        acceptor_->close(ec);
+      }
+
+      // Close all connections
+      for (auto& [id, conn] : connections_) {
+        conn->Close();
+      }
+      connections_.clear();
+
+      // Stop io_context
+      work_guard_.reset();
+      io_context_.stop();
+
+      if (io_thread_.joinable()) {
+        io_thread_.join();
+      }
     }
 
-    running_ = false;
-
-    // Stop acceptor
-    if (acceptor_ && acceptor_->is_open()) {
-      std::error_code ec;
-      acceptor_->close(ec);
-    }
-
-    // Close all connections
-    for (auto& [id, conn] : connections_) {
-      conn->Close();
-    }
-    connections_.clear();
-
-    // Stop io_context
-    work_guard_.reset();
-    io_context_.stop();
-
-    if (io_thread_.joinable()) {
-      io_thread_.join();
-    }
+    // Wait for all RPC send threads to finish
+    JoinRpcThreads();
 
     LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();
@@ -323,7 +328,7 @@ class AsioNetworkTransport : public NetworkTransport {
     // Use synchronous RPC for reliable request-response
     // This avoids the race condition where response arrives before async_read
     // starts
-    std::thread([addr, request_data, timeout, callback]() {
+    std::thread t([addr, request_data, timeout, callback]() {
       try {
         asio::io_context io_context;
         asio::ip::tcp::socket socket(io_context);
@@ -434,7 +439,11 @@ class AsioNetworkTransport : public NetworkTransport {
       } catch (const std::exception& e) {
         callback("", false, std::string("RPC exception: ") + e.what());
       }
-    }).detach();
+    });
+    {
+      std::lock_guard<std::mutex> lock(rpc_threads_mutex_);
+      rpc_threads_.push_back(std::move(t));
+    }
   }
 
  private:
@@ -522,6 +531,19 @@ class AsioNetworkTransport : public NetworkTransport {
   ConnectionCallback connection_callback_;
 
   std::unordered_map<NodeId, std::shared_ptr<TcpConnection>> connections_;
+
+  std::mutex rpc_threads_mutex_;
+  std::vector<std::thread> rpc_threads_;
+
+  void JoinRpcThreads() {
+    std::lock_guard<std::mutex> lock(rpc_threads_mutex_);
+    for (auto& t : rpc_threads_) {
+      if (t.joinable()) {
+        t.join();
+      }
+    }
+    rpc_threads_.clear();
+  }
 };
 
 // Factory function

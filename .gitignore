@@ -68,3 +68,6 @@ doc/todo.md
 # Submodule patch markers
 third_party/*/.patched
 
+# Runtime data directories
+data/
+tmp/

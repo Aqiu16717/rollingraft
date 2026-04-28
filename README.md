@@ -4,6 +4,7 @@
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/Aqiu16717/rollingraft/actions/workflows/ci.yml/badge.svg)](https://github.com/Aqiu16717/rollingraft/actions)
 
 A modern C++ implementation of the [Raft consensus algorithm](https://raft.github.io/) for learning and experimentation.
 
@@ -31,7 +32,7 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 |---------|--------|-------|
 | Leader Election | ✅ Implemented | Passes unit tests |
 | Log Replication | ✅ Implemented | With persistence |
-| Snapshot Transfer | ✅ Implemented | Manual trigger only |
+| Snapshot Transfer | ✅ Implemented | Auto-trigger by entry count / size |
 | Membership Change | ✅ Implemented | Add/remove nodes |
 | ReadIndex | ✅ Implemented | Heartbeat confirmation to majority |
 | Auto Snapshot | ✅ Implemented | Entry/byte threshold with log truncation |
@@ -476,6 +477,21 @@ ctest --output-on-failure
 - Client library: 80 tests (result handling, leader tracking, retry policy, connection pool, client)
 - Metrics: 6 tests (counter, gauge, histogram, registry)
 - Log compaction: 3 tests (truncate prefix, buffer safety, retention math)
+
+### Benchmarks
+
+```bash
+# Throughput benchmark
+./build/benchmark/benchmark_client -t write -d 30 -c 4 127.0.0.1:8001
+
+# Latency vs throughput curve
+./build/benchmark/benchmark_latency_curve -d 10 127.0.0.1:8001
+
+# Failover recovery time
+./build/benchmark/benchmark_failover \
+  -k 'pkill -f "counter_server 1"' \
+  127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
+```
 
 ## License
 

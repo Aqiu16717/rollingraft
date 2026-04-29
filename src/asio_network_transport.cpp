@@ -7,10 +7,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fcntl.h>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <thread>
 #include <unordered_map>
 

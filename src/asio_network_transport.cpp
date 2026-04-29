@@ -344,17 +344,41 @@ class AsioNetworkTransport : public NetworkTransport {
 
         asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
 
-        // Set send timeout to avoid blocking on unreachable hosts
-        // (Linux connect() can block for ~75s by default)
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-        ::setsockopt(socket.native_handle(), SOL_SOCKET, SO_SNDTIMEO,
-                     &tv, sizeof(tv));
+        // Connect with 1-second timeout using non-blocking connect + select.
+        // Linux connect() can block for ~75s on unreachable hosts; SO_SNDTIMEO
+        // does not affect connect() on Linux, so we use fcntl + select.
+        int fd = static_cast<int>(socket.native_handle());
+        int flags = ::fcntl(fd, F_GETFL, 0);
+        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-        // Connect with timeout
         std::error_code ec;
         socket.connect(endpoint, ec);
+        if (ec == asio::error::in_progress ||
+            ec == asio::error::would_block) {
+          fd_set write_fds;
+          FD_ZERO(&write_fds);
+          FD_SET(fd, &write_fds);
+          struct timeval tv;
+          tv.tv_sec = 1;
+          tv.tv_usec = 0;
+          int ret = ::select(fd + 1, nullptr, &write_fds, nullptr, &tv);
+          if (ret > 0 && FD_ISSET(fd, &write_fds)) {
+            int so_error = 0;
+            socklen_t len = sizeof(so_error);
+            ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+            if (so_error == 0) {
+              ec.clear();
+            } else {
+              ec.assign(so_error, std::system_category());
+            }
+          } else {
+            ec = asio::error::timed_out;
+          }
+        }
+
+        // Restore blocking mode for subsequent write/read
+        ::fcntl(fd, F_SETFL, flags);
+
         if (ec) {
           callback("", false, "Connect failed: " + ec.message());
           return;

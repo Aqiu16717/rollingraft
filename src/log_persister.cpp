@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <future>
 
 #include "rollingraft/logger.h"
 
@@ -33,10 +34,16 @@ void LogPersister::Start() {
 
   running_ = true;
   healthy_ = true;
+
+  if (persister_ && config_.sync_on_critical) {
+    persister_->SetSyncOnWrite(true);
+  }
+
   flush_thread_ = std::thread(&LogPersister::BackgroundFlushLoop, this);
 
-  LOG_INFO("LogPersister started (batch_size={}, interval={}ms)",
-           config_.batch_size, config_.batch_interval_ms);
+  LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync={})",
+           config_.batch_size, config_.batch_interval_ms,
+           config_.sync_on_critical);
 }
 
 void LogPersister::Stop() {
@@ -61,24 +68,42 @@ void LogPersister::Stop() {
            total_flushed_.load(), total_flush_ops_.load());
 }
 
-void LogPersister::Append(const RaftLogEntry& entry) {
+void LogPersister::Append(const RaftLogEntry& entry,
+                           FlushCallback callback) {
   std::lock_guard<std::mutex> lock(buffer_mutex_);
 
   if (!healthy_) {
     LOG_WARN("LogPersister is unhealthy, dropping append for index {}",
              entry.index_);
+    if (callback) {
+      callback(Status::Error("Persister is unhealthy: " + last_error_));
+    }
     return;
   }
 
   PendingEntry pending;
   pending.entry = entry;
-  pending.needs_confirm = false;
+  pending.callback = std::move(callback);
   buffer_.push_back(std::move(pending));
 
   // Trigger flush if batch is full
   if (buffer_.size() >= config_.batch_size) {
     flush_cv_.notify_one();
   }
+}
+
+Status LogPersister::AppendSync(const RaftLogEntry& entry,
+                                std::chrono::milliseconds timeout) {
+  auto shared_promise = std::make_shared<std::promise<Status>>();
+  auto future = shared_promise->get_future();
+
+  Append(entry, [shared_promise](Status s) { shared_promise->set_value(s); });
+
+  if (future.wait_for(timeout) == std::future_status::timeout) {
+    return Status::Error("AppendSync timeout");
+  }
+
+  return future.get();
 }
 
 Status LogPersister::FlushSync() {
@@ -253,6 +278,14 @@ bool LogPersister::DoFlush() {
     }
     healthy_ = false;
 
+    // Notify callbacks of failure
+    for (auto& pending : batch) {
+      if (pending.callback) {
+        auto cb = std::move(pending.callback);
+        cb(Status::Error("Flush failed: " + last_error_));
+      }
+    }
+
     // Put entries back to buffer for retry
     {
       std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -266,6 +299,14 @@ bool LogPersister::DoFlush() {
   // Success
   total_flushed_ += entries.size();
   ++total_flush_ops_;
+
+  // Notify callbacks of success
+  for (auto& pending : batch) {
+    if (pending.callback) {
+      auto cb = std::move(pending.callback);
+      cb(Status::OK());
+    }
+  }
 
   {
     std::lock_guard<std::mutex> lock(buffer_mutex_);

@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -81,6 +82,9 @@ class LogPersister {
   /** Stop the background thread and flush remaining entries. */
   void Stop();
 
+  /** Callback type invoked when an entry has been durably flushed. */
+  using FlushCallback = std::function<void(Status)>;
+
   /**
    * Append a log entry asynchronously.
    *
@@ -88,8 +92,19 @@ class LogPersister {
    * background thread or on next batch flush.
    *
    * @param entry The log entry to append
+   * @param callback Optional callback invoked when the entry is flushed
    */
-  void Append(const RaftLogEntry& entry);
+  void Append(const RaftLogEntry& entry, FlushCallback callback = nullptr);
+
+  /**
+   * Append a log entry and block until it is durably persisted.
+   *
+   * @param entry The log entry to append
+   * @param timeout Maximum time to wait for flush
+   * @return Status indicating success or failure
+   */
+  Status AppendSync(const RaftLogEntry& entry,
+                    std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
   /**
    * Force flush all buffered entries to disk.
@@ -162,7 +177,7 @@ class LogPersister {
  private:
   struct PendingEntry {
     RaftLogEntry entry;
-    bool needs_confirm = false;  // For future sync support
+    FlushCallback callback;
   };
 
   std::unique_ptr<Persister> persister_;

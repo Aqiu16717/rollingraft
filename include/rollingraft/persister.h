@@ -188,6 +188,16 @@ class Persister {
    * @return true if snapshot is available
    */
   virtual bool HasSnapshot() const { return false; }
+
+  /**
+   * Configure whether writes should fsync to disk.
+   *
+   * Implementations that support synchronous writes (e.g. LevelDB)
+   * can override this. Default is no-op.
+   *
+   * @param sync true to enable fsync on every write
+   */
+  virtual void SetSyncOnWrite(bool sync) { (void)sync; }
 };
 
 /** Factory function type for creating Persister instances. */

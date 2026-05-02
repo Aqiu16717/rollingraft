@@ -28,6 +28,8 @@ class LevelDBPersister : public Persister {
   LevelDBPersister() = default;
   ~LevelDBPersister() override { Close(); }
 
+  void SetSyncOnWrite(bool sync) override { sync_on_write_ = sync; }
+
   Status Open(const std::string& data_dir) override {
     std::unique_lock lock(mutex_);
 
@@ -111,7 +113,9 @@ class LevelDBPersister : public Persister {
       batch.Put(key, value);
     }
 
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    leveldb::WriteOptions write_options;
+    write_options.sync = sync_on_write_;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to append entries: " + s.ToString());
     }
@@ -413,6 +417,8 @@ class LevelDBPersister : public Persister {
   // Cached snapshot info
   uint64_t snapshot_last_index_ = 0;
   uint64_t snapshot_last_term_ = 0;
+
+  bool sync_on_write_ = false;
 };
 
 // Factory function implementation

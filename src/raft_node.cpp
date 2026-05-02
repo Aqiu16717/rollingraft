@@ -186,6 +186,7 @@ class RaftNode::RaftNodeImpl {
   // ========== Raft Volatile State ==========
   Index commit_index_ = 0;
   Index last_applied_ = 0;
+  Index flushed_index_ = 0;  // Highest log index durably persisted
   NodeId leader_id_ = -1;
   NodeAddr leader_addr_;
   RaftNodeRole role_ = RaftNodeRole::FOLLOWER;
@@ -353,6 +354,9 @@ Status RaftNode::RaftNodeImpl::Start() {
     for (const auto& entry : restored_entries) {
       log_.AppendLogEntry(entry);
     }
+
+    // All restored entries are already durably persisted
+    flushed_index_ = log_.LastLogIndex();
   }
 
   // 2. Initialize network layer
@@ -504,12 +508,36 @@ Status RaftNode::RaftNodeImpl::Propose(
     return status;
   }
 
-  // Persist log entry (async)
+  // Persist log entry (async with callback)
   if (log_persister_) {
     auto entry_opt = log_.GetEntry(index);
     if (entry_opt) {
-      log_persister_->Append(*entry_opt);
+      log_persister_->Append(
+          *entry_opt, [this, index](Status s) {
+            if (!s.ok()) {
+              LOG_WARN("Node {} log persistence failed for index {}: {}",
+                       server_id_, index, s.ToString());
+              return;
+            }
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (!IsRunning()) {
+              return;
+            }
+            if (role_ != RaftNodeRole::LEADER) {
+              return;
+            }
+            if (index > flushed_index_) {
+              flushed_index_ = index;
+            }
+            // Retry commit now that this entry is durable
+            TryCommitLocked();
+            // Replicate to followers
+            BroadcastAppendEntriesLocked();
+          });
     }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    flushed_index_ = std::max(flushed_index_, index);
   }
 
   // Record pending proposal
@@ -524,8 +552,10 @@ Status RaftNode::RaftNodeImpl::Propose(
         .Increment();
   }
 
-  // Trigger log replication
-  BroadcastAppendEntriesLocked();
+  // Trigger log replication only if no persister (otherwise callback triggers it)
+  if (!log_persister_) {
+    BroadcastAppendEntriesLocked();
+  }
 
   return Status::OK();
 }
@@ -548,6 +578,23 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
     error_result.success = false;
     error_result.error_message = status.GetMessage();
     return error_result;
+  }
+
+  // Persist log entry synchronously before replication
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        ApplyResult error_result;
+        error_result.success = false;
+        error_result.error_message = flush_status.GetMessage();
+        return error_result;
+      }
+      flushed_index_ = std::max(flushed_index_, index);
+    }
+  } else {
+    flushed_index_ = std::max(flushed_index_, index);
   }
 
   // Record pending proposal
@@ -1090,11 +1137,15 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
   req.leader_commit_ = commit_index_;
 
-  // Get log entries
+  // Get log entries — only send entries that have been durably flushed
   auto [last_index, _] = log_.GetLastLogInfo();
-  if (next_idx <= last_index) {
+  Index effective_last = last_index;
+  if (log_persister_) {
+    effective_last = std::min(last_index, flushed_index_);
+  }
+  if (next_idx <= effective_last) {
     Index end =
-        std::min(next_idx + config_.max_entries_per_append, last_index + 1);
+        std::min(next_idx + config_.max_entries_per_append, effective_last + 1);
     req.entries_ = log_.GetEntries(next_idx, end);
   }
 
@@ -1433,8 +1484,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
       break;
     }
 
-    // Count logs replicated to majority
-    int count = 1;  // Self
+    // Count logs replicated to majority.
+    // The leader only counts itself if the entry is durably persisted.
+    int count = 0;
+    if (!log_persister_ || index <= flushed_index_) {
+      count = 1;  // Self
+    }
     for (const auto& [peer_id, match] : match_index_) {
       (void)peer_id;
       if (match >= index) ++count;

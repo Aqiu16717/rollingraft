@@ -6,11 +6,19 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
 
 ### 🔴 Blockers (data loss or crash risk)
 
-- [ ] **WAL Sync Semantics**
+- [x] **WAL Sync Semantics**
   - `Propose()` calls `log_persister_->Append()` asynchronously (fire-and-forget)
   - Leader does not wait for its own log to be persisted before replicating to followers
   - If leader crashes before `DoFlush()` completes, buffered entries are lost
   - Fix: add sync-waiter or `FlushSync()` in leader `Propose()` before replying to client
+  - **Implemented:**
+    - `LogPersister::Append()` now accepts optional per-entry `FlushCallback`
+    - `LogPersister::AppendSync()` blocks until entry is durably flushed
+    - Leader `Propose()` delays replication until flush callback fires
+    - `ProposeAndWaitLocked()` calls `AppendSync()` before broadcasting
+    - `SendAppendEntriesToPeerLocked()` only sends entries up to `flushed_index_`
+    - `TryCommitLocked()` only counts leader in quorum if entry is flushed
+    - LevelDB persister uses `sync=true` when `sync_on_critical` is enabled
 
 - [ ] **Disk-Full Graceful Degradation**
   - `CheckDiskSpace()` is a no-op (returns `Status::OK()`)

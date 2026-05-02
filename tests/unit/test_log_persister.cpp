@@ -128,3 +128,68 @@ TEST_F(LogPersisterTest, UnhealthyAfterFailure) {
   // Error message contains the original error
   EXPECT_NE(persister_->GetLastError().find("disk full"), std::string::npos);
 }
+
+TEST_F(LogPersisterTest, CallbackFiresAfterFlush) {
+  persister_->Start();
+
+  bool callback_fired = false;
+  Status callback_status;
+
+  persister_->Append(MakeEntry(1, 1, "cmd"),
+                     [&callback_fired, &callback_status](Status s) {
+                       callback_fired = true;
+                       callback_status = s;
+                     });
+
+  // Callback should not fire immediately
+  EXPECT_FALSE(callback_fired);
+
+  // Force flush
+  persister_->FlushSync();
+
+  // Callback should fire with OK
+  EXPECT_TRUE(callback_fired);
+  EXPECT_TRUE(callback_status.ok());
+}
+
+TEST_F(LogPersisterTest, CallbackFiresOnFailure) {
+  persister_->Start();
+
+  // Inject failure
+  mock_persister_ptr_->InjectFailure("disk full");
+
+  bool callback_fired = false;
+  Status callback_status;
+
+  persister_->Append(MakeEntry(1, 1, "cmd"),
+                     [&callback_fired, &callback_status](Status s) {
+                       callback_fired = true;
+                       callback_status = s;
+                     });
+
+  // Force flush (will fail)
+  persister_->FlushSync();
+
+  // Callback should fire with error
+  EXPECT_TRUE(callback_fired);
+  EXPECT_FALSE(callback_status.ok());
+}
+
+TEST_F(LogPersisterTest, AppendSyncWaitsForFlush) {
+  persister_->Start();
+
+  auto status = persister_->AppendSync(MakeEntry(1, 1, "cmd"));
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_EQ(mock_persister_ptr_->EntryCount(), 1);
+}
+
+TEST_F(LogPersisterTest, AppendSyncReturnsErrorOnFailure) {
+  persister_->Start();
+
+  mock_persister_ptr_->InjectFailure("disk full");
+
+  auto status = persister_->AppendSync(MakeEntry(1, 1, "cmd"));
+
+  EXPECT_FALSE(status.ok());
+}

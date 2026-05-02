@@ -3,7 +3,7 @@
  * @brief Logging interface and macros
  *
  * Provides abstract Logger interface and convenient macros
- * for logging throughout the codebase. Uses C++20 std::format
+ * for logging throughout the codebase. Uses fmt::format
  * for type-safe formatting.
  *
  * Example:
@@ -12,7 +12,8 @@
 
 #pragma once
 
-#include <format>
+#include <spdlog/fmt/fmt.h>
+
 #include <memory>
 #include <mutex>
 #include <string>
@@ -98,7 +99,7 @@ class LoggerFactory {
   do {                                                         \
     Logger* logger = LoggerFactory::Instance().GetLogger();    \
     if (logger && logger->GetLogLevel() <= level) {            \
-      logger->Log(level, std::format(fmt_str __VA_OPT__(,) __VA_ARGS__)); \
+      logger->Log(level, fmt::format(fmt_str __VA_OPT__(,) __VA_ARGS__)); \
     }                                                          \
   } while (0)
 

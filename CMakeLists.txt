@@ -110,8 +110,8 @@ target_link_libraries(rollingraft
   PUBLIC
     rollingraft::asio
     rollingraft::json
-  PRIVATE
     rollingraft::spdlog
+  PRIVATE
     leveldb::leveldb
 )
 

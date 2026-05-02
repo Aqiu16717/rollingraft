@@ -19,27 +19,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libsnappy-dev
+          sudo apt-get install -y build-essential cmake libsnappy-dev ccache
 
-      - name: Cache CMake build
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: build
-          key: ${{ runner.os }}-cmake-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
           restore-keys: |
-            ${{ runner.os }}-cmake-
+            ${{ runner.os }}-ccache-
 
       - name: Configure
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
-            -DBUILD_EXAMPLES=ON
+            -DBUILD_EXAMPLES=ON \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: |
           cmake --build build --verbose -j$(nproc) 2>&1 | tee build.log
           BUILD_EXIT=${PIPESTATUS[0]}
+          ccache -s
           if [ $BUILD_EXIT -ne 0 ]; then
             echo "=== BUILD FAILED (exit $BUILD_EXIT) ==="
             echo "--- Last 100 lines of build.log ---"

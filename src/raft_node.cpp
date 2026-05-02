@@ -7,6 +7,7 @@
 #include <future>
 #include <random>
 #include <set>
+#include <span>
 
 #include "rollingraft/log_persister.h"
 #include "rollingraft/logger.h"

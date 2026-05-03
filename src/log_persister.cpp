@@ -71,13 +71,16 @@ void LogPersister::Stop() {
 
 void LogPersister::Append(const RaftLogEntry& entry,
                            FlushCallback callback) {
-  std::lock_guard<std::mutex> lock(buffer_mutex_);
+  std::unique_lock<std::mutex> lock(buffer_mutex_);
 
   if (!healthy_) {
     LOG_WARN("LogPersister is unhealthy, dropping append for index {}",
              entry.index_);
-    if (callback) {
-      callback(Status::Error("Persister is unhealthy: " + last_error_));
+    std::string error = last_error_;
+    auto cb = std::move(callback);
+    lock.unlock();
+    if (cb) {
+      cb(Status::Error("Persister is unhealthy: " + error));
     }
     return;
   }

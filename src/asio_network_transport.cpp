@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <fcntl.h>
 #include <memory>
 #include <mutex>

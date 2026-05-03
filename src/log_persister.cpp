@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <future>
+#include <iterator>
 
 #include "rollingraft/logger.h"
 
@@ -253,7 +254,8 @@ bool LogPersister::DoFlush() {
     // Put entries back to buffer
     {
       std::lock_guard<std::mutex> lock(buffer_mutex_);
-      buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+      buffer_.insert(buffer_.end(), std::make_move_iterator(batch.begin()),
+                     std::make_move_iterator(batch.end()));
       flush_in_progress_ = false;
     }
     flush_cv_.notify_all();  // Wake waiters so they see !healthy_
@@ -282,6 +284,7 @@ bool LogPersister::DoFlush() {
     for (auto& pending : batch) {
       if (pending.callback) {
         auto cb = std::move(pending.callback);
+        pending.callback = nullptr;
         cb(Status::Error("Flush failed: " + last_error_));
       }
     }
@@ -289,7 +292,8 @@ bool LogPersister::DoFlush() {
     // Put entries back to buffer for retry
     {
       std::lock_guard<std::mutex> lock(buffer_mutex_);
-      buffer_.insert(buffer_.end(), batch.begin(), batch.end());
+      buffer_.insert(buffer_.end(), std::make_move_iterator(batch.begin()),
+                     std::make_move_iterator(batch.end()));
       flush_in_progress_ = false;
     }
     flush_cv_.notify_all();  // Wake waiters so they see !healthy_
@@ -304,6 +308,7 @@ bool LogPersister::DoFlush() {
   for (auto& pending : batch) {
     if (pending.callback) {
       auto cb = std::move(pending.callback);
+      pending.callback = nullptr;
       cb(Status::OK());
     }
   }

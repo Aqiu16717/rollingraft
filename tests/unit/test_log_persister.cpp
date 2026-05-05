@@ -17,6 +17,7 @@ class LogPersisterTest : public ::testing::Test {
     LogPersistenceConfig config;
     config.batch_size = 10;
     config.batch_interval_ms = 50;
+    config.data_dir = "/tmp";
 
     persister_ =
         std::make_unique<LogPersister>(std::move(mock_persister_), config);
@@ -192,4 +193,46 @@ TEST_F(LogPersisterTest, AppendSyncReturnsErrorOnFailure) {
   auto status = persister_->AppendSync(MakeEntry(1, 1, "cmd"));
 
   EXPECT_FALSE(status.ok());
+}
+
+TEST_F(LogPersisterTest, RecoversWhenDiskSpaceAvailable) {
+  persister_->Start();
+
+  // Inject failure and trigger unhealthy state
+  mock_persister_ptr_->InjectFailure("disk full");
+  persister_->Append(MakeEntry(1, 1, "cmd"));
+  persister_->FlushSync();
+  EXPECT_FALSE(persister_->IsHealthy());
+
+  // Clear the underlying failure
+  mock_persister_ptr_->ClearFailure();
+
+  // Next append should recover automatically because /tmp has space
+  persister_->Append(MakeEntry(2, 1, "cmd"));
+  auto status = persister_->FlushSync();
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_TRUE(persister_->IsHealthy());
+  EXPECT_EQ(mock_persister_ptr_->EntryCount(), 2);
+}
+
+TEST_F(LogPersisterTest, CheckDiskSpaceFailsWhenLimitTooHigh) {
+  // Set an impossibly high disk space requirement
+  LogPersistenceConfig config;
+  config.batch_size = 10;
+  config.batch_interval_ms = 50;
+  config.data_dir = "/tmp";
+  config.min_disk_space_bytes = UINT64_MAX;
+
+  auto mock = std::make_unique<MockPersister>();
+  auto p = std::make_unique<LogPersister>(std::move(mock), config);
+  p->Start();
+
+  p->Append(MakeEntry(1, 1, "cmd"));
+  auto status = p->FlushSync();
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_FALSE(p->IsHealthy());
+
+  p->Stop();
 }

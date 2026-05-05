@@ -44,6 +44,9 @@ struct LogPersistenceConfig {
 
   /** Minimum disk space required (bytes). Default: 100MB. */
   uint64_t min_disk_space_bytes = 100 * 1024 * 1024;
+
+  /** Directory to check for disk space. Empty = skip check. */
+  std::string data_dir;
 };
 
 /**

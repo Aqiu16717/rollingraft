@@ -346,6 +346,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     LogPersistenceConfig log_config;
     log_config.batch_size = config_.max_entries_per_append;
     log_config.batch_interval_ms = config_.heartbeat_interval_ms / 2;
+    log_config.data_dir = config_.data_dir;
     log_persister_ =
         std::make_unique<LogPersister>(std::move(persister_), log_config);
     log_persister_->Start();
@@ -518,6 +519,14 @@ Status RaftNode::RaftNodeImpl::Propose(
             if (!s.ok()) {
               LOG_WARN("Node {} log persistence failed for index {}: {}",
                        server_id_, index, s.ToString());
+              if (log_persister_ && !log_persister_->IsHealthy()) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                if (role_ == RaftNodeRole::LEADER) {
+                  LOG_ERROR("Node {} stepping down due to disk failure",
+                            server_id_);
+                  BecomeFollowerLocked(current_term_);
+                }
+              }
               return;
             }
             std::lock_guard<std::mutex> lock(mtx_);
@@ -587,6 +596,11 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
+        if (log_persister_ && !log_persister_->IsHealthy()) {
+          LOG_ERROR("Node {} stepping down due to disk failure",
+                    server_id_);
+          BecomeFollowerLocked(current_term_);
+        }
         ApplyResult error_result;
         error_result.success = false;
         error_result.error_message = flush_status.GetMessage();

@@ -31,8 +31,9 @@
 *.out
 *.app
 
-# Build directory.
+# Build directories.
 build/
+build_*/
 out/
 
 # others

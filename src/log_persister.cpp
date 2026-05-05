@@ -15,6 +15,12 @@
 
 #include "rollingraft/logger.h"
 
+#if defined(__unix__) || defined(__unix) || \
+    (defined(__APPLE__) && defined(__MACH__))
+#define ROLLINGRAFT_POSIX
+#include <sys/statvfs.h>
+#endif
+
 namespace rollingraft {
 
 LogPersister::LogPersister(std::unique_ptr<Persister> persister,
@@ -74,15 +80,30 @@ void LogPersister::Append(const RaftLogEntry& entry,
   std::unique_lock<std::mutex> lock(buffer_mutex_);
 
   if (!healthy_) {
-    LOG_WARN("LogPersister is unhealthy, dropping append for index {}",
-             entry.index_);
-    std::string error = last_error_;
-    auto cb = std::move(callback);
-    lock.unlock();
-    if (cb) {
-      cb(Status::Error("Persister is unhealthy: " + error));
+    // Try to recover if disk space is now available
+    auto space_status = CheckDiskSpace();
+    if (space_status.ok()) {
+      healthy_ = true;
+      {
+        std::lock_guard<std::mutex> err_lock(error_mutex_);
+        last_error_.clear();
+      }
+      LOG_INFO("LogPersister recovered from disk-full state");
+    } else {
+      LOG_WARN("LogPersister is unhealthy, dropping append for index {}",
+               entry.index_);
+      std::string error;
+      {
+        std::lock_guard<std::mutex> err_lock(error_mutex_);
+        error = last_error_;
+      }
+      auto cb = std::move(callback);
+      lock.unlock();
+      if (cb) {
+        cb(Status::Error("Persister is unhealthy: " + error));
+      }
+      return;
     }
-    return;
   }
 
   PendingEntry pending;
@@ -244,8 +265,16 @@ bool LogPersister::DoFlush() {
     flush_in_progress_ = true;
   }
 
-  // Check disk space
+  // Check disk space before writing (also attempts recovery if unhealthy)
   auto space_status = CheckDiskSpace();
+  if (space_status.ok() && !healthy_) {
+    healthy_ = true;
+    {
+      std::lock_guard<std::mutex> err_lock(error_mutex_);
+      last_error_.clear();
+    }
+    LOG_INFO("LogPersister recovered from disk-full state during flush");
+  }
   if (!space_status.ok()) {
     LOG_ERROR("Disk space check failed: {}", space_status.ToString());
     {
@@ -343,8 +372,24 @@ Status LogPersister::WriteBatch(const std::vector<RaftLogEntry>& entries) {
 }
 
 Status LogPersister::CheckDiskSpace() {
-  // For now, skip disk space check on non-POSIX systems
-  // This can be implemented later for specific platforms
+#ifdef ROLLINGRAFT_POSIX
+  if (config_.data_dir.empty()) {
+    return Status::OK();
+  }
+
+  struct statvfs buf;
+  if (statvfs(config_.data_dir.c_str(), &buf) != 0) {
+    return Status::Error("Cannot check disk space for " + config_.data_dir);
+  }
+
+  uint64_t available =
+      static_cast<uint64_t>(buf.f_bavail) * static_cast<uint64_t>(buf.f_frsize);
+  if (available < config_.min_disk_space_bytes) {
+    return Status::Error("Insufficient disk space: available=" +
+                         std::to_string(available) + " required=" +
+                         std::to_string(config_.min_disk_space_bytes));
+  }
+#endif
   return Status::OK();
 }
 

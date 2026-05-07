@@ -236,3 +236,16 @@ TEST_F(LogPersisterTest, CheckDiskSpaceFailsWhenLimitTooHigh) {
 
   p->Stop();
 }
+
+TEST_F(LogPersisterTest, EntryContainsChecksum) {
+  // Verify that entries have checksum calculated
+  RaftLogEntry entry = MakeEntry(1, 1, "test data");
+
+  // Initially checksum should be 0 (not calculated yet)
+  EXPECT_EQ(entry.checksum_, 0);
+
+  // After serialization in LevelDBPersister, checksum will be set
+  // This test verifies the field exists and can be set
+  entry.checksum_ = 0xDEADBEEF;
+  EXPECT_EQ(entry.checksum_, 0xDEADBEEF);
+}

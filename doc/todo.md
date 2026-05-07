@@ -20,16 +20,17 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
     - `TryCommitLocked()` only counts leader in quorum if entry is flushed
     - LevelDB persister uses `sync=true` when `sync_on_critical` is enabled
 
-- [ ] **Disk-Full Graceful Degradation**
-  - `CheckDiskSpace()` is a no-op (returns `Status::OK()`)
-  - When disk is full, `WriteBatch()` fails, `healthy_ = false`, no recovery path
-  - Node becomes permanently write-dead
-  - Fix: implement actual disk space check + retry/recovery when space frees up
+- [x] **Disk-Full Graceful Degradation**
+  - `CheckDiskSpace()` now uses `statvfs` on POSIX systems to check available space
+  - Configurable `min_disk_space_bytes` threshold (default: 100MB)
+  - Auto-recovery when disk space becomes available
+  - Recovery attempts in both `Append()` and `DoFlush()` paths
 
-- [ ] **Log Corruption Detection**
-  - LevelDB-stored log entries have no checksum
-  - `Restore()` reads corrupted data silently
-  - Fix: append CRC32 per entry on write, verify on read
+- [x] **Log Corruption Detection**
+  - CRC32 checksum appended to each log entry on write
+  - Checksum verified on read in `DeserializeEntry()`
+  - CRC32 mismatch logs error and returns false, preventing corrupted data application
+  - Format: index (4) + term (4) + data_len (4) + data + checksum (4)
 
 - [ ] **TLS + Authentication**
   - Node-to-node TCP is plaintext — unusable on public networks

@@ -31,6 +31,7 @@ struct RaftLogEntry {
   Term term_;           // Term when entry was created
   std::string data_;    // Binary data payload
   std::string command_; // Command string (legacy, prefer data_)
+  uint32_t checksum_ = 0;  // CRC32 checksum for data integrity
 };
 
 /**

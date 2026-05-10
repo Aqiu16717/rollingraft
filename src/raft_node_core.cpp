@@ -126,8 +126,8 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // 4. Start metrics HTTP server
   if (metrics_ && !config_.metrics_addr.empty()) {
-    metrics_server_ = std::make_unique<MetricsHttpServer>(
-        config_.metrics_addr, metrics_.get());
+    metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr,
+                                                          metrics_.get());
     metrics_server_->Start();
   }
 
@@ -181,7 +181,8 @@ Status RaftNode::RaftNodeImpl::Stop() {
   }
 
   // 6. Clean up pending proposals
-  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>> callbacks_to_run;
+  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>>
+      callbacks_to_run;
   {
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
@@ -242,7 +243,10 @@ Status RaftNode::RaftNodeImpl::Propose(
 
   if (role_ != RaftNodeRole::LEADER) {
     if (metrics_) {
-      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "rejected_not_leader"}})
+      metrics_
+          ->GetCounter("raft_propose_total",
+                       {{"node_id", std::to_string(server_id_)},
+                        {"result", "rejected_not_leader"}})
           .Increment();
     }
     return Status::NotLeader(leader_id_, leader_addr_);
@@ -258,36 +262,35 @@ Status RaftNode::RaftNodeImpl::Propose(
   if (log_persister_) {
     auto entry_opt = log_.GetEntry(index);
     if (entry_opt) {
-      log_persister_->Append(
-          *entry_opt, [this, index](Status s) {
-            if (!s.ok()) {
-              LOG_WARN("Node {} log persistence failed for index {}: {}",
-                       server_id_, index, s.ToString());
-              if (log_persister_ && !log_persister_->IsHealthy()) {
-                std::lock_guard<std::mutex> lock(mtx_);
-                if (role_ == RaftNodeRole::LEADER) {
-                  LOG_ERROR("Node {} stepping down due to disk failure",
-                            server_id_);
-                  BecomeFollowerLocked(current_term_);
-                }
-              }
-              return;
-            }
+      log_persister_->Append(*entry_opt, [this, index](Status s) {
+        if (!s.ok()) {
+          LOG_WARN("Node {} log persistence failed for index {}: {}",
+                   server_id_, index, s.ToString());
+          if (log_persister_ && !log_persister_->IsHealthy()) {
             std::lock_guard<std::mutex> lock(mtx_);
-            if (!IsRunning()) {
-              return;
+            if (role_ == RaftNodeRole::LEADER) {
+              LOG_ERROR("Node {} stepping down due to disk failure",
+                        server_id_);
+              BecomeFollowerLocked(current_term_);
             }
-            if (role_ != RaftNodeRole::LEADER) {
-              return;
-            }
-            if (index > flushed_index_) {
-              flushed_index_ = index;
-            }
-            // Retry commit now that this entry is durable
-            TryCommitLocked();
-            // Replicate to followers
-            BroadcastAppendEntriesLocked();
-          });
+          }
+          return;
+        }
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!IsRunning()) {
+          return;
+        }
+        if (role_ != RaftNodeRole::LEADER) {
+          return;
+        }
+        if (index > flushed_index_) {
+          flushed_index_ = index;
+        }
+        // Retry commit now that this entry is durable
+        TryCommitLocked();
+        // Replicate to followers
+        BroadcastAppendEntriesLocked();
+      });
     }
   } else {
     // No persistence configured (test path) — treat as immediately flushed
@@ -302,11 +305,15 @@ Status RaftNode::RaftNodeImpl::Propose(
   pending_proposals_[index] = std::move(proposal);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
+    metrics_
+        ->GetCounter(
+            "raft_propose_total",
+            {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
         .Increment();
   }
 
-  // Trigger log replication only if no persister (otherwise callback triggers it)
+  // Trigger log replication only if no persister (otherwise callback triggers
+  // it)
   if (!log_persister_) {
     BroadcastAppendEntriesLocked();
   }
@@ -341,8 +348,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
         if (log_persister_ && !log_persister_->IsHealthy()) {
-          LOG_ERROR("Node {} stepping down due to disk failure",
-                    server_id_);
+          LOG_ERROR("Node {} stepping down due to disk failure", server_id_);
           BecomeFollowerLocked(current_term_);
         }
         ApplyResult error_result;
@@ -376,7 +382,10 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 
   if (wait_status == std::future_status::timeout) {
     if (metrics_) {
-      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
+      metrics_
+          ->GetCounter(
+              "raft_propose_total",
+              {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
           .Increment();
     }
     // Remove pending proposal on timeout
@@ -415,7 +424,9 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
            read_id, commit_index_);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_readindex_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -459,8 +470,8 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        LOG_ERROR("Node {} failed to persist AddNode log entry: {}",
-                  server_id_, flush_status.GetMessage());
+        LOG_ERROR("Node {} failed to persist AddNode log entry: {}", server_id_,
+                  flush_status.GetMessage());
         return flush_status;
       }
     }

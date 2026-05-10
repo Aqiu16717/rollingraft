@@ -1,7 +1,6 @@
-#include "raft_node_impl.h"
-
 #include "json_protocol.h"
 #include "nlohmann/json.hpp"
+#include "raft_node_impl.h"
 
 using namespace rollingraft;
 
@@ -112,8 +111,9 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   resp.vote_granted_ = false;
 
   if (metrics_) {
-    metrics_->GetCounter("raft_requestvote_received_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_requestvote_received_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -146,8 +146,9 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
     if (metrics_) {
-      metrics_->GetCounter("raft_votes_granted_total",
-                           {{"node_id", std::to_string(server_id_)}})
+      metrics_
+          ->GetCounter("raft_votes_granted_total",
+                       {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
     resp.vote_granted_ = true;
@@ -176,8 +177,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_appendentries_received_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_appendentries_received_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -294,8 +296,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
   ResetElectionTimerLocked();
 
   if (metrics_) {
-    metrics_->GetCounter("raft_snapshots_received_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_snapshots_received_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -337,7 +340,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
     // Truncate persisted log
     if (log_persister_) {
-      auto status = log_persister_->TruncatePrefix(req.last_included_index_ + 1);
+      auto status =
+          log_persister_->TruncatePrefix(req.last_included_index_ + 1);
       if (!status.ok()) {
         LOG_WARN("Node {} failed to truncate persisted log after snapshot: {}",
                  server_id_, status.ToString());
@@ -345,13 +349,16 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     }
 
     if (metrics_) {
-      metrics_->GetCounter("raft_log_compactions_total",
-                           {{"node_id", std::to_string(server_id_)}, {"trigger", "snapshot"}})
+      metrics_
+          ->GetCounter("raft_log_compactions_total",
+                       {{"node_id", std::to_string(server_id_)},
+                        {"trigger", "snapshot"}})
           .Increment();
       if (req.last_included_index_ >= old_first_index) {
         uint64_t compacted = req.last_included_index_ - old_first_index + 1;
-        metrics_->GetCounter("raft_log_entries_compacted_total",
-                             {{"node_id", std::to_string(server_id_)}})
+        metrics_
+            ->GetCounter("raft_log_entries_compacted_total",
+                         {{"node_id", std::to_string(server_id_)}})
             .Increment(compacted);
       }
     }
@@ -455,4 +462,3 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
 
   mtx_.unlock();
 }
-

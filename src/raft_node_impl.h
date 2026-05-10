@@ -1,7 +1,5 @@
 #pragma once
 
-#include "rollingraft/raft_node.h"
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -16,15 +14,17 @@
 
 #include "rollingraft/log_persister.h"
 #include "rollingraft/logger.h"
+#include "rollingraft/metrics.h"
 #include "rollingraft/network_transport.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/protocol.h"
 #include "rollingraft/raft_log.h"
+#include "rollingraft/raft_node.h"
 #include "rollingraft/rpc.h"
 #include "rollingraft/state_machine.h"
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
-#include "rollingraft/metrics.h"
+
 #include "metrics_http_server.h"
 
 namespace rollingraft {

@@ -36,7 +36,9 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   if (metrics_) {
     metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::FOLLOWER));
-    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetGauge("raft_current_term",
+                   {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(current_term_));
   }
   LOG_INFO("Node {} became Follower at term {}", server_id_, current_term_);
@@ -65,11 +67,15 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_elections_total", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_elections_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
     metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::CANDIDATE));
-    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetGauge("raft_current_term",
+                   {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(current_term_));
   }
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
@@ -123,7 +129,9 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_leader_elected_total", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_leader_elected_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
     metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::LEADER));
@@ -168,7 +176,9 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
            server_id_, current_term_);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_election_timeouts_total", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_election_timeouts_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
   BecomeCandidateLocked();
@@ -211,7 +221,9 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_requestvote_sent_total", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_requestvote_sent_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -271,7 +283,10 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
 
   if (resp.vote_granted_) {
     if (metrics_) {
-      metrics_->GetCounter("raft_votes_received_total", {{"node_id", std::to_string(server_id_)}, {"granted", "true"}})
+      metrics_
+          ->GetCounter(
+              "raft_votes_received_total",
+              {{"node_id", std::to_string(server_id_)}, {"granted", "true"}})
           .Increment();
     }
     ++vote_count_;
@@ -284,4 +299,3 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     }
   }
 }
-

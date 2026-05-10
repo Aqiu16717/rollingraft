@@ -5,6 +5,7 @@ using namespace rollingraft;
 constexpr size_t kSnapshotChunkSize = 64 * 1024;  // 64KB chunks
 
 void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
+  // PRECONDITION: snapshot_mtx_ is held by caller
   if (snapshot_check_timer_ != 0) {
     return;  // Already running
   }
@@ -18,6 +19,7 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
+  // PRECONDITION: snapshot_mtx_ is held by caller
   if (snapshot_check_timer_ != 0) {
     timer_->CancelTimer(snapshot_check_timer_);
     snapshot_check_timer_ = 0;
@@ -25,6 +27,13 @@ void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
+  // Bridge pattern: acquire election_mtx_ -> replication_mtx_ -> snapshot_mtx_
+  // Auto-snapshot reads role_ (election), log_ stats (replication), and
+  // updates last_snapshot_index_ (snapshot).
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+
   if (role_ != RaftNodeRole::LEADER) {
     return;  // Only leader triggers auto-snapshot
   }
@@ -148,6 +157,7 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
 // ========== Election Handling ==========
 
 void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
+  // PRECONDITION: caller holds election_mtx_, replication_mtx_, and snapshot_mtx_
   auto& state = snapshot_sends_[peer_id];
 
   // Already in progress? Skip
@@ -186,6 +196,7 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 }
 
 void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
+  // PRECONDITION: caller holds snapshot_mtx_ (and election_mtx_ if role_ is read)
   auto it_state = snapshot_sends_.find(peer_id);
   if (it_state == snapshot_sends_.end()) return;
 
@@ -273,73 +284,83 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
 void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
     NodeId from, const InstallSnapshotResponse& resp, bool rpc_success) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Phase 1: Election state check under election_mtx_ only.
+  // Must NOT hold replication_mtx_ or snapshot_mtx_ here because
+  // BecomeFollowerLocked acquires both internally.
+  {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
+    if (!IsRunning()) return;
+    if (role_ != RaftNodeRole::LEADER) return;
 
-  if (!IsRunning()) return;
-  if (role_ != RaftNodeRole::LEADER) return;
-
-  auto it = snapshot_sends_.find(from);
-  if (it == snapshot_sends_.end()) return;
-
-  auto& state = it->second;
-  state.in_progress = false;
-
-  // RPC failed: retry with backoff
-  if (!rpc_success) {
-    LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_,
-             from);
-    timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
-      std::lock_guard<std::mutex> lock(mtx_);
-      if (role_ == RaftNodeRole::LEADER) {
-        SendNextSnapshotChunkLocked(from);
-      }
-    });
-    return;
-  }
-
-  // Term check: if follower has higher term, revert to follower
-  if (resp.term_ > current_term_) {
-    LOG_INFO(
-        "Node {}: follower {} has higher term {} vs {}, reverting to Follower",
-        server_id_, from, resp.term_, current_term_);
-    BecomeFollowerLocked(resp.term_);
-    return;
-  }
-
-  // Check if we're done
-  if (state.offset + state.last_chunk_size >=
-      state.snapshot->GetMeta().last_included_index_) {
-    // Actually we need to track total size, not index. Let 'done' flag drive
-    // this. But we don't store total size. Use the done flag from last send.
-    // Simpler: check if last chunk was smaller than chunk size
-    if (state.last_chunk_size < kSnapshotChunkSize) {
-      // Transfer complete
+    if (resp.term_ > current_term_) {
       LOG_INFO(
-          "Node {}: snapshot send to {} completed, updating progress to {}",
-          server_id_, from, state.last_included_index);
-
-      if (metrics_) {
-        metrics_
-            ->GetCounter("raft_snapshot_sends_completed_total",
-                         {{"node_id", std::to_string(server_id_)},
-                          {"peer_id", std::to_string(from)}})
-            .Increment();
-      }
-      match_index_[from] = state.last_included_index;
-      next_index_[from] = state.last_included_index + 1;
-
-      // Clean up
-      snapshot_sends_.erase(it);
-
-      // Try to commit (snapshot doesn't increase commit directly,
-      // but we may be able to commit entries after the snapshot)
-      TryCommitLocked();
+          "Node {}: follower {} has higher term {} vs {}, reverting to Follower",
+          server_id_, from, resp.term_, current_term_);
+      BecomeFollowerLocked(resp.term_);
       return;
     }
   }
 
-  // More chunks to send
-  state.offset += state.last_chunk_size;
-  state.in_progress = true;
-  SendNextSnapshotChunkLocked(from);
+  // Phase 2: Snapshot + replication work under full hierarchy.
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+
+    auto it = snapshot_sends_.find(from);
+    if (it == snapshot_sends_.end()) return;
+
+    auto& state = it->second;
+    state.in_progress = false;
+
+    // RPC failed: retry with backoff
+    if (!rpc_success) {
+      LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_,
+               from);
+      timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
+        std::lock_guard<std::mutex> lock_e(election_mtx_);
+        std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+        if (role_ == RaftNodeRole::LEADER) {
+          SendNextSnapshotChunkLocked(from);
+        }
+      });
+      return;
+    }
+
+    // Check if we're done
+    if (state.offset + state.last_chunk_size >=
+        state.snapshot->GetMeta().last_included_index_) {
+      // Actually we need to track total size, not index. Let 'done' flag drive
+      // this. But we don't store total size. Use the done flag from last send.
+      // Simpler: check if last chunk was smaller than chunk size
+      if (state.last_chunk_size < kSnapshotChunkSize) {
+        // Transfer complete
+        LOG_INFO(
+            "Node {}: snapshot send to {} completed, updating progress to {}",
+            server_id_, from, state.last_included_index);
+
+        if (metrics_) {
+          metrics_
+              ->GetCounter("raft_snapshot_sends_completed_total",
+                           {{"node_id", std::to_string(server_id_)},
+                            {"peer_id", std::to_string(from)}})
+              .Increment();
+        }
+        match_index_[from] = state.last_included_index;
+        next_index_[from] = state.last_included_index + 1;
+
+        // Clean up
+        snapshot_sends_.erase(it);
+
+        // Try to commit (snapshot doesn't increase commit directly,
+        // but we may be able to commit entries after the snapshot)
+        TryCommitLocked();
+        return;
+      }
+    }
+
+    // More chunks to send
+    state.offset += state.last_chunk_size;
+    state.in_progress = true;
+    SendNextSnapshotChunkLocked(from);
+  }
 }

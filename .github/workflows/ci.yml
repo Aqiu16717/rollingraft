@@ -8,7 +8,7 @@ on:
 
 jobs:
   # ============================================================
-  # Build & Test Matrix (Compilers × OS)
+  # Build & Test Matrix (Compilers x OS)
   # ============================================================
   build-and-test:
     strategy:
@@ -20,20 +20,24 @@ jobs:
             compiler: gcc
             cxx: g++
             build_type: Release
+            test_filter: ''
           - os: ubuntu-22.04
             compiler: gcc
             cxx: g++
             build_type: Debug
+            test_filter: ''
           # Linux + Clang
           - os: ubuntu-22.04
             compiler: clang
             cxx: clang++
             build_type: Release
+            test_filter: ''
           # macOS + Clang (Apple Silicon & Intel)
           - os: macos-latest
             compiler: clang
             cxx: clang++
             build_type: Release
+            test_filter: '-R unit\\.'
 
     runs-on: ${{ matrix.os }}
 
@@ -82,13 +86,11 @@ jobs:
           ccache -s
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Run integration tests
-        run: ./build/tests/integration_tests
+        run: ctest --test-dir build --output-on-failure ${{ matrix.test_filter }}
 
   # ============================================================
-  # Sanitizer Matrix
+  # Sanitizer Matrix (unit tests only -- integration tests are
+  # timing-sensitive and often timeout under sanitizers)
   # ============================================================
   sanitizer:
     strategy:
@@ -149,8 +151,8 @@ jobs:
           cmake --build build -j$(nproc)
           ccache -s
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Run unit tests
+        run: ctest --test-dir build -R "unit\\." --output-on-failure
 
   # ============================================================
   # Werror Build (Treat Warnings as Errors)

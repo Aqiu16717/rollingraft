@@ -40,7 +40,7 @@ class LevelDBPersisterTest : public ::testing::Test {
   }
 
   // Corrupt a byte in the LevelDB value at the given index
-  void CorruptEntry(uint64_t index) {
+  void CorruptEntry(uint64_t /*index*/) {
     // This requires direct LevelDB access - we'll simulate by closing,
     // manually corrupting the file, and reopening
     persister_->Close();

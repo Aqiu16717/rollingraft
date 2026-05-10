@@ -48,6 +48,8 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     LOG_INFO(
         "Node {}: next_idx {} < first_log_index {}, sending snapshot to {}",
         server_id_, next_idx, first_log_index, peer_id);
+    // Bridge: replication_mtx_ -> snapshot_mtx_ per lock hierarchy
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
     SendInstallSnapshotToPeerLocked(peer_id);
     return;
   }

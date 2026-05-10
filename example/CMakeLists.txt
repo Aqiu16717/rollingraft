@@ -8,3 +8,8 @@ target_link_libraries(example_counter_client PRIVATE rollingraft)
 # Client library example
 add_executable(example_client client_example.cpp)
 target_link_libraries(example_client PRIVATE rollingraft)
+
+# Install examples
+install(TARGETS example_counter_server example_counter_client example_client
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)

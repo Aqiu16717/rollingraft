@@ -7,7 +7,114 @@ on:
     branches: [main, master]
 
 jobs:
+  # ============================================================
+  # Build & Test Matrix (Compilers × OS)
+  # ============================================================
   build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux + GCC
+          - os: ubuntu-22.04
+            compiler: gcc
+            cxx: g++
+            build_type: Release
+          - os: ubuntu-22.04
+            compiler: gcc
+            cxx: g++
+            build_type: Debug
+          # Linux + Clang
+          - os: ubuntu-22.04
+            compiler: clang
+            cxx: clang++
+            build_type: Release
+          # macOS + Clang (Apple Silicon & Intel)
+          - os: macos-latest
+            compiler: clang
+            cxx: clang++
+            build_type: Release
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsnappy-dev ccache
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake snappy ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/Library/Caches/ccache
+          key: ${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.compiler }}-${{ matrix.build_type }}-
+            ${{ runner.os }}-${{ matrix.compiler }}-
+            ${{ runner.os }}-
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DBUILD_TESTING=ON \
+            -DBUILD_EXAMPLES=ON \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_C_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          cmake --build build -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+          ccache -s
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run integration tests
+        run: ./build/tests/integration_tests
+
+  # ============================================================
+  # Sanitizer Matrix
+  # ============================================================
+  sanitizer:
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan, tsan, ubsan]
+        include:
+          - sanitizer: asan
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+              -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+              -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
+          - sanitizer: tsan
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+              -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+              -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          - sanitizer: ubsan
+            cmake_flags: >-
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer"
+              -DCMAKE_C_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer"
+              -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined"
+
     runs-on: ubuntu-22.04
 
     steps:
@@ -25,9 +132,42 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
+          key: ${{ runner.os }}-sanitizer-${{ matrix.sanitizer }}-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
           restore-keys: |
-            ${{ runner.os }}-ccache-
+            ${{ runner.os }}-sanitizer-${{ matrix.sanitizer }}-
+            ${{ runner.os }}-sanitizer-
+
+      - name: Configure
+        run: |
+          cmake -B build ${{ matrix.cmake_flags }} \
+            -DBUILD_TESTING=ON \
+            -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          cmake --build build -j$(nproc)
+          ccache -s
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  # ============================================================
+  # Werror Build (Treat Warnings as Errors)
+  # ============================================================
+  werror:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsnappy-dev
 
       - name: Configure
         run: |
@@ -35,27 +175,36 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DBUILD_EXAMPLES=ON \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_FLAGS="-Werror"
 
       - name: Build
-        run: |
-          cmake --build build --verbose -j$(nproc) 2>&1 | tee build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          ccache -s
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=== BUILD FAILED (exit $BUILD_EXIT) ==="
-            echo "--- Last 100 lines of build.log ---"
-            tail -n 100 build.log
-            echo "=== END BUILD LOG ==="
-            exit $BUILD_EXIT
-          fi
+        run: cmake --build build -j$(nproc)
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Run integration tests (verbose)
-        run: ./build/tests/integration_tests
+  # ============================================================
+  # Code Formatting Check
+  # ============================================================
+  format-check:
+    runs-on: ubuntu-22.04
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          find src tests benchmark example include -type f \
+            \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) \
+            -exec clang-format --dry-run --Werror --style=file {} +
+
+  # ============================================================
+  # Docker Integration Test
+  # ============================================================
   docker-test:
     runs-on: ubuntu-22.04
 

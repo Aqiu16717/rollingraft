@@ -173,7 +173,7 @@ void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::OnElectionTimeout() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
 
   if (!IsRunning()) return;
   if (role_ == RaftNodeRole::LEADER) return;
@@ -260,7 +260,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   LOG_INFO("Node {} received RequestVoteResponse from {}: granted={}, term={}",
            server_id_, from, resp.vote_granted_, resp.term_);
 
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::CANDIDATE) {

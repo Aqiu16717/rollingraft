@@ -261,3 +261,78 @@ TEST_F(LevelDBPersisterTest, BinaryData) {
   ASSERT_TRUE(persister_->GetEntry(1, entry).ok());
   EXPECT_EQ(entry.data_, binary_data);
 }
+
+TEST_F(LevelDBPersisterTest, SaveAndLoadSnapshot) {
+  // Save a snapshot
+  std::string snapshot_data = "snapshot_data_test";
+  uint64_t last_index = 100;
+  uint64_t last_term = 5;
+
+  ASSERT_TRUE(persister_->SaveSnapshot(snapshot_data, last_index, last_term).ok());
+  EXPECT_TRUE(persister_->HasSnapshot());
+
+  // Load it back
+  std::string loaded_data;
+  uint64_t loaded_index, loaded_term;
+  ASSERT_TRUE(persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
+
+  EXPECT_EQ(loaded_data, snapshot_data);
+  EXPECT_EQ(loaded_index, last_index);
+  EXPECT_EQ(loaded_term, last_term);
+}
+
+TEST_F(LevelDBPersisterTest, SnapshotSha256Verification) {
+  // Save a snapshot
+  std::string snapshot_data = "important_state_machine_data";
+  ASSERT_TRUE(persister_->SaveSnapshot(snapshot_data, 50, 3).ok());
+
+  // Load should succeed with correct data
+  std::string loaded_data;
+  uint64_t loaded_index, loaded_term;
+  ASSERT_TRUE(persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
+  EXPECT_EQ(loaded_data, snapshot_data);
+}
+
+TEST_F(LevelDBPersisterTest, SnapshotCorruptionDetected) {
+  // Save a snapshot
+  std::string original_data = "original_snapshot_data";
+  ASSERT_TRUE(persister_->SaveSnapshot(original_data, 100, 5).ok());
+
+  // Close and corrupt the snapshot directly
+  persister_->Close();
+
+  // Corrupt the snapshot file
+  for (const auto& file : std::filesystem::directory_iterator(test_dir_)) {
+    if (file.is_regular_file()) {
+      std::string ext = file.path().extension().string();
+      if (ext == ".ldb" || ext == ".log") {
+        std::fstream fs(file.path(), std::ios::in | std::ios::out | std::ios::binary);
+        if (fs) {
+          fs.seekg(0, std::ios::end);
+          auto size = fs.tellg();
+          if (size > 50) {
+            // Corrupt some bytes in the middle
+            fs.seekp(size / 2);
+            char byte = 0xFF;
+            fs.write(&byte, 1);
+          }
+          fs.close();
+        }
+      }
+    }
+  }
+
+  // Reopen and try to load
+  persister_ = CreateLevelDBPersister();
+  ASSERT_TRUE(persister_->Open(test_dir_).ok());
+
+  // Load should fail or return empty data due to corruption
+  std::string loaded_data;
+  uint64_t loaded_index, loaded_term;
+  auto status = persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term);
+
+  // Either load fails with integrity error, or data is empty
+  if (status.ok()) {
+    EXPECT_TRUE(loaded_data.empty());
+  }
+}

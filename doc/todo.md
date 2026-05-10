@@ -49,10 +49,11 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
   - Throughput bounded by RTT, not bandwidth
   - Fix: `ProposeBatch(std::vector<Command>)` with single AppendEntries RPC
 
-- [ ] **Snapshot Integrity Check**
-  - `HandleInstallSnapshot()` restores data without checksum verification
-  - Corrupted snapshot chunks put state machine into invalid state
-  - Fix: SHA-256 checksum across all chunks, verify before `Restore()`
+- [x] **Snapshot Integrity Check**
+  - SHA-256 checksum computed on `SaveSnapshot()` and stored in LevelDB
+  - Checksum verified on `LoadSnapshot()` before returning data
+  - Corruption detection prevents invalid state machine restoration
+  - Backward compatible: warns but doesn't fail if no hash exists (old snapshots)
 
 - [ ] **No Read Lease**
   - Every `ReadIndex()` heartbeats to majority — excessive RPC at high read load

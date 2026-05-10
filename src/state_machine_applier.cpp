@@ -47,7 +47,9 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetGauge("raft_applied_index", {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetGauge("raft_applied_index",
+                   {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(last_applied_));
   }
 
@@ -58,8 +60,9 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     uint64_t read_id) {
   if (metrics_) {
-    metrics_->GetCounter("raft_readindex_heartbeats_sent_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_readindex_heartbeats_sent_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -120,8 +123,9 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
 void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
                                                       uint64_t read_id) {
   if (metrics_) {
-    metrics_->GetCounter("raft_readindex_acks_received_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_readindex_acks_received_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -179,8 +183,9 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
       pending_reads_.erase(it);
 
       if (metrics_) {
-        metrics_->GetCounter("raft_readindex_completed_total",
-                             {{"node_id", std::to_string(server_id_)}})
+        metrics_
+            ->GetCounter("raft_readindex_completed_total",
+                         {{"node_id", std::to_string(server_id_)}})
             .Increment();
       }
 
@@ -200,4 +205,3 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
     }
   }
 }
-

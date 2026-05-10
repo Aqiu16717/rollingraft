@@ -63,8 +63,10 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_snapshots_created_total",
-                         {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+    metrics_
+        ->GetCounter(
+            "raft_snapshots_created_total",
+            {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
         .Increment();
   }
   LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
@@ -98,8 +100,8 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
 
   // Persist snapshot
   if (persister_ && !snapshot_data.empty()) {
-    auto status = persister_->SaveSnapshot(snapshot_data, snapshot_index,
-                                           snapshot_term);
+    auto status =
+        persister_->SaveSnapshot(snapshot_data, snapshot_index, snapshot_term);
     if (!status.ok()) {
       LOG_ERROR("Node {} failed to persist auto-snapshot: {}", server_id_,
                 status.ToString());
@@ -125,11 +127,14 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_log_compactions_total",
-                         {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+    metrics_
+        ->GetCounter(
+            "raft_log_compactions_total",
+            {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
         .Increment();
-    metrics_->GetCounter("raft_log_entries_compacted_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_log_entries_compacted_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment(entries_since_snapshot);
   }
 
@@ -166,8 +171,10 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_snapshot_sends_started_total",
-                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+    metrics_
+        ->GetCounter("raft_snapshot_sends_started_total",
+                     {{"node_id", std::to_string(server_id_)},
+                      {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
   state.in_progress = true;
@@ -230,8 +237,9 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_snapshot_chunks_sent_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_snapshot_chunks_sent_total",
+                     {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
   LOG_DEBUG(
@@ -311,8 +319,10 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
           server_id_, from, state.last_included_index);
 
       if (metrics_) {
-        metrics_->GetCounter("raft_snapshot_sends_completed_total",
-                             {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+        metrics_
+            ->GetCounter("raft_snapshot_sends_completed_total",
+                         {{"node_id", std::to_string(server_id_)},
+                          {"peer_id", std::to_string(from)}})
             .Increment();
       }
       match_index_[from] = state.last_included_index;
@@ -333,4 +343,3 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
   state.in_progress = true;
   SendNextSnapshotChunkLocked(from);
 }
-

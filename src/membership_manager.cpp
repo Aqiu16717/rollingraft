@@ -77,4 +77,3 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     }
   }
 }
-

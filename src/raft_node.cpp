@@ -1,7 +1,6 @@
-#include "raft_node_impl.h"
-
 #include "asio_timer_service.h"
 #include "json_protocol.h"
+#include "raft_node_impl.h"
 
 // Forward declaration for default network transport
 namespace rollingraft {

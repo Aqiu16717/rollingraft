@@ -79,8 +79,10 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   if (it_addr == peer_map_.end()) return;
 
   if (metrics_) {
-    metrics_->GetCounter("raft_appendentries_sent_total",
-                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+    metrics_
+        ->GetCounter("raft_appendentries_sent_total",
+                     {{"node_id", std::to_string(server_id_)},
+                      {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
 
@@ -132,8 +134,10 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
   delay = std::min(delay, config_.max_retry_delay_ms);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_appendentries_retries_total",
-                         {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(peer_id)}})
+    metrics_
+        ->GetCounter("raft_appendentries_retries_total",
+                     {{"node_id", std::to_string(server_id_)},
+                      {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
   LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms",
@@ -162,8 +166,10 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
   if (resp.success_) {
     if (metrics_) {
-      metrics_->GetCounter("raft_appendentries_success_total",
-                           {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+      metrics_
+          ->GetCounter("raft_appendentries_success_total",
+                       {{"node_id", std::to_string(server_id_)},
+                        {"peer_id", std::to_string(from)}})
           .Increment();
     }
     // Update progress
@@ -178,8 +184,10 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     TryCommitLocked();
   } else {
     if (metrics_) {
-      metrics_->GetCounter("raft_appendentries_failure_total",
-                           {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+      metrics_
+          ->GetCounter("raft_appendentries_failure_total",
+                       {{"node_id", std::to_string(server_id_)},
+                        {"peer_id", std::to_string(from)}})
           .Increment();
     }
     // Log mismatch, back off
@@ -217,9 +225,13 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     if (static_cast<size_t>(count) > (peer_addrs_.size() + 1) / 2) {
       commit_index_ = index;
       if (metrics_) {
-        metrics_->GetCounter("raft_commits_total", {{"node_id", std::to_string(server_id_)}})
+        metrics_
+            ->GetCounter("raft_commits_total",
+                         {{"node_id", std::to_string(server_id_)}})
             .Increment();
-        metrics_->GetGauge("raft_commit_index", {{"node_id", std::to_string(server_id_)}})
+        metrics_
+            ->GetGauge("raft_commit_index",
+                       {{"node_id", std::to_string(server_id_)}})
             .Set(static_cast<double>(commit_index_));
       }
       LOG_INFO("Node {} commit index advanced to {}", server_id_,
@@ -229,4 +241,3 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     }
   }
 }
-

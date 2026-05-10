@@ -517,7 +517,8 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Phase 1: Election state check under election_mtx_ only.
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -527,28 +528,35 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
-  // Create pending read request
-  uint64_t read_id = next_read_id_++;
-  PendingReadIndex read_req;
-  read_req.read_index = commit_index_;
-  read_req.callback = std::move(callback);
-  read_req.start_time = std::chrono::steady_clock::now();
-  read_req.acks.insert(server_id_);  // Leader acknowledges itself
+  // Phase 2: ReadIndex work under full hierarchy.
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    std::lock_guard<std::mutex> lock_a(applier_mtx_);
 
-  pending_reads_[read_id] = std::move(read_req);
+    // Create pending read request
+    uint64_t read_id = next_read_id_++;
+    PendingReadIndex read_req;
+    read_req.read_index = commit_index_;
+    read_req.callback = std::move(callback);
+    read_req.start_time = std::chrono::steady_clock::now();
+    read_req.acks.insert(server_id_);  // Leader acknowledges itself
 
-  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
-           read_id, commit_index_);
+    pending_reads_[read_id] = std::move(read_req);
 
-  if (metrics_) {
-    metrics_
-        ->GetCounter("raft_readindex_total",
-                     {{"node_id", std::to_string(server_id_)}})
-        .Increment();
+    LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
+             read_id, commit_index_);
+
+    if (metrics_) {
+      metrics_
+          ->GetCounter("raft_readindex_total",
+                       {{"node_id", std::to_string(server_id_)}})
+          .Increment();
+    }
+
+    // Send heartbeats to confirm leadership
+    BroadcastReadIndexHeartbeatsLocked(read_id);
   }
-
-  // Send heartbeats to confirm leadership
-  BroadcastReadIndexHeartbeatsLocked(read_id);
 
   return Status::OK();
 }

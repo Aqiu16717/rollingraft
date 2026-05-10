@@ -109,7 +109,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
 
 void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
                                                RequestVoteResponse& resp) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
 
   resp.term_ = current_term_;
   resp.vote_granted_ = false;

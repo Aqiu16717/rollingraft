@@ -129,28 +129,16 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libsnappy-dev ccache
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ${{ runner.os }}-sanitizer-${{ matrix.sanitizer }}-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
-          restore-keys: |
-            ${{ runner.os }}-sanitizer-${{ matrix.sanitizer }}-
-            ${{ runner.os }}-sanitizer-
+          sudo apt-get install -y build-essential cmake libsnappy-dev
 
       - name: Configure
         run: |
           cmake -B build ${{ matrix.cmake_flags }} \
             -DBUILD_TESTING=ON \
-            -DBUILD_EXAMPLES=OFF \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DBUILD_EXAMPLES=OFF
 
       - name: Build
-        run: |
-          cmake --build build -j$(nproc)
-          ccache -s
+        run: cmake --build build -j$(nproc)
 
       - name: Run unit tests
         run: ctest --test-dir build -R "unit\\." --output-on-failure

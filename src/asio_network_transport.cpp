@@ -29,10 +29,18 @@ namespace rollingraft {
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  public:
   TcpConnection(asio::io_context& io_ctx, NodeId peer_id, const NodeAddr& addr)
-      : socket_(io_ctx), peer_id_(peer_id), addr_(addr), connected_(false) {}
+      : socket_(io_ctx),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(peer_id),
+        addr_(addr),
+        connected_(false) {}
 
   TcpConnection(asio::io_context& io_ctx)
-      : socket_(io_ctx), peer_id_(-1), addr_(""), connected_(false) {}
+      : socket_(io_ctx),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(-1),
+        addr_(""),
+        connected_(false) {}
 
   asio::ip::tcp::socket& Socket() { return socket_; }
 
@@ -45,12 +53,21 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
   void Close() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (socket_.is_open()) {
-      std::error_code ec;
-      socket_.close(ec);
+    std::unordered_map<uint64_t, PendingCallback> drained;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (socket_.is_open()) {
+        std::error_code ec;
+        socket_.close(ec);
+      }
+      connected_ = false;
+      drained = std::move(pending_callbacks_);
+      pending_callbacks_.clear();
     }
-    connected_ = false;
+    for (auto& [id, pending] : drained) {
+      if (pending.timer) pending.timer->cancel();
+      if (pending.callback) pending.callback("", false, "Connection closed");
+    }
   }
 
   bool IsConnected() const { return connected_ && socket_.is_open(); }
@@ -58,16 +75,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   NodeId GetPeerId() const { return peer_id_; }
   NodeAddr GetAddr() const { return addr_; }
 
-  void Send(const std::string& data, RpcResponseCallback callback,
-            std::chrono::milliseconds timeout) {
+  void Send(const std::string& data, uint64_t correlation_id,
+            RpcResponseCallback callback, std::chrono::milliseconds timeout) {
     auto self = shared_from_this();
-
-    // CRITICAL: Store callback BEFORE sending to avoid race condition
-    // where response arrives before callback is stored
-    {
-      std::lock_guard<std::mutex> lock(self->mutex_);
-      pending_callbacks_.push_back(callback);
-    }
 
     // Prepare message with length prefix
     uint32_t length = static_cast<uint32_t>(data.size());
@@ -79,26 +89,60 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     (*msg)[3] = static_cast<char>(length & 0xFF);
     std::memcpy(msg->data() + 4, data.data(), data.size());
 
-    // Set timeout
-    auto timer = std::make_shared<asio::steady_timer>(socket_.get_executor());
+    // Set timeout that covers FULL request-response lifecycle
+    auto timer = std::make_shared<asio::steady_timer>(strand_);
     timer->expires_after(timeout);
-    timer->async_wait([self, callback](std::error_code ec) {
-      if (!ec) {
-        callback("", false, "Request timeout");
+
+    // CRITICAL: Store callback + timer BEFORE sending to avoid race condition
+    // where response arrives before callback is stored
+    {
+      std::lock_guard<std::mutex> lock(self->mutex_);
+      pending_callbacks_[correlation_id] = {std::move(callback), timer};
+    }
+
+    timer->async_wait([self, correlation_id](std::error_code ec) {
+      if (ec) return;  // Cancelled
+      RpcResponseCallback cb;
+      {
+        std::lock_guard<std::mutex> lock(self->mutex_);
+        auto it = self->pending_callbacks_.find(correlation_id);
+        if (it != self->pending_callbacks_.end()) {
+          cb = std::move(it->second.callback);
+          self->pending_callbacks_.erase(it);
+        }
       }
+      if (cb) {
+        cb("", false, "Request timeout");
+      }
+      self->connected_ = false;
     });
 
-    // Send message
+    // Send message (serialized through strand)
     asio::async_write(
         socket_, asio::buffer(*msg),
-        [self, msg, callback, timer](std::error_code ec, std::size_t) {
-          timer->cancel();
+        asio::bind_executor(strand_, [self, msg, correlation_id](
+                                         std::error_code ec, std::size_t) {
           if (ec) {
-            callback("", false, "Send failed: " + ec.message());
+            RpcResponseCallback cb;
+            std::shared_ptr<asio::steady_timer> timer;
+            {
+              std::lock_guard<std::mutex> lock(self->mutex_);
+              auto it = self->pending_callbacks_.find(correlation_id);
+              if (it != self->pending_callbacks_.end()) {
+                cb = std::move(it->second.callback);
+                timer = std::move(it->second.timer);
+                self->pending_callbacks_.erase(it);
+              }
+            }
+            if (timer) timer->cancel();
+            if (cb) {
+              cb("", false, "Send failed: " + ec.message());
+            }
             self->connected_ = false;
           }
-          // Response will be handled by DoRead
-        });
+          // On success: do NOT cancel timer — it covers response wait too
+          // Response will be handled by DoRead -> HandleMessage
+        }));
   }
 
   void SetRequestHandler(RpcRequestHandler handler) {
@@ -111,7 +155,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(header_buffer_),
-        [this, self](std::error_code ec, std::size_t bytes) {
+        asio::bind_executor(strand_, [this, self](std::error_code ec,
+                                                  std::size_t bytes) {
           if (!ec) {
             LOG_INFO("Read header: peer_id={}, bytes={}", peer_id_, bytes);
           }
@@ -135,23 +180,25 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             LOG_ERROR("Invalid message length: {}", length);
             connected_ = false;
           }
-        });
+        }));
   }
 
   void DoReadBody(uint32_t /*length*/) {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(body_buffer_),
-        [this, self](std::error_code ec, std::size_t /*bytes_transferred*/) {
-          if (ec) {
-            LOG_ERROR("Read body error: {}", ec.message());
-            connected_ = false;
-            return;
-          }
+        asio::bind_executor(strand_,
+                            [this, self](std::error_code ec,
+                                         std::size_t /*bytes_transferred*/) {
+                              if (ec) {
+                                LOG_ERROR("Read body error: {}", ec.message());
+                                connected_ = false;
+                                return;
+                              }
 
-          HandleMessage();
-          DoReadHeader();
-        });
+                              HandleMessage();
+                              DoReadHeader();
+                            }));
   }
 
   void HandleMessage() {
@@ -178,32 +225,78 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       auto msg = std::make_shared<std::string>(header, 4);
       msg->append(response);
 
-      asio::async_write(socket_, asio::buffer(*msg),
-                        [self, msg](std::error_code ec, std::size_t) {
-                          if (ec) {
-                            LOG_ERROR("Write response error: {}", ec.message());
-                          }
-                        });
-    } else if (!pending_callbacks_.empty()) {
-      // This is a client connection, handle response
-      auto callback = pending_callbacks_.front();
-      pending_callbacks_.pop_front();
-      callback(body_buffer_, true, "");
+      asio::async_write(
+          socket_, asio::buffer(*msg),
+          asio::bind_executor(
+              strand_, [self, msg](std::error_code ec, std::size_t) {
+                if (ec) {
+                  LOG_ERROR("Write response error: {}", ec.message());
+                }
+              }));
+    } else {
+      // This is a client connection, handle response by correlation_id
+      auto callback = ExtractCallbackLocked(body_buffer_);
+      if (callback) {
+        callback(body_buffer_, true, "");
+      }
     }
   }
 
  private:
   asio::ip::tcp::socket socket_;
+  asio::strand<asio::io_context::executor_type> strand_;
   NodeId peer_id_;
   NodeAddr addr_;
   std::atomic<bool> connected_;
 
+  struct PendingCallback {
+    RpcResponseCallback callback;
+    std::shared_ptr<asio::steady_timer> timer;
+  };
+
   mutable std::mutex mutex_;
   RpcRequestHandler request_handler_;
-  std::deque<RpcResponseCallback> pending_callbacks_;
+  std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
   char header_buffer_[4];
   std::string body_buffer_;
+
+  RpcResponseCallback ExtractCallbackLocked(const std::string& response_data) {
+    // Lightweight JSON parse to extract correlation_id
+    uint64_t correlation_id = 0;
+    try {
+      auto pos = response_data.find("\"correlation_id\"");
+      if (pos != std::string::npos) {
+        auto colon_pos = response_data.find(':', pos + 16);
+        if (colon_pos != std::string::npos) {
+          correlation_id = std::stoull(response_data.substr(colon_pos + 1));
+        }
+      }
+    } catch (...) {
+      // Fall through
+    }
+
+    if (correlation_id != 0) {
+      auto it = pending_callbacks_.find(correlation_id);
+      if (it != pending_callbacks_.end()) {
+        auto cb = std::move(it->second.callback);
+        if (it->second.timer) it->second.timer->cancel();
+        pending_callbacks_.erase(it);
+        return cb;
+      }
+    }
+
+    // Fallback: if no correlation_id match, return any pending callback
+    if (!pending_callbacks_.empty()) {
+      auto it = pending_callbacks_.begin();
+      auto cb = std::move(it->second.callback);
+      if (it->second.timer) it->second.timer->cancel();
+      pending_callbacks_.erase(it);
+      return cb;
+    }
+
+    return nullptr;
+  }
 };
 
 class AsioNetworkTransport : public NetworkTransport {
@@ -262,29 +355,35 @@ class AsioNetworkTransport : public NetworkTransport {
       return Status::Error("Not initialized");
     }
 
-    if (running_) {
+    if (running_.load(std::memory_order_relaxed)) {
       return Status::OK();
     }
 
-    running_ = true;
+    running_.store(true, std::memory_order_relaxed);
 
-    // Start io_context in a separate thread
+    // Start io_context thread pool
     work_guard_ = std::make_unique<
         asio::executor_work_guard<asio::io_context::executor_type>>(
         io_context_.get_executor());
 
-    io_thread_ = std::thread([this]() {
-      try {
-        io_context_.run();
-      } catch (const std::exception& e) {
-        LOG_ERROR("IO context error: {}", e.what());
-      }
-    });
+    unsigned int num_threads =
+        std::max(2u, std::thread::hardware_concurrency());
+    io_threads_.reserve(num_threads);
+    for (unsigned int i = 0; i < num_threads; ++i) {
+      io_threads_.emplace_back([this]() {
+        try {
+          io_context_.run();
+        } catch (const std::exception& e) {
+          LOG_ERROR("IO context error: {}", e.what());
+        }
+      });
+    }
 
     // Start accepting connections
     DoAccept();
 
-    LOG_INFO("AsioNetworkTransport started on {}", listen_addr_);
+    LOG_INFO("AsioNetworkTransport started on {} ({} threads)", listen_addr_,
+             num_threads);
     return Status::OK();
   }
 
@@ -292,11 +391,11 @@ class AsioNetworkTransport : public NetworkTransport {
     {
       std::lock_guard<std::mutex> lock(mutex_);
 
-      if (!running_) {
+      if (!running_.load(std::memory_order_relaxed)) {
         return Status::OK();
       }
 
-      running_ = false;
+      running_.store(false, std::memory_order_relaxed);
 
       // Stop acceptor
       if (acceptor_ && acceptor_->is_open()) {
@@ -313,173 +412,37 @@ class AsioNetworkTransport : public NetworkTransport {
       // Stop io_context
       work_guard_.reset();
       io_context_.stop();
-
-      if (io_thread_.joinable()) {
-        io_thread_.join();
-      }
     }
 
-    // Wait for all RPC send threads to finish
-    JoinRpcThreads();
+    // Join all io_context threads
+    for (auto& t : io_threads_) {
+      if (t.joinable()) {
+        t.join();
+      }
+    }
+    io_threads_.clear();
 
     LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();
   }
 
-  void SendRpc([[maybe_unused]] NodeId to, const NodeAddr& addr,
-               const std::string& request_data,
-               std::chrono::milliseconds timeout,
+  void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
+               uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override {
-    // Use synchronous RPC for reliable request-response
-    // This avoids the race condition where response arrives before async_read
-    // starts
-    std::thread t([addr, request_data, timeout, callback]() {
-      try {
-        asio::io_context io_context;
-        asio::ip::tcp::socket socket(io_context);
-
-        auto pos = addr.find(':');
-        if (pos == std::string::npos) {
-          callback("", false, "Invalid address format");
-          return;
-        }
-
-        std::string host = addr.substr(0, pos);
-        uint16_t port = static_cast<uint16_t>(std::stoi(addr.substr(pos + 1)));
-
-        asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-
-        // Connect with 1-second timeout using non-blocking connect + select.
-        // Linux connect() can block for ~75s on unreachable hosts; SO_SNDTIMEO
-        // does not affect connect() on Linux, so we use fcntl + select.
-        int fd = static_cast<int>(socket.native_handle());
-        int flags = ::fcntl(fd, F_GETFL, 0);
-        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-        std::error_code ec;
-        socket.connect(endpoint, ec);
-        if (ec == asio::error::in_progress || ec == asio::error::would_block) {
-          fd_set write_fds;
-          FD_ZERO(&write_fds);
-          FD_SET(fd, &write_fds);
-          struct timeval tv;
-          tv.tv_sec = 1;
-          tv.tv_usec = 0;
-          int ret = ::select(fd + 1, nullptr, &write_fds, nullptr, &tv);
-          if (ret > 0 && FD_ISSET(fd, &write_fds)) {
-            int so_error = 0;
-            socklen_t len = sizeof(so_error);
-            ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-            if (so_error == 0) {
-              ec.clear();
-            } else {
-              ec.assign(so_error, std::system_category());
-            }
-          } else {
-            ec = asio::error::timed_out;
-          }
-        }
-
-        // Restore blocking mode for subsequent write/read
-        ::fcntl(fd, F_SETFL, flags);
-
-        if (ec) {
-          callback("", false, "Connect failed: " + ec.message());
-          return;
-        }
-
-        // Prepare and send request
-        uint32_t length = static_cast<uint32_t>(request_data.size());
-        char header[4];
-        header[0] = static_cast<char>((length >> 24) & 0xFF);
-        header[1] = static_cast<char>((length >> 16) & 0xFF);
-        header[2] = static_cast<char>((length >> 8) & 0xFF);
-        header[3] = static_cast<char>(length & 0xFF);
-
-        asio::write(socket, asio::buffer(header, 4), ec);
-        if (ec) {
-          callback("", false, "Write header failed: " + ec.message());
-          return;
-        }
-
-        asio::write(socket, asio::buffer(request_data), ec);
-        if (ec) {
-          callback("", false, "Write body failed: " + ec.message());
-          return;
-        }
-
-        // Read response with timeout using select-like approach
-        socket.non_blocking(true);
-
-        char resp_header[4];
-        size_t header_read = 0;
-        auto start = std::chrono::steady_clock::now();
-
-        while (header_read < 4) {
-          auto elapsed = std::chrono::steady_clock::now() - start;
-          if (elapsed > timeout) {
-            callback("", false, "Response timeout");
-            return;
-          }
-
-          size_t n = socket.read_some(
-              asio::buffer(resp_header + header_read, 4 - header_read), ec);
-          if (!ec) {
-            header_read += n;
-          } else if (ec == asio::error::would_block ||
-                     ec == asio::error::try_again) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            ec.clear();
-          } else {
-            callback("", false, "Read header failed: " + ec.message());
-            return;
-          }
-        }
-
-        uint32_t resp_length = (static_cast<uint8_t>(resp_header[0]) << 24) |
-                               (static_cast<uint8_t>(resp_header[1]) << 16) |
-                               (static_cast<uint8_t>(resp_header[2]) << 8) |
-                               static_cast<uint8_t>(resp_header[3]);
-
-        if (resp_length > 100 * 1024 * 1024) {
-          callback("", false, "Response too large");
-          return;
-        }
-
-        std::string resp_body(resp_length, '\0');
-        size_t body_read = 0;
-        start = std::chrono::steady_clock::now();
-
-        while (body_read < resp_length) {
-          auto elapsed = std::chrono::steady_clock::now() - start;
-          if (elapsed > timeout) {
-            callback("", false, "Response body timeout");
-            return;
-          }
-
-          size_t n = socket.read_some(
-              asio::buffer(&resp_body[body_read], resp_length - body_read), ec);
-          if (!ec) {
-            body_read += n;
-          } else if (ec == asio::error::would_block ||
-                     ec == asio::error::try_again) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            ec.clear();
-          } else {
-            callback("", false, "Read body failed: " + ec.message());
-            return;
-          }
-        }
-
-        callback(resp_body, true, "");
-      } catch (const std::exception& e) {
-        callback("", false, std::string("RPC exception: ") + e.what());
-      }
-    });
-    {
-      std::lock_guard<std::mutex> lock(rpc_threads_mutex_);
-      rpc_threads_.push_back(std::move(t));
+    if (!running_.load(std::memory_order_relaxed)) {
+      callback("", false, "Transport stopped");
+      return;
     }
+    // Post to io_context for async execution on the thread pool
+    asio::post(io_context_, [this, to, addr, request_data, correlation_id,
+                             timeout, callback]() {
+      auto conn = GetOrCreateConnection(to, addr);
+      if (!conn) {
+        callback("", false, "Failed to connect to " + addr);
+        return;
+      }
+      conn->Send(request_data, correlation_id, callback, timeout);
+    });
   }
 
  private:
@@ -496,11 +459,11 @@ class AsioNetworkTransport : public NetworkTransport {
         // would cause overwriting and use-after-free.
         LOG_INFO("Accepted inbound connection from {}",
                  new_conn->Socket().remote_endpoint().address().to_string());
-      } else if (running_) {
+      } else if (running_.load(std::memory_order_relaxed)) {
         LOG_ERROR("Accept error: {}", ec.message());
       }
 
-      if (running_) {
+      if (running_.load(std::memory_order_relaxed)) {
         DoAccept();
       }
     });
@@ -551,12 +514,12 @@ class AsioNetworkTransport : public NetworkTransport {
  private:
   mutable std::mutex mutex_;
   bool initialized_ = false;
-  bool running_ = false;
+  std::atomic<bool> running_{false};
 
   asio::io_context io_context_;
   std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>
       work_guard_;
-  std::thread io_thread_;
+  std::vector<std::thread> io_threads_;
 
   NodeAddr listen_addr_;
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
@@ -564,19 +527,6 @@ class AsioNetworkTransport : public NetworkTransport {
   ConnectionCallback connection_callback_;
 
   std::unordered_map<NodeId, std::shared_ptr<TcpConnection>> connections_;
-
-  std::mutex rpc_threads_mutex_;
-  std::vector<std::thread> rpc_threads_;
-
-  void JoinRpcThreads() {
-    std::lock_guard<std::mutex> lock(rpc_threads_mutex_);
-    for (auto& t : rpc_threads_) {
-      if (t.joinable()) {
-        t.join();
-      }
-    }
-    rpc_threads_.clear();
-  }
 };
 
 // Factory function

@@ -18,6 +18,7 @@ Status MockNetworkTransport::Stop() { return Status::OK(); }
 
 void MockNetworkTransport::SendRpc(NodeId to, const NodeAddr& addr,
                                    const std::string& request_data,
+                                   [[maybe_unused]] uint64_t correlation_id,
                                    std::chrono::milliseconds timeout,
                                    RpcResponseCallback callback) {
   std::lock_guard<std::mutex> lock(mutex_);

@@ -196,7 +196,7 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 }
 
 void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
-  // PRECONDITION: caller holds snapshot_mtx_ (and election_mtx_ if role_ is read)
+  // PRECONDITION: caller holds election_mtx_ and snapshot_mtx_
   auto it_state = snapshot_sends_.find(peer_id);
   if (it_state == snapshot_sends_.end()) return;
 
@@ -303,6 +303,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
 
   // Phase 2: Snapshot + replication work under full hierarchy.
   {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
 

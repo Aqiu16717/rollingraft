@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, ci/diagnostic-clang-15-v2]
   pull_request:
     branches: [main, master]
 

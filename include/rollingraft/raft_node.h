@@ -222,6 +222,24 @@ class RaftNode {
                  std::function<void(const ApplyResult& result)> callback);
 
   /**
+   * Propose a batch of commands for cluster-wide replication.
+   *
+   * All commands in the batch are appended to the log atomically
+   * under the same term. They are replicated and applied as a group.
+   * The callback is invoked once all commands have been applied.
+   *
+   * Only the leader can propose commands.
+   *
+   * @param commands List of opaque command data for state machine
+   * @param callback Invoked when all commands are applied or batch fails
+   * @return Status::OK() if batch was accepted (not yet applied)
+   * @note Callback is called asynchronously from a different thread
+   */
+  Status ProposeBatch(
+      const std::vector<std::string>& commands,
+      std::function<void(const std::vector<ApplyResult>& results)> callback);
+
+  /**
    * Perform a linearizable read.
    *
    * Ensures the node is still the leader by exchanging heartbeats

@@ -55,6 +55,12 @@ Status RaftNode::Propose(
   return raft_node_impl_->Propose(command, std::move(callback));
 }
 
+Status RaftNode::ProposeBatch(
+    const std::vector<std::string>& commands,
+    std::function<void(const std::vector<ApplyResult>& results)> callback) {
+  return raft_node_impl_->ProposeBatch(commands, std::move(callback));
+}
+
 Status RaftNode::ReadIndex(std::function<void()> callback) {
   return raft_node_impl_->ReadIndex(std::move(callback));
 }

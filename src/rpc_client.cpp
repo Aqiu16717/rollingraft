@@ -6,16 +6,14 @@
  * to the Raft cluster.
  */
 
-#include "rollingraft/rpc.h"
-
 #include <arpa/inet.h>
-
 #include <asio.hpp>
 #include <chrono>
 #include <cstring>
 #include <string>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/rpc.h"
 #include "rollingraft/status.h"
 
 #include "nlohmann/json.hpp"
@@ -35,7 +33,7 @@ static std::string SerializeClientRequest(const ClientRequest& req) {
 
 // Helper to deserialize ClientResponse from JSON
 static bool DeserializeClientResponse(const std::string& data,
-                                       ClientResponse& resp) {
+                                      ClientResponse& resp) {
   try {
     auto j = nlohmann::json::parse(data);
 

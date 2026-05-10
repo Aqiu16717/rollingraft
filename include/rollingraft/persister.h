@@ -12,13 +12,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include <rollingraft/raft_log.h>
 #include <rollingraft/status.h>
 #include <rollingraft/types.h>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace rollingraft {
 
@@ -29,8 +28,8 @@ namespace rollingraft {
  * before responding to RPCs during elections.
  */
 struct PersistentState {
-  Term current_term = 0;   // Latest term server has seen
-  NodeId voted_for = -1;   // Candidate ID voted for in current term (-1 = none)
+  Term current_term = 0;  // Latest term server has seen
+  NodeId voted_for = -1;  // Candidate ID voted for in current term (-1 = none)
 };
 
 /**

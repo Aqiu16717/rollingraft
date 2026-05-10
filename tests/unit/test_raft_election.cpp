@@ -1,26 +1,24 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
 /**
  * Raft election tests.
- * 
+ *
  * These tests verify basic Raft node behavior.
  * Note: Full election testing requires network response injection.
  */
 
 class RaftElectionTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {

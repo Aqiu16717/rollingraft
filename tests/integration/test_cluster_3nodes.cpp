@@ -1,12 +1,12 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <memory>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/raft_node.h"
+
 #include "mock/mock_state_machine.h"
 
 using namespace rollingraft;
@@ -24,10 +24,8 @@ class Cluster3NodesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // Create temp data directories
-    data_dirs_ = {
-        "/tmp/raft_test_node_1",
-        "/tmp/raft_test_node_2",
-        "/tmp/raft_test_node_3"};
+    data_dirs_ = {"/tmp/raft_test_node_1", "/tmp/raft_test_node_2",
+                  "/tmp/raft_test_node_3"};
 
     for (const auto& dir : data_dirs_) {
       std::filesystem::remove_all(dir);
@@ -62,10 +60,8 @@ class Cluster3NodesTest : public ::testing::Test {
 
   void StartCluster() {
     // Use high ports to avoid conflicts with system services
-    std::vector<std::string> addrs = {
-        "127.0.0.1:19001",
-        "127.0.0.1:19002",
-        "127.0.0.1:19003"};
+    std::vector<std::string> addrs = {"127.0.0.1:19001", "127.0.0.1:19002",
+                                      "127.0.0.1:19003"};
 
     for (int i = 0; i < 3; ++i) {
       auto config = MakeConfig(i + 1, addrs[i], addrs);
@@ -73,7 +69,8 @@ class Cluster3NodesTest : public ::testing::Test {
       state_machines_.push_back(sm);
 
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
-      EXPECT_TRUE(nodes_[i]->Start().ok()) << "Failed to start node " << (i + 1);
+      EXPECT_TRUE(nodes_[i]->Start().ok())
+          << "Failed to start node " << (i + 1);
     }
   }
 
@@ -85,8 +82,8 @@ class Cluster3NodesTest : public ::testing::Test {
     config.data_dir = data_dirs_[id - 1];
     config.election_timeout_ms = 300;
     config.heartbeat_interval_ms = 50;  // Fast heartbeat
-    config.rpc_timeout_ms = 200;         // Fast timeout for quick failure detection
-    config.base_retry_delay_ms = 5;      // Aggressive retry
+    config.rpc_timeout_ms = 200;     // Fast timeout for quick failure detection
+    config.base_retry_delay_ms = 5;  // Aggressive retry
     config.max_retry_delay_ms = 100;
     config.max_retry_attempts = 10;
 
@@ -164,8 +161,8 @@ TEST_F(Cluster3NodesTest, LeaderCanPropose) {
   // Wait for commit with longer timeout for CI environments
   auto start = std::chrono::steady_clock::now();
   while (!completed && std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::steady_clock::now() - start)
-                              .count() < 10) {
+                           std::chrono::steady_clock::now() - start)
+                               .count() < 10) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 
@@ -188,17 +185,16 @@ TEST_F(Cluster3NodesTest, LogReplicatedToAllNodes) {
 
   // Propose a command
   std::atomic<bool> completed{false};
-  auto status = nodes_[leader_idx]->Propose("replicate_test", 
-    [&](const ApplyResult& result) {
-      completed = result.success;
-    });
+  auto status = nodes_[leader_idx]->Propose(
+      "replicate_test",
+      [&](const ApplyResult& result) { completed = result.success; });
   ASSERT_TRUE(status.ok()) << "Propose failed: " << status.ToString();
 
   // Wait for commit on leader (up to 5 seconds)
   auto start = std::chrono::steady_clock::now();
   while (!completed && std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::steady_clock::now() - start)
-                              .count() < 5) {
+                           std::chrono::steady_clock::now() - start)
+                               .count() < 5) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(completed) << "Command was not committed on leader";
@@ -216,8 +212,9 @@ TEST_F(Cluster3NodesTest, LogReplicatedToAllNodes) {
 
   // Wait briefly for followers to replicate
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
-  
-  // Check replication count (informational only - don't fail if followers are slow)
+
+  // Check replication count (informational only - don't fail if followers are
+  // slow)
   int replicated_count = 0;
   for (size_t i = 0; i < state_machines_.size(); ++i) {
     auto commands = state_machines_[i]->GetAppliedCommands();
@@ -228,11 +225,13 @@ TEST_F(Cluster3NodesTest, LogReplicatedToAllNodes) {
       }
     }
   }
-  
-  // Log replication status but don't fail - TimerService instability affects replication
+
+  // Log replication status but don't fail - TimerService instability affects
+  // replication
   if (replicated_count < static_cast<int>(nodes_.size())) {
-    std::cout << "[INFO] Command replicated to " << replicated_count << "/" 
-              << nodes_.size() << " nodes (TimerService instability may affect replication)"
+    std::cout << "[INFO] Command replicated to " << replicated_count << "/"
+              << nodes_.size()
+              << " nodes (TimerService instability may affect replication)"
               << std::endl;
   }
 }
@@ -242,7 +241,7 @@ TEST_F(Cluster3NodesTest, RecoversAfterLeaderCrash) {
   // When a node crashes, the remaining 2 nodes should form a majority (2/2),
   // but currently the raft implementation doesn't handle this correctly.
   GTEST_SKIP() << "Requires membership change support for 2-node majority";
-  
+
   StartCluster();
   WaitForLeader();
 
@@ -261,7 +260,8 @@ TEST_F(Cluster3NodesTest, RecoversAfterLeaderCrash) {
   for (size_t i = 0; i < nodes_.size(); ++i) {
     if (nodes_[i].get() == old_leader) {
       leader_idx = i;
-      std::cout << "[INFO] Stopping node " << (i+1) << " at index " << i << std::endl;
+      std::cout << "[INFO] Stopping node " << (i + 1) << " at index " << i
+                << std::endl;
       nodes_[i]->Stop();
       nodes_[i].reset();
       break;
@@ -281,18 +281,22 @@ TEST_F(Cluster3NodesTest, RecoversAfterLeaderCrash) {
     for (size_t i = 0; i < nodes_.size(); ++i) {
       if (nodes_[i] && nodes_[i]->IsLeader()) {
         new_leader = nodes_[i].get();
-        std::cout << "[INFO] Found leader at node " << (i+1) << " ptr=" << new_leader << std::endl;
+        std::cout << "[INFO] Found leader at node " << (i + 1)
+                  << " ptr=" << new_leader << std::endl;
         break;
       }
     }
     if (new_leader != nullptr && new_leader != old_leader) {
-      std::cout << "[INFO] New leader elected after " << iterations << " iterations" << std::endl;
+      std::cout << "[INFO] New leader elected after " << iterations
+                << " iterations" << std::endl;
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
-  ASSERT_NE(new_leader, nullptr) << "No new leader elected after crash (checked " << iterations << " times)";
+  ASSERT_NE(new_leader, nullptr)
+      << "No new leader elected after crash (checked " << iterations
+      << " times)";
   EXPECT_NE(new_leader, old_leader) << "Old leader still reported as leader";
 }
 
@@ -314,8 +318,8 @@ TEST_F(Cluster3NodesTest, FollowerRedirectsPropose) {
   auto status = follower->Propose("test", [](auto) {});
 
   // Should return NotLeader error
-  EXPECT_TRUE(status.IsNotLeader()) << "Expected NotLeader, got: " 
-                                    << status.ToString();
+  EXPECT_TRUE(status.IsNotLeader())
+      << "Expected NotLeader, got: " << status.ToString();
 }
 
 TEST_F(Cluster3NodesTest, NoSplitBrain) {

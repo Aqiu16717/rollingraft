@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-
 #include <memory>
 
 #include "rollingraft/log_persister.h"

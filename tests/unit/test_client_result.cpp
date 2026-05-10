@@ -59,7 +59,7 @@ TEST(ClientResultTest, Error_OnSuccess_ReturnsOkStatus) {
 TEST(ClientResultTest, Error_OnError_ReturnsErrorStatus) {
   Status error = Status::NotLeader(1, "127.0.0.1:8001");
   ClientResult result(error);
-  
+
   const Status& status = result.error();
   EXPECT_FALSE(status.ok());
   EXPECT_TRUE(status.IsNotLeader());
@@ -83,7 +83,7 @@ TEST(ClientResultTest, ErrorMessage_OnError_ReturnsString) {
 TEST(ClientResultTest, MoveConstructor_TransfersSuccess) {
   ClientResult original("move me");
   ClientResult moved(std::move(original));
-  
+
   EXPECT_TRUE(moved.ok());
   EXPECT_EQ(moved.value(), "move me");
 }
@@ -91,7 +91,7 @@ TEST(ClientResultTest, MoveConstructor_TransfersSuccess) {
 TEST(ClientResultTest, MoveConstructor_TransfersError) {
   ClientResult original(Status::Error("move error"));
   ClientResult moved(std::move(original));
-  
+
   EXPECT_TRUE(moved.has_error());
   EXPECT_NE(moved.error_message().find("move error"), std::string::npos);
 }
@@ -101,7 +101,7 @@ TEST(ClientResultTest, MoveConstructor_TransfersError) {
 TEST(ClientResultTest, LargeValue_HandledCorrectly) {
   std::string large(1024 * 1024, 'x');  // 1MB string
   ClientResult result(large);
-  
+
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(result.value().size(), 1024 * 1024);
   EXPECT_EQ(result.value(), large);
@@ -110,7 +110,7 @@ TEST(ClientResultTest, LargeValue_HandledCorrectly) {
 TEST(ClientResultTest, SpecialCharacters_InValue) {
   std::string special = "Hello\nWorld\t!\r\n\\\"";
   ClientResult result(special);
-  
+
   EXPECT_EQ(result.value(), special);
 }
 
@@ -118,6 +118,6 @@ TEST(ClientResultTest, Unicode_InValue) {
   // UTF-8 bytes for "Hello 世界 🌍"
   std::string unicode = "Hello \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x8c\x8d";
   ClientResult result(unicode);
-  
+
   EXPECT_EQ(result.value(), unicode);
 }

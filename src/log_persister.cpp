@@ -75,8 +75,7 @@ void LogPersister::Stop() {
            total_flushed_.load(), total_flush_ops_.load());
 }
 
-void LogPersister::Append(const RaftLogEntry& entry,
-                           FlushCallback callback) {
+void LogPersister::Append(const RaftLogEntry& entry, FlushCallback callback) {
   std::unique_lock<std::mutex> lock(buffer_mutex_);
 
   if (!healthy_) {
@@ -131,9 +130,7 @@ Status LogPersister::AppendSync(const RaftLogEntry& entry,
   return future.get();
 }
 
-Status LogPersister::FlushSync() {
-  return FlushSync(std::chrono::seconds(5));
-}
+Status LogPersister::FlushSync() { return FlushSync(std::chrono::seconds(5)); }
 
 Status LogPersister::FlushSync(std::chrono::milliseconds timeout) {
   // Wait for current buffer to be flushed
@@ -386,9 +383,9 @@ Status LogPersister::CheckDiskSpace() {
   uint64_t available =
       static_cast<uint64_t>(buf.f_bavail) * static_cast<uint64_t>(buf.f_frsize);
   if (available < config_.min_disk_space_bytes) {
-    return Status::Error("Insufficient disk space: available=" +
-                         std::to_string(available) + " required=" +
-                         std::to_string(config_.min_disk_space_bytes));
+    return Status::Error(
+        "Insufficient disk space: available=" + std::to_string(available) +
+        " required=" + std::to_string(config_.min_disk_space_bytes));
   }
 #endif
   return Status::OK();

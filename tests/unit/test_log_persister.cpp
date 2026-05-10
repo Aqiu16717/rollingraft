@@ -1,10 +1,10 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <thread>
 
-#include "mock/mock_persister.h"
 #include "rollingraft/log_persister.h"
+
+#include "mock/mock_persister.h"
 
 using namespace rollingraft;
 

@@ -1,12 +1,12 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <memory>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/raft_node.h"
+
 #include "mock/mock_state_machine.h"
 
 using namespace rollingraft;
@@ -14,10 +14,8 @@ using namespace rollingraft;
 class MetricsEndpointTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    data_dirs_ = {
-        "/tmp/raft_metrics_node_1",
-        "/tmp/raft_metrics_node_2",
-        "/tmp/raft_metrics_node_3"};
+    data_dirs_ = {"/tmp/raft_metrics_node_1", "/tmp/raft_metrics_node_2",
+                  "/tmp/raft_metrics_node_3"};
 
     for (const auto& dir : data_dirs_) {
       std::filesystem::remove_all(dir);
@@ -44,8 +42,8 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   void StartCluster() {
-    std::vector<std::string> addrs = {
-        "127.0.0.1:19101", "127.0.0.1:19102", "127.0.0.1:19103"};
+    std::vector<std::string> addrs = {"127.0.0.1:19101", "127.0.0.1:19102",
+                                      "127.0.0.1:19103"};
 
     for (int i = 0; i < 3; ++i) {
       auto config = MakeConfig(i + 1, addrs[i], addrs);
@@ -53,7 +51,8 @@ class MetricsEndpointTest : public ::testing::Test {
       state_machines_.push_back(sm);
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
       auto status = nodes_[i]->Start();
-      EXPECT_TRUE(status.ok()) << "Failed to start node " << (i + 1) << ": " << status.ToString();
+      EXPECT_TRUE(status.ok())
+          << "Failed to start node " << (i + 1) << ": " << status.ToString();
     }
   }
 
@@ -173,7 +172,7 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
   auto start = std::chrono::steady_clock::now();
   while (!done && std::chrono::duration_cast<std::chrono::seconds>(
                       std::chrono::steady_clock::now() - start)
-                      .count() < 5) {
+                          .count() < 5) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 

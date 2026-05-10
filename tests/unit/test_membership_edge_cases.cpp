@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
@@ -17,9 +17,7 @@ using namespace rollingraft;
 
 class MembershipEdgeCaseTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {

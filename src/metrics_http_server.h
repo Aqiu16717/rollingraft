@@ -16,8 +16,7 @@ class MetricsRegistry;
  */
 class MetricsHttpServer {
  public:
-  MetricsHttpServer(const std::string& bind_addr,
-                    MetricsRegistry* registry);
+  MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry);
   ~MetricsHttpServer();
 
   void Start();

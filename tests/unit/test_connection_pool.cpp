@@ -3,10 +3,9 @@
  * @brief Unit tests for ConnectionPool class
  */
 
-#include <gtest/gtest.h>
-
 #include <asio.hpp>
 #include <chrono>
+#include <gtest/gtest.h>
 #include <thread>
 
 #include "client/connection_pool.h"
@@ -26,9 +25,7 @@ class ConnectionPoolTest : public ::testing::Test {
     pool_ = std::make_unique<ConnectionPool>(std::chrono::milliseconds(100));
   }
 
-  void TearDown() override {
-    pool_.reset();
-  }
+  void TearDown() override { pool_.reset(); }
 
   std::unique_ptr<ConnectionPool> pool_;
 };
@@ -61,7 +58,7 @@ TEST_F(ConnectionPoolTest, IsHealthy_AfterFailedConnect_ReturnsFalse) {
   // Try to connect to non-existent server
   auto conn = pool_->GetConnection("127.0.0.1:59997");
   EXPECT_EQ(conn, nullptr);
-  
+
   // Should still be unhealthy
   EXPECT_FALSE(pool_->IsHealthy("127.0.0.1:59997"));
 }
@@ -84,12 +81,12 @@ TEST_F(ConnectionPoolTest, CloseAll_NoConnections_NoCrash) {
 
 TEST_F(ConnectionPoolTest, GetConnection_ShortTimeout_ReturnsNull) {
   // Use very short timeout
-  auto short_timeout_pool = std::make_unique<ConnectionPool>(
-      std::chrono::milliseconds(1));
-  
+  auto short_timeout_pool =
+      std::make_unique<ConnectionPool>(std::chrono::milliseconds(1));
+
   // Try to connect to an address that won't respond
   auto conn = short_timeout_pool->GetConnection("127.0.0.1:59995");
-  
+
   // Should timeout and return null
   EXPECT_EQ(conn, nullptr);
 }
@@ -107,18 +104,18 @@ TEST_F(ConnectionPoolTest, Concurrent_IsHealthyChecks) {
       }
     });
   }
-  
+
   for (auto& t : threads) {
     t.join();
   }
-  
+
   SUCCEED();
 }
 
 TEST_F(ConnectionPoolTest, Concurrent_CloseAll) {
   // Multiple threads calling operations while CloseAll is called
   std::atomic<bool> running{true};
-  
+
   std::vector<std::thread> threads;
   for (int i = 0; i < 5; ++i) {
     threads.emplace_back([this, &running, i]() {
@@ -128,17 +125,17 @@ TEST_F(ConnectionPoolTest, Concurrent_CloseAll) {
       }
     });
   }
-  
+
   // Let threads run briefly
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  
+
   // Close all while threads are checking
   pool_->CloseAll();
-  
+
   running = false;
   for (auto& t : threads) {
     t.join();
   }
-  
+
   SUCCEED();
 }

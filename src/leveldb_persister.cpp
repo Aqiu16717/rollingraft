@@ -61,14 +61,14 @@ static const uint32_t kCrc32Table[256] = {
     0x40df0b66, 0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
     0xbdbdf21c, 0xcabac28a, 0x53b39330, 0x24b4a3a6, 0xbad03605, 0xcdd70693,
     0x54de5729, 0x23d967bf, 0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94,
-    0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
-};
+    0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d};
 
 // Compute CRC32 checksum
 static uint32_t ComputeCrc32(const char* data, size_t len) {
   uint32_t crc = 0xFFFFFFFF;
   for (size_t i = 0; i < len; ++i) {
-    crc = (crc >> 8) ^ kCrc32Table[(crc ^ static_cast<uint8_t>(data[i])) & 0xFF];
+    crc =
+        (crc >> 8) ^ kCrc32Table[(crc ^ static_cast<uint8_t>(data[i])) & 0xFF];
   }
   return ~crc;
 }
@@ -137,10 +137,10 @@ static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
     }
 
     for (size_t j = 16; j < 64; ++j) {
-      uint32_t s0 = Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^
-                    (w[j - 15] >> 3);
-      uint32_t s1 = Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^
-                    (w[j - 2] >> 10);
+      uint32_t s0 =
+          Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
+      uint32_t s1 =
+          Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
       w[j] = w[j - 16] + s0 + w[j - 7] + s1;
     }
 
@@ -186,10 +186,10 @@ static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
     }
 
     for (size_t j = 16; j < 64; ++j) {
-      uint32_t s0 = Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^
-                    (w[j - 15] >> 3);
-      uint32_t s1 = Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^
-                    (w[j - 2] >> 10);
+      uint32_t s0 =
+          Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
+      uint32_t s1 =
+          Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
       w[j] = w[j - 16] + s0 + w[j - 7] + s1;
     }
 
@@ -473,7 +473,8 @@ class LevelDBPersister : public Persister {
     batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
 
     // Save SHA-256 hash
-    batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
+    batch.Put(kSnapshotHashKey,
+              leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
     leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
     if (!s.ok()) {
@@ -483,7 +484,8 @@ class LevelDBPersister : public Persister {
     snapshot_last_index_ = last_index;
     snapshot_last_term_ = last_term;
 
-    LOG_INFO("Snapshot saved with SHA-256 hash, index={}, term={}", last_index, last_term);
+    LOG_INFO("Snapshot saved with SHA-256 hash, index={}, term={}", last_index,
+             last_term);
 
     return Status::OK();
   }
@@ -528,7 +530,8 @@ class LevelDBPersister : public Persister {
       if (std::memcmp(stored_hash.data(), computed_hash, 32) != 0) {
         LOG_ERROR("Snapshot SHA-256 mismatch! Data may be corrupted.");
         snapshot_data.clear();
-        return Status::Error("Snapshot integrity check failed: SHA-256 mismatch");
+        return Status::Error(
+            "Snapshot integrity check failed: SHA-256 mismatch");
       }
 
       LOG_DEBUG("Snapshot SHA-256 verified successfully");
@@ -652,7 +655,8 @@ class LevelDBPersister : public Persister {
 
     // Verify checksum (over: index + term + data_len + data)
     uint32_t stored_checksum;
-    std::memcpy(&stored_checksum, data + 12 + data_len, sizeof(stored_checksum));
+    std::memcpy(&stored_checksum, data + 12 + data_len,
+                sizeof(stored_checksum));
 
     uint32_t computed_checksum = ComputeCrc32(data, 12 + data_len);
     if (computed_checksum != stored_checksum) {

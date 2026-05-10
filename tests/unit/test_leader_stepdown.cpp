@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
@@ -19,9 +19,7 @@ using namespace rollingraft;
 
 class LeaderStepDownTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {
@@ -62,12 +60,11 @@ TEST_F(LeaderStepDownTest, RoleChangeCallback_CalledOnStart) {
   node_ = std::make_unique<RaftNode>(config, sm_);
 
   std::atomic<bool> callback_set{false};
-  node_->SetRoleChangeCallback(
-      [&](RaftNodeRole role, Term term) {
-        callback_set = true;
-        (void)role;
-        (void)term;
-      });
+  node_->SetRoleChangeCallback([&](RaftNodeRole role, Term term) {
+    callback_set = true;
+    (void)role;
+    (void)term;
+  });
 
   EXPECT_TRUE(node_->Start().ok());
 
@@ -81,12 +78,11 @@ TEST_F(LeaderStepDownTest, LeaderChangeCallback_CanBeSet) {
   node_ = std::make_unique<RaftNode>(config, sm_);
 
   std::atomic<bool> callback_set{false};
-  node_->SetLeaderChangeCallback(
-      [&](NodeId id, const std::string& addr) {
-        callback_set = true;
-        (void)id;
-        (void)addr;
-      });
+  node_->SetLeaderChangeCallback([&](NodeId id, const std::string& addr) {
+    callback_set = true;
+    (void)id;
+    (void)addr;
+  });
 
   EXPECT_TRUE(node_->Start().ok());
 

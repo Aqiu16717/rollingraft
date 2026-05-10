@@ -27,10 +27,10 @@ struct RaftLogEntry {
   RaftLogEntry(Index index, Term term, const std::string& command)
       : index_(index), term_(term), command_(command) {}
 
-  Index index_;         // Position in the log (1-based)
-  Term term_;           // Term when entry was created
-  std::string data_;    // Binary data payload
-  std::string command_; // Command string (legacy, prefer data_)
+  Index index_;            // Position in the log (1-based)
+  Term term_;              // Term when entry was created
+  std::string data_;       // Binary data payload
+  std::string command_;    // Command string (legacy, prefer data_)
   uint32_t checksum_ = 0;  // CRC32 checksum for data integrity
 };
 
@@ -152,7 +152,7 @@ class RaftLog {
 
  private:
   std::deque<RaftLogEntry> entries_;  // Log entries storage
-  Index start_index_ = 1;             // First valid index (may be > 1 after snapshot)
+  Index start_index_ = 1;  // First valid index (may be > 1 after snapshot)
 };
 
 }  // namespace rollingraft

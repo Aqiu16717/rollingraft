@@ -11,9 +11,9 @@
 #include <string>
 #include <thread>
 
+#include "rollingraft/persister.h"
 #include "rollingraft/raft_node.h"
 #include "rollingraft/state_machine.h"
-#include "rollingraft/persister.h"
 
 class CounterSnapshot : public rollingraft::Snapshot {
  public:
@@ -34,7 +34,8 @@ class CounterSnapshot : public rollingraft::Snapshot {
     if (offset > data_.size()) {
       return 0;
     }
-    size_t can_read = std::min(data_.size() - static_cast<size_t>(offset), length);
+    size_t can_read =
+        std::min(data_.size() - static_cast<size_t>(offset), length);
     std::memcpy(dest, data_.data() + offset, can_read);
     return can_read;
   }
@@ -165,7 +166,9 @@ int main(int argc, char** argv) {
   config.node_id = node_id;
   config.listen_addr = listen_addr;
   config.data_dir = "./data/node" + std::to_string(node_id);
-  config.persister_factory = []() { return rollingraft::CreateLevelDBPersister(); };
+  config.persister_factory = []() {
+    return rollingraft::CreateLevelDBPersister();
+  };
 
   for (int i = 3; i < argc; ++i) {
     std::string peer = argv[i];
@@ -200,13 +203,13 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Stopping Raft node..." << std::endl;
-    
+
     // Stop with timeout to avoid hanging on disk issues
-    auto stop_future = std::async(std::launch::async, [&raft_node]() {
-      raft_node.Stop();
-    });
-    
-    if (stop_future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+    auto stop_future =
+        std::async(std::launch::async, [&raft_node]() { raft_node.Stop(); });
+
+    if (stop_future.wait_for(std::chrono::seconds(5)) ==
+        std::future_status::timeout) {
       std::cerr << "Warning: Stop() timed out, forcing exit..." << std::endl;
       // Force exit if graceful shutdown fails
       std::exit(1);

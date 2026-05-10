@@ -10,8 +10,8 @@
 namespace rollingraft {
 
 ConnectionPool::ConnectionPool(std::chrono::milliseconds connect_timeout)
-    : connect_timeout_(connect_timeout),
-      work_guard_(asio::make_work_guard(io_context_)) {
+    : work_guard_(asio::make_work_guard(io_context_)),
+      connect_timeout_(connect_timeout) {
   io_thread_ = std::thread([this]() { io_context_.run(); });
 }
 
@@ -67,7 +67,7 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
     auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_context_);
     resolver->async_resolve(
         host, port_str,
-        [this, socket, resolver, promise, completed](
+        [socket, resolver, promise, completed](
             std::error_code ec,
             asio::ip::tcp::resolver::results_type endpoints) {
           if (ec) {

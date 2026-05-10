@@ -421,27 +421,24 @@ class AsioNetworkTransport : public NetworkTransport {
   void DoAccept() {
     auto new_conn = std::make_shared<TcpConnection>(io_context_);
 
-    acceptor_->async_accept(
-        new_conn->Socket(), [this, new_conn](std::error_code ec) {
-          if (!ec) {
-            new_conn->SetRequestHandler(request_handler_);
-            new_conn->Start();
-            {
-              std::lock_guard<std::mutex> lock(mutex_);
-              connections_[new_conn->GetPeerId()] = new_conn;
-            }
-            if (connection_callback_) {
-              connection_callback_(new_conn->GetPeerId(), new_conn->GetAddr(),
-                                   true);
-            }
-          } else if (running_) {
-            LOG_ERROR("Accept error: {}", ec.message());
-          }
+    acceptor_->async_accept(new_conn->Socket(), [this,
+                                                 new_conn](std::error_code ec) {
+      if (!ec) {
+        new_conn->SetRequestHandler(request_handler_);
+        new_conn->Start();
+        // Inbound connections are NOT stored in connections_ (which is
+        // for outbound peer connections only). Storing with peer_id=-1
+        // would cause overwriting and use-after-free.
+        LOG_INFO("Accepted inbound connection from {}",
+                 new_conn->Socket().remote_endpoint().address().to_string());
+      } else if (running_) {
+        LOG_ERROR("Accept error: {}", ec.message());
+      }
 
-          if (running_) {
-            DoAccept();
-          }
-        });
+      if (running_) {
+        DoAccept();
+      }
+    });
   }
 
   std::shared_ptr<TcpConnection> GetOrCreateConnection(NodeId peer_id,

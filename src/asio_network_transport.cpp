@@ -29,10 +29,18 @@ namespace rollingraft {
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  public:
   TcpConnection(asio::io_context& io_ctx, NodeId peer_id, const NodeAddr& addr)
-      : socket_(io_ctx), peer_id_(peer_id), addr_(addr), connected_(false) {}
+      : socket_(io_ctx),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(peer_id),
+        addr_(addr),
+        connected_(false) {}
 
   TcpConnection(asio::io_context& io_ctx)
-      : socket_(io_ctx), peer_id_(-1), addr_(""), connected_(false) {}
+      : socket_(io_ctx),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(-1),
+        addr_(""),
+        connected_(false) {}
 
   asio::ip::tcp::socket& Socket() { return socket_; }
 
@@ -73,7 +81,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     std::memcpy(msg->data() + 4, data.data(), data.size());
 
     // Set timeout that covers FULL request-response lifecycle
-    auto timer = std::make_shared<asio::steady_timer>(socket_.get_executor());
+    auto timer = std::make_shared<asio::steady_timer>(strand_);
     timer->expires_after(timeout);
 
     // CRITICAL: Store callback + timer BEFORE sending to avoid race condition
@@ -100,10 +108,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       self->connected_ = false;
     });
 
-    // Send message
+    // Send message (serialized through strand)
     asio::async_write(
         socket_, asio::buffer(*msg),
-        [self, msg, correlation_id](std::error_code ec, std::size_t) {
+        asio::bind_executor(strand_, [self, msg, correlation_id](
+                                         std::error_code ec, std::size_t) {
           if (ec) {
             RpcResponseCallback cb;
             std::shared_ptr<asio::steady_timer> timer;
@@ -124,7 +133,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
           }
           // On success: do NOT cancel timer — it covers response wait too
           // Response will be handled by DoRead -> HandleMessage
-        });
+        }));
   }
 
   void SetRequestHandler(RpcRequestHandler handler) {
@@ -137,7 +146,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(header_buffer_),
-        [this, self](std::error_code ec, std::size_t bytes) {
+        asio::bind_executor(strand_, [this, self](std::error_code ec,
+                                                  std::size_t bytes) {
           if (!ec) {
             LOG_INFO("Read header: peer_id={}, bytes={}", peer_id_, bytes);
           }
@@ -161,23 +171,25 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             LOG_ERROR("Invalid message length: {}", length);
             connected_ = false;
           }
-        });
+        }));
   }
 
   void DoReadBody(uint32_t /*length*/) {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(body_buffer_),
-        [this, self](std::error_code ec, std::size_t /*bytes_transferred*/) {
-          if (ec) {
-            LOG_ERROR("Read body error: {}", ec.message());
-            connected_ = false;
-            return;
-          }
+        asio::bind_executor(strand_,
+                            [this, self](std::error_code ec,
+                                         std::size_t /*bytes_transferred*/) {
+                              if (ec) {
+                                LOG_ERROR("Read body error: {}", ec.message());
+                                connected_ = false;
+                                return;
+                              }
 
-          HandleMessage();
-          DoReadHeader();
-        });
+                              HandleMessage();
+                              DoReadHeader();
+                            }));
   }
 
   void HandleMessage() {
@@ -204,12 +216,14 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       auto msg = std::make_shared<std::string>(header, 4);
       msg->append(response);
 
-      asio::async_write(socket_, asio::buffer(*msg),
-                        [self, msg](std::error_code ec, std::size_t) {
-                          if (ec) {
-                            LOG_ERROR("Write response error: {}", ec.message());
-                          }
-                        });
+      asio::async_write(
+          socket_, asio::buffer(*msg),
+          asio::bind_executor(
+              strand_, [self, msg](std::error_code ec, std::size_t) {
+                if (ec) {
+                  LOG_ERROR("Write response error: {}", ec.message());
+                }
+              }));
     } else {
       // This is a client connection, handle response by correlation_id
       auto callback = ExtractCallbackLocked(body_buffer_);
@@ -221,6 +235,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
  private:
   asio::ip::tcp::socket socket_;
+  asio::strand<asio::io_context::executor_type> strand_;
   NodeId peer_id_;
   NodeAddr addr_;
   std::atomic<bool> connected_;
@@ -405,6 +420,10 @@ class AsioNetworkTransport : public NetworkTransport {
   void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
                uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override {
+    if (!running_) {
+      callback("", false, "Transport stopped");
+      return;
+    }
     // Post to io_context for async execution on the thread pool
     asio::post(io_context_, [this, to, addr, request_data, correlation_id,
                              timeout, callback]() {

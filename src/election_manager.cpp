@@ -13,8 +13,14 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   leader_addr_.clear();
 
   // Stop leader timers
-  StopHeartbeatTimerLocked();
-  StopSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    StopHeartbeatTimerLocked();
+  }
+  {
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    StopSnapshotCheckTimerLocked();
+  }
 
   // Reset and start election timer
   ResetElectionTimerLocked();
@@ -121,10 +127,16 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   CancelElectionTimerLocked();
 
   // Start heartbeat timer
-  StartHeartbeatTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    StartHeartbeatTimerLocked();
+  }
 
   // Start auto-snapshot check timer
-  StartSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    StartSnapshotCheckTimerLocked();
+  }
 
   // Invoke callback
   if (old_role != role_ && role_change_callback_) {

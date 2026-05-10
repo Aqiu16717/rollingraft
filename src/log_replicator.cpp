@@ -165,13 +165,17 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
   // HandleAppendEntriesResponse may trigger leader step-down (election state)
   // and updates match_index_/next_index_ (replication state).
   std::lock_guard<std::mutex> lock_e(election_mtx_);
-  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;
 
   // If response term is higher, revert to Follower
   if (resp.term_ > current_term_) {
+    // Drop replication_mtx_ before calling BecomeFollowerLocked,
+    // which acquires replication_mtx_ + snapshot_mtx_ internally.
+    // election_mtx_ remains held, so the transition is serialized.
+    lock_r.unlock();
     BecomeFollowerLocked(resp.term_);
     return;
   }

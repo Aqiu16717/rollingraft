@@ -53,8 +53,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
         .Set(static_cast<double>(last_applied_));
   }
 
-  // Check if any pending reads can be completed
-  ProcessPendingReadsLocked();
+  // Check if any pending reads can be completed.
+  // Acquire membership_mtx_ (shared) + applier_mtx_ for pending_reads_.
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    std::lock_guard<std::mutex> lock_a(applier_mtx_);
+    ProcessPendingReadsLocked();
+  }
 }
 
 void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
@@ -107,7 +112,10 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
           }
 
           if (response.success_) {
-            std::lock_guard<std::mutex> lock(mtx_);
+            // Acquire locks in hierarchy order for ReadIndex ack handling.
+            std::lock_guard<std::mutex> lock_r(replication_mtx_);
+            std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+            std::lock_guard<std::mutex> lock_a(applier_mtx_);
             HandleReadIndexAckLocked(peer_id, read_id);
           }
         });
@@ -153,11 +161,11 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
         ~LockReacquireGuard() {
           if (need_relock) m.lock();
         }
-      } guard{mtx_};
-      mtx_.unlock();
+      } guard{applier_mtx_};
+      applier_mtx_.unlock();
       callback();
       guard.need_relock = false;
-      mtx_.lock();
+      applier_mtx_.lock();
     }
     // Otherwise, will be completed when log is applied
   }
@@ -197,11 +205,11 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
         ~LockReacquireGuard() {
           if (need_relock) m.lock();
         }
-      } guard{mtx_};
-      mtx_.unlock();
+      } guard{applier_mtx_};
+      applier_mtx_.unlock();
       callback();
       guard.need_relock = false;
-      mtx_.lock();
+      applier_mtx_.lock();
     }
   }
 }

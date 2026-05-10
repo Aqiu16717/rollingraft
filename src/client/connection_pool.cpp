@@ -10,9 +10,18 @@
 namespace rollingraft {
 
 ConnectionPool::ConnectionPool(std::chrono::milliseconds connect_timeout)
-    : connect_timeout_(connect_timeout) {}
+    : connect_timeout_(connect_timeout),
+      work_guard_(asio::make_work_guard(io_context_)) {
+  io_thread_ = std::thread([this]() { io_context_.run(); });
+}
 
-ConnectionPool::~ConnectionPool() { CloseAll(); }
+ConnectionPool::~ConnectionPool() {
+  CloseAll();
+  work_guard_.reset();
+  if (io_thread_.joinable()) {
+    io_thread_.join();
+  }
+}
 
 std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::GetConnection(
     const std::string& addr) {
@@ -48,34 +57,49 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
   std::string port_str = addr.substr(colon_pos + 1);
 
   try {
-    asio::io_context io_context;
-    asio::ip::tcp::resolver resolver(io_context);
-    auto endpoints = resolver.resolve(host, port_str);
+    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context_);
 
-    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    // Use promise/future for synchronous wait on async operations
+    auto promise = std::make_shared<std::promise<std::error_code>>();
+    auto future = promise->get_future();
+    auto completed = std::make_shared<std::atomic<bool>>(false);
 
-    // Connect with timeout using async operations
-    std::error_code connect_ec;
-    asio::steady_timer timer(io_context);
-    bool connect_done = false;
+    auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_context_);
+    resolver->async_resolve(
+        host, port_str,
+        [this, socket, resolver, promise, completed](
+            std::error_code ec,
+            asio::ip::tcp::resolver::results_type endpoints) {
+          if (ec) {
+            if (!completed->exchange(true)) {
+              promise->set_value(ec);
+            }
+            return;
+          }
+          asio::async_connect(
+              *socket, endpoints,
+              [promise, completed](std::error_code ec,
+                                   const asio::ip::tcp::endpoint&) {
+                if (!completed->exchange(true)) {
+                  promise->set_value(ec);
+                }
+              });
+        });
 
-    timer.expires_after(connect_timeout_);
-    timer.async_wait([&](std::error_code ec) {
-      if (!ec && !connect_done) {
-        socket->close();
+    auto timer = std::make_shared<asio::steady_timer>(io_context_);
+    timer->expires_after(connect_timeout_);
+    timer->async_wait([promise, completed](std::error_code ec) {
+      if (!ec && !completed->exchange(true)) {
+        promise->set_value(asio::error::timed_out);
       }
     });
 
-    asio::async_connect(
-        *socket, endpoints,
-        [&](std::error_code ec, const asio::ip::tcp::endpoint&) {
-          connect_done = true;
-          connect_ec = ec;
-          timer.cancel();
-        });
+    if (future.wait_for(connect_timeout_ + std::chrono::milliseconds(100)) !=
+        std::future_status::ready) {
+      return nullptr;
+    }
 
-    io_context.run();
-
+    auto connect_ec = future.get();
     if (connect_ec) {
       return nullptr;
     }

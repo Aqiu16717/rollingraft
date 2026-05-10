@@ -441,15 +441,19 @@ Status RaftNode::RaftNodeImpl::Stop() {
   }
 
   // 6. Clean up pending proposals
+  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>> callbacks_to_run;
   {
     std::lock_guard<std::mutex> lock(mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
-      ApplyResult result;
-      result.success = false;
-      result.error_message = "Node stopped";
-      proposal.callback(result);
+      callbacks_to_run.emplace_back(id, std::move(proposal.callback));
     }
     pending_proposals_.clear();
+  }
+  for (auto& [id, callback] : callbacks_to_run) {
+    ApplyResult result;
+    result.success = false;
+    result.error_message = "Node stopped";
+    callback(result);
   }
 
   state_ = NodeState::kStopped;
@@ -702,7 +706,11 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
 
   // Persist state
   if (persister_) {
-    persister_->SaveState({current_term_, voted_for_});
+    auto persist_status = persister_->SaveState({current_term_, voted_for_});
+    if (!persist_status.ok()) {
+      LOG_ERROR("Node {} failed to persist state when becoming Follower: {}",
+                server_id_, persist_status.GetMessage());
+    }
   }
 
   // Invoke callback
@@ -729,7 +737,11 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
 
   // Persist state
   if (persister_) {
-    persister_->SaveState({current_term_, voted_for_});
+    auto persist_status = persister_->SaveState({current_term_, voted_for_});
+    if (!persist_status.ok()) {
+      LOG_ERROR("Node {} failed to persist state when becoming Candidate: {}",
+                server_id_, persist_status.GetMessage());
+    }
   }
 
   // Invoke callback
@@ -1733,7 +1745,13 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
     // Persist state
     if (persister_) {
-      persister_->SaveState({current_term_, voted_for_});
+      auto persist_status = persister_->SaveState({current_term_, voted_for_});
+      if (!persist_status.ok()) {
+        LOG_ERROR("Node {} failed to persist vote: {}", server_id_,
+                  persist_status.GetMessage());
+        resp.vote_granted_ = false;
+        return;
+      }
     }
 
     LOG_INFO("Node {} voted for {} at term {}", server_id_, req.candidate_id_,
@@ -2131,8 +2149,17 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
       // Can complete immediately
       auto callback = std::move(read_req.callback);
       pending_reads_.erase(it);
+      // RAII guard ensures lock is reacquired even if callback throws
+      struct LockReacquireGuard {
+        std::mutex& m;
+        bool need_relock = true;
+        ~LockReacquireGuard() {
+          if (need_relock) m.lock();
+        }
+      } guard{mtx_};
       mtx_.unlock();
       callback();
+      guard.need_relock = false;
       mtx_.lock();
     }
     // Otherwise, will be completed when log is applied
@@ -2165,8 +2192,17 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
       }
 
       LOG_DEBUG("Completing ReadIndex {}", read_id);
+      // RAII guard ensures lock is reacquired even if callback throws
+      struct LockReacquireGuard {
+        std::mutex& m;
+        bool need_relock = true;
+        ~LockReacquireGuard() {
+          if (need_relock) m.lock();
+        }
+      } guard{mtx_};
       mtx_.unlock();
       callback();
+      guard.need_relock = false;
       mtx_.lock();
     }
   }
@@ -2202,11 +2238,16 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
     return status;
   }
 
-  // Persist log entry
+  // Persist log entry synchronously for configuration changes
   if (log_persister_) {
     auto entry_opt = log_.GetEntry(index);
     if (entry_opt) {
-      log_persister_->Append(*entry_opt);
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist AddNode log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
     }
   }
 
@@ -2255,11 +2296,16 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     return status;
   }
 
-  // Persist log entry
+  // Persist log entry synchronously for configuration changes
   if (log_persister_) {
     auto entry_opt = log_.GetEntry(index);
     if (entry_opt) {
-      log_persister_->Append(*entry_opt);
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist RemoveNode log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
     }
   }
 

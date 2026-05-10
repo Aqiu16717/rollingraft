@@ -275,8 +275,10 @@ class LevelDBPersister : public Persister {
     std::memcpy(buffer, &state.current_term, sizeof(state.current_term));
     std::memcpy(buffer + 8, &state.voted_for, sizeof(state.voted_for));
 
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
     leveldb::Slice value(buffer, sizeof(buffer));
-    leveldb::Status s = db_->Put(leveldb::WriteOptions(), kStateKey, value);
+    leveldb::Status s = db_->Put(write_options, kStateKey, value);
 
     if (!s.ok()) {
       return Status::Error("Failed to save state: " + s.ToString());

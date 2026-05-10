@@ -53,12 +53,21 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
   void Close() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (socket_.is_open()) {
-      std::error_code ec;
-      socket_.close(ec);
+    std::unordered_map<uint64_t, PendingCallback> drained;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (socket_.is_open()) {
+        std::error_code ec;
+        socket_.close(ec);
+      }
+      connected_ = false;
+      drained = std::move(pending_callbacks_);
+      pending_callbacks_.clear();
     }
-    connected_ = false;
+    for (auto& [id, pending] : drained) {
+      if (pending.timer) pending.timer->cancel();
+      if (pending.callback) pending.callback("", false, "Connection closed");
+    }
   }
 
   bool IsConnected() const { return connected_ && socket_.is_open(); }
@@ -346,11 +355,11 @@ class AsioNetworkTransport : public NetworkTransport {
       return Status::Error("Not initialized");
     }
 
-    if (running_) {
+    if (running_.load(std::memory_order_relaxed)) {
       return Status::OK();
     }
 
-    running_ = true;
+    running_.store(true, std::memory_order_relaxed);
 
     // Start io_context thread pool
     work_guard_ = std::make_unique<
@@ -382,11 +391,11 @@ class AsioNetworkTransport : public NetworkTransport {
     {
       std::lock_guard<std::mutex> lock(mutex_);
 
-      if (!running_) {
+      if (!running_.load(std::memory_order_relaxed)) {
         return Status::OK();
       }
 
-      running_ = false;
+      running_.store(false, std::memory_order_relaxed);
 
       // Stop acceptor
       if (acceptor_ && acceptor_->is_open()) {
@@ -420,7 +429,7 @@ class AsioNetworkTransport : public NetworkTransport {
   void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
                uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override {
-    if (!running_) {
+    if (!running_.load(std::memory_order_relaxed)) {
       callback("", false, "Transport stopped");
       return;
     }
@@ -450,11 +459,11 @@ class AsioNetworkTransport : public NetworkTransport {
         // would cause overwriting and use-after-free.
         LOG_INFO("Accepted inbound connection from {}",
                  new_conn->Socket().remote_endpoint().address().to_string());
-      } else if (running_) {
+      } else if (running_.load(std::memory_order_relaxed)) {
         LOG_ERROR("Accept error: {}", ec.message());
       }
 
-      if (running_) {
+      if (running_.load(std::memory_order_relaxed)) {
         DoAccept();
       }
     });
@@ -505,7 +514,7 @@ class AsioNetworkTransport : public NetworkTransport {
  private:
   mutable std::mutex mutex_;
   bool initialized_ = false;
-  bool running_ = false;
+  std::atomic<bool> running_{false};
 
   asio::io_context io_context_;
   std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>

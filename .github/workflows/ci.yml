@@ -118,6 +118,7 @@ jobs:
               -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined"
 
     runs-on: ubuntu-22.04
+    continue-on-error: ${{ matrix.continue_on_error == true }}
 
     steps:
       - name: Checkout

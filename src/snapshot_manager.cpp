@@ -157,7 +157,8 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
 // ========== Election Handling ==========
 
 void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
-  // PRECONDITION: caller holds election_mtx_, replication_mtx_, and snapshot_mtx_
+  // PRECONDITION: caller holds election_mtx_, replication_mtx_, and
+  // snapshot_mtx_
   auto& state = snapshot_sends_[peer_id];
 
   // Already in progress? Skip
@@ -296,7 +297,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
 
     if (resp.term_ > current_term_) {
       LOG_INFO(
-          "Node {}: follower {} has higher term {} vs {}, reverting to Follower",
+          "Node {}: follower {} has higher term {} vs {}, reverting to "
+          "Follower",
           server_id_, from, resp.term_, current_term_);
       BecomeFollowerLocked(resp.term_);
       return;

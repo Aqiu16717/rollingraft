@@ -667,7 +667,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 }
 
 ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
-  std::lock_guard<std::mutex> lock(config_mutex_);
+  std::shared_lock<std::shared_mutex> lock(membership_mtx_);
   return cluster_config_;
 }
 

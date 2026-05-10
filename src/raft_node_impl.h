@@ -6,6 +6,7 @@
 #include <functional>
 #include <future>
 #include <mutex>
+#include <shared_mutex>
 #include <random>
 #include <set>
 #include <span>
@@ -204,7 +205,8 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Cluster Config ==========
   ClusterConfig cluster_config_;
-  mutable std::mutex config_mutex_;  // Protects cluster_config_
+  // Note: config_mutex_ replaced by membership_mtx_ (std::shared_mutex)
+  // to allow concurrent config reads without serializing with writes.
 
   // ========== Timer State ==========
   TimerId election_timer_ = 0;
@@ -233,7 +235,23 @@ class RaftNode::RaftNodeImpl {
   std::atomic<NodeState> state_{NodeState::kInitialized};
 
   // ========== Thread Synchronization ==========
+  // Lock hierarchy (strict left-to-right):
+  //   election_mtx_ -> replication_mtx_ -> snapshot_mtx_ ->
+  //   membership_mtx_ -> applier_mtx_
+  // Violating this order WILL cause deadlocks.
+  //
+  // Cross-manager call rules:
+  // * Read-only snapshot: acquire in hierarchy order (Pattern A)
+  // * Mutations: drop caller lock, then call downstream (Pattern B)
+  // * Callbacks: always invoke outside all locks (Pattern C)
+  //
+  // TODO(Phase 6): Remove mtx_ once all call sites are migrated.
   mutable std::mutex mtx_;
+  mutable std::mutex election_mtx_;
+  mutable std::mutex replication_mtx_;
+  mutable std::mutex snapshot_mtx_;
+  mutable std::shared_mutex membership_mtx_;  // Read-heavy config access
+  mutable std::mutex applier_mtx_;
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;

@@ -110,11 +110,12 @@ class NetworkTransport {
    * @param to Target node ID
    * @param addr Target node address
    * @param request_data Serialized request data
+   * @param correlation_id Unique ID for request-response matching
    * @param timeout Maximum time to wait for response
    * @param callback Callback for response or error
    */
   virtual void SendRpc(NodeId to, const NodeAddr& addr,
-                       const std::string& request_data,
+                       const std::string& request_data, uint64_t correlation_id,
                        std::chrono::milliseconds timeout,
                        RpcResponseCallback callback) = 0;
 };

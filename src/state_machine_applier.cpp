@@ -76,6 +76,8 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     req.prev_log_index_ = next_index_[peer_id] - 1;
     req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
     req.leader_commit_ = commit_index_;
+    req.correlation_id_ =
+        next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
     // Empty entries = heartbeat
 
     std::string data;
@@ -89,7 +91,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     if (it_addr == peer_map_.end()) continue;
 
     network_->SendRpc(
-        peer_id, it_addr->second, data,
+        peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(config_.rpc_timeout_ms),
         [this, peer_id, read_id](const std::string& resp, bool success,
                                  const std::string& error) {

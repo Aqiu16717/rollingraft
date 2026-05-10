@@ -53,6 +53,8 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.prev_log_index_ = next_idx - 1;
   req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
   req.leader_commit_ = commit_index_;
+  req.correlation_id_ =
+      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   // Get log entries — only send entries that have been durably flushed
   auto [last_index, _] = log_.GetLastLogInfo();
@@ -87,7 +89,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   }
 
   network_->SendRpc(
-      peer_id, it_addr->second, data,
+      peer_id, it_addr->second, data, req.correlation_id_,
       std::chrono::milliseconds(config_.rpc_timeout_ms),
       [this, peer_id](const std::string& resp, bool success,
                       const std::string& error) {

@@ -217,6 +217,8 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   req.candidate_id_ = server_id_;
   req.last_log_index_ = last_index;
   req.last_log_term_ = last_term;
+  req.correlation_id_ =
+      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   // Serialize request
   std::string data;
@@ -236,7 +238,8 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
   Term original_term = current_term_;  // Save current term for comparison
 
   network_->SendRpc(
-      peer_id, addr, data, std::chrono::milliseconds(config_.rpc_timeout_ms),
+      peer_id, addr, data, req.correlation_id_,
+      std::chrono::milliseconds(config_.rpc_timeout_ms),
       [this, peer_id, original_term](const std::string& resp, bool success,
                                      const std::string& error) {
         if (!success) {

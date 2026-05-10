@@ -54,13 +54,13 @@ TEST_F(NetworkPartitionTest, MockNetwork_RecordsSentMessages) {
   network.Initialize("", nullptr);
   network.Start();
 
-  network.SendRpc(2, "127.0.0.1:8002", "request1",
+  network.SendRpc(2, "127.0.0.1:8002", "request1", 0,
                   std::chrono::milliseconds(1000),
                   [&](const std::string&, bool, const std::string&) {
                     callback1_called = true;
                   });
 
-  network.SendRpc(3, "127.0.0.1:8003", "request2",
+  network.SendRpc(3, "127.0.0.1:8003", "request2", 0,
                   std::chrono::milliseconds(1000),
                   [&](const std::string&, bool, const std::string&) {
                     callback2_called = true;
@@ -90,7 +90,7 @@ TEST_F(NetworkPartitionTest, MockNetwork_AutoResponse) {
   std::string response_data;
 
   network.SendRpc(
-      2, "127.0.0.1:8002", "request", std::chrono::milliseconds(1000),
+      2, "127.0.0.1:8002", "request", 0, std::chrono::milliseconds(1000),
       [&](const std::string& resp, bool success, const std::string&) {
         callback_called = true;
         if (success) response_data = resp;
@@ -117,7 +117,7 @@ TEST_F(NetworkPartitionTest, MockNetwork_PartitionedPeer) {
   bool callback2_success = false;
 
   // Send to partitioned peer
-  network.SendRpc(2, "127.0.0.1:8002", "request1",
+  network.SendRpc(2, "127.0.0.1:8002", "request1", 0,
                   std::chrono::milliseconds(1000),
                   [&](const std::string&, bool success, const std::string&) {
                     callback1_called = true;
@@ -125,7 +125,7 @@ TEST_F(NetworkPartitionTest, MockNetwork_PartitionedPeer) {
                   });
 
   // Send to normal peer
-  network.SendRpc(3, "127.0.0.1:8003", "request2",
+  network.SendRpc(3, "127.0.0.1:8003", "request2", 0,
                   std::chrono::milliseconds(1000),
                   [&](const std::string&, bool success, const std::string&) {
                     callback2_called = true;
@@ -152,7 +152,7 @@ TEST_F(NetworkPartitionTest, MockNetwork_TriggerResponse) {
   std::string received_response;
 
   network.SendRpc(
-      2, "127.0.0.1:8002", "request", std::chrono::milliseconds(1000),
+      2, "127.0.0.1:8002", "request", 0, std::chrono::milliseconds(1000),
       [&](const std::string& resp, bool success, const std::string&) {
         if (success) {
           received_response = resp;
@@ -176,9 +176,9 @@ TEST_F(NetworkPartitionTest, MockNetwork_ClearRecordedRequests) {
   network.Start();
 
   // Send some requests
-  network.SendRpc(2, "127.0.0.1:8002", "request1",
+  network.SendRpc(2, "127.0.0.1:8002", "request1", 0,
                   std::chrono::milliseconds(1000), nullptr);
-  network.SendRpc(3, "127.0.0.1:8003", "request2",
+  network.SendRpc(3, "127.0.0.1:8003", "request2", 0,
                   std::chrono::milliseconds(1000), nullptr);
 
   EXPECT_EQ(network.GetRecordedRequests().size(), 2);

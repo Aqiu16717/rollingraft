@@ -1,0 +1,7 @@
+# Compiled binaries
+rolling
+rolling_v*
+rs
+
+# asciinema recording (can be regenerated)
+rolling.cast

@@ -205,22 +205,22 @@ Status RaftNode::RaftNodeImpl::Stop() {
 }
 
 bool RaftNode::RaftNodeImpl::IsLeader() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return role_ == RaftNodeRole::LEADER;
 }
 
 RaftNodeRole RaftNode::RaftNodeImpl::GetRole() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return role_;
 }
 
 Term RaftNode::RaftNodeImpl::CurrentTerm() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return current_term_;
 }
 
 std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return leader_addr_;
 }
 
@@ -237,7 +237,9 @@ void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
 Status RaftNode::RaftNodeImpl::Propose(
     const std::string& command,
     std::function<void(const ApplyResult&)> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -269,7 +271,9 @@ Status RaftNode::RaftNodeImpl::Propose(
           LOG_WARN("Node {} log persistence failed for index {}: {}",
                    server_id_, index, s.ToString());
           if (log_persister_ && !log_persister_->IsHealthy()) {
-            std::lock_guard<std::mutex> lock(mtx_);
+            // Disk failure: step down. Runs on persister thread with no
+            // locks held, so acquiring election_mtx_ is safe.
+            std::lock_guard<std::mutex> lock_e(election_mtx_);
             if (role_ == RaftNodeRole::LEADER) {
               LOG_ERROR("Node {} stepping down due to disk failure",
                         server_id_);
@@ -278,7 +282,9 @@ Status RaftNode::RaftNodeImpl::Propose(
           }
           return;
         }
-        std::lock_guard<std::mutex> lock(mtx_);
+        // Commit/broadcast: runs on persister thread with no locks held.
+        std::lock_guard<std::mutex> lock_e(election_mtx_);
+        std::lock_guard<std::mutex> lock_r(replication_mtx_);
         if (!IsRunning()) {
           return;
         }
@@ -326,7 +332,9 @@ Status RaftNode::RaftNodeImpl::Propose(
 Status RaftNode::RaftNodeImpl::ProposeBatch(
     const std::vector<std::string>& commands,
     std::function<void(const std::vector<ApplyResult>& results)> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -362,7 +370,7 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
 
   // Register individual callbacks that feed into the batch callback.
   // The last callback to fire posts the batch completion to the timer
-  // service thread to avoid invoking user code under mtx_.
+  // service thread to avoid invoking user code under lock.
   for (size_t i = 0; i < commands.size(); ++i) {
     Index index = indices[i];
 
@@ -375,7 +383,9 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             LOG_WARN("Node {} log persistence failed for index {}: {}",
                      server_id_, index, s.ToString());
             if (log_persister_ && !log_persister_->IsHealthy()) {
-              std::lock_guard<std::mutex> lock(mtx_);
+              // Disk failure: step down. Runs on persister thread with no
+              // locks held, so acquiring election_mtx_ is safe.
+              std::lock_guard<std::mutex> lock_e(election_mtx_);
               if (role_ == RaftNodeRole::LEADER) {
                 LOG_ERROR("Node {} stepping down due to disk failure",
                           server_id_);
@@ -384,7 +394,9 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             }
             return;
           }
-          std::lock_guard<std::mutex> lock(mtx_);
+          // Commit/broadcast: runs on persister thread with no locks held.
+          std::lock_guard<std::mutex> lock_e(election_mtx_);
+          std::lock_guard<std::mutex> lock_r(replication_mtx_);
           if (!IsRunning()) {
             return;
           }

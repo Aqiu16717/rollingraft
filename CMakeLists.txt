@@ -102,6 +102,7 @@ if(TARGET leveldb)
     -Wno-unused-parameter
     -Wno-deprecated-declarations
     -Wno-unused-but-set-variable
+    -Wno-implicit-fallthrough
   )
 endif()
 

@@ -246,7 +246,7 @@ TEST_F(LevelDBPersisterTest, BinaryData) {
   // Test with binary data containing null bytes
   std::string binary_data;
   binary_data.push_back(0x00);
-  binary_data.push_back(0xFF);
+  binary_data.push_back(static_cast<char>(0xFF));
   binary_data.push_back(0x42);
   binary_data.push_back(0x00);
 
@@ -314,7 +314,7 @@ TEST_F(LevelDBPersisterTest, SnapshotCorruptionDetected) {
           if (size > 50) {
             // Corrupt some bytes in the middle
             fs.seekp(size / 2);
-            char byte = 0xFF;
+            char byte = static_cast<char>(0xFF);
             fs.write(&byte, 1);
           }
           fs.close();

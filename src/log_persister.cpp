@@ -298,7 +298,8 @@ bool LogPersister::DoFlush() {
   std::vector<RaftLogEntry> entries;
   entries.reserve(batch.size());
   for (auto& pending : batch) {
-    entries.push_back(std::move(pending.entry));
+    entries.push_back(pending.entry);  // Copy instead of move to preserve
+                                       // batch entries on retry
   }
 
   // Write to storage

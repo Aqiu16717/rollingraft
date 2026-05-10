@@ -6,7 +6,9 @@
 #pragma once
 
 #include <asio.hpp>
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -48,6 +50,10 @@ class ConnectionPool {
  private:
   std::shared_ptr<asio::ip::tcp::socket> CreateConnection(
       const std::string& addr);
+
+  asio::io_context io_context_;
+  asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
+  std::thread io_thread_;
 
   std::chrono::milliseconds connect_timeout_;
 

@@ -1,6 +1,8 @@
 #include <chrono>
 #include <gtest/gtest.h>
 #include <memory>
+#include <thread>
+#include <vector>
 
 #include "rollingraft/raft_node.h"
 
@@ -130,6 +132,69 @@ TEST_F(RaftLogReplicationTest, Persistence_LogsRestored) {
   // Note: Direct log access is internal, but we can verify no crash
   EXPECT_TRUE(node_->IsLeader() ||
               !node_->IsLeader());  // Just verify state is valid
+}
+
+TEST_F(RaftLogReplicationTest, Follower_RejectProposeBatch) {
+  auto config = MakeConfig(1, {2, 3});
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  EXPECT_TRUE(node_->Start().ok());
+
+  std::atomic<bool> callback_called{false};
+  auto status = node_->ProposeBatch(
+      {"cmd1", "cmd2"},
+      [&](const std::vector<ApplyResult>&) { callback_called = true; });
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_FALSE(callback_called);
+}
+
+TEST_F(RaftLogReplicationTest, ProposeBatch_EmptyBatch_Fails) {
+  auto config = MakeConfig(1, {2, 3});
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  EXPECT_TRUE(node_->Start().ok());
+
+  auto status = node_->ProposeBatch({}, [](const std::vector<ApplyResult>&) {});
+  EXPECT_FALSE(status.ok());
+}
+
+TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
+  // Single node cluster: node should become leader immediately on election
+  // timeout since it only needs its own vote (1 > 0)
+  // Use node id 10 to avoid port conflicts with other tests
+  auto config = MakeConfig(10, {});
+  config.election_timeout_ms = 50;  // Short timeout for fast test
+  config.heartbeat_interval_ms = 20;
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  EXPECT_TRUE(node_->Start().ok());
+
+  // Wait for election timeout to fire and node to become leader
+  // Single node needs only its own vote; timeout is randomized [50,100]ms
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  ASSERT_TRUE(node_->IsLeader())
+      << "Node should be leader after election timeout";
+
+  std::atomic<bool> completed{false};
+  std::vector<ApplyResult> batch_results;
+  auto status = node_->ProposeBatch(
+      {"cmd1", "cmd2", "cmd3"}, [&](const std::vector<ApplyResult>& results) {
+        batch_results = results;
+        completed = true;
+      });
+  ASSERT_TRUE(status.ok()) << "ProposeBatch failed: " << status.ToString();
+
+  // Wait for commit (single node = immediate quorum)
+  auto start = std::chrono::steady_clock::now();
+  while (!completed && std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now() - start)
+                               .count() < 5) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  EXPECT_TRUE(completed) << "Batch was not committed";
+  EXPECT_EQ(batch_results.size(), 3);
+  for (const auto& result : batch_results) {
+    EXPECT_TRUE(result.success);
+  }
 }
 
 // Note: Full log replication testing requires:

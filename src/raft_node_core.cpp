@@ -1,3 +1,5 @@
+#include <atomic>
+
 #include "raft_node_impl.h"
 
 using namespace rollingraft;
@@ -316,6 +318,109 @@ Status RaftNode::RaftNodeImpl::Propose(
   // it)
   if (!log_persister_) {
     BroadcastAppendEntriesLocked();
+  }
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::ProposeBatch(
+    const std::vector<std::string>& commands,
+    std::function<void(const std::vector<ApplyResult>& results)> callback) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  if (commands.empty()) {
+    return Status::Error("Empty batch");
+  }
+
+  // Append all commands to the log atomically under the same term
+  std::vector<Index> indices;
+  indices.reserve(commands.size());
+
+  for (const auto& command : commands) {
+    auto [index, status] = log_.Append(current_term_, command);
+    if (!status.ok()) {
+      // Rollback: truncate all entries appended so far in this batch
+      if (!indices.empty()) {
+        log_.TruncateSuffix(indices.front());
+      }
+      return status;
+    }
+    indices.push_back(index);
+  }
+
+  // Shared state for collecting individual results
+  auto results = std::make_shared<std::vector<ApplyResult>>(commands.size());
+  auto remaining = std::make_shared<std::atomic<size_t>>(commands.size());
+
+  // Register individual callbacks that feed into the batch callback.
+  // The last callback to fire posts the batch completion to the timer
+  // service thread to avoid invoking user code under mtx_.
+  for (size_t i = 0; i < commands.size(); ++i) {
+    Index index = indices[i];
+
+    // Persist log entry (async with callback)
+    if (log_persister_) {
+      auto entry_opt = log_.GetEntry(index);
+      if (entry_opt) {
+        log_persister_->Append(*entry_opt, [this, index](Status s) {
+          if (!s.ok()) {
+            LOG_WARN("Node {} log persistence failed for index {}: {}",
+                     server_id_, index, s.ToString());
+            if (log_persister_ && !log_persister_->IsHealthy()) {
+              std::lock_guard<std::mutex> lock(mtx_);
+              if (role_ == RaftNodeRole::LEADER) {
+                LOG_ERROR("Node {} stepping down due to disk failure",
+                          server_id_);
+                BecomeFollowerLocked(current_term_);
+              }
+            }
+            return;
+          }
+          std::lock_guard<std::mutex> lock(mtx_);
+          if (!IsRunning()) {
+            return;
+          }
+          if (role_ != RaftNodeRole::LEADER) {
+            return;
+          }
+          if (index > flushed_index_) {
+            flushed_index_ = index;
+          }
+          TryCommitLocked();
+          BroadcastAppendEntriesLocked();
+        });
+      }
+    }
+
+    PendingProposal proposal;
+    proposal.index = index;
+    proposal.callback = [i, results, remaining, callback,
+                         timer = timer_.get()](const ApplyResult& result) {
+      (*results)[i] = result;
+      if (remaining->fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        // Last one: post batch completion to timer thread (outside lock)
+        timer->SetTimeout(std::chrono::milliseconds(0),
+                          [results, callback]() { callback(*results); });
+      }
+    };
+    proposal.propose_time = std::chrono::steady_clock::now();
+    pending_proposals_[index] = std::move(proposal);
+  }
+
+  // If no persister, treat as immediately flushed and trigger replication
+  if (!log_persister_) {
+    flushed_index_ = std::max(flushed_index_, indices.back());
+    BroadcastAppendEntriesLocked();
+    // For single-node clusters, no followers will respond; try commit now
+    TryCommitLocked();
   }
 
   return Status::OK();

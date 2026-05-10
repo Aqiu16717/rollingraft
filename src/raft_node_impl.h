@@ -88,6 +88,9 @@ class RaftNode::RaftNodeImpl {
 
   Status Propose(const std::string& command,
                  std::function<void(const ApplyResult&)> callback);
+  Status ProposeBatch(
+      const std::vector<std::string>& commands,
+      std::function<void(const std::vector<ApplyResult>& results)> callback);
   ApplyResult ProposeAndWaitLocked(const std::string& command);
   Status ReadIndex(std::function<void()> callback);
 

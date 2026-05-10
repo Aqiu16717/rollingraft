@@ -80,6 +80,12 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
 
+  // Single-node cluster: already has majority, become leader immediately
+  if (vote_count_ > (peer_addrs_.size() + 1) / 2) {
+    BecomeLeaderLocked();
+    return;
+  }
+
   // Send request vote
   BroadcastRequestVoteLocked();
 

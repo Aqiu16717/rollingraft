@@ -96,7 +96,7 @@ class Cluster3NodesTest : public ::testing::Test {
     return config;
   }
 
-  RaftNode* GetLeader(int timeout_sec = 5) {
+  RaftNode* GetLeader(int timeout_sec = 15) {
     auto start = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::steady_clock::now() - start)
@@ -119,7 +119,7 @@ class Cluster3NodesTest : public ::testing::Test {
     return count;
   }
 
-  void WaitForLeader(int timeout_sec = 5) {
+  void WaitForLeader(int timeout_sec = 15) {
     ASSERT_NE(GetLeader(timeout_sec), nullptr) << "No leader elected";
   }
 

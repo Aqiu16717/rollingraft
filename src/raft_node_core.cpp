@@ -1,0 +1,573 @@
+#include "raft_node_impl.h"
+
+using namespace rollingraft;
+
+RaftNode::RaftNodeImpl::RaftNodeImpl(
+    const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
+    std::unique_ptr<NetworkTransport> network,
+    std::unique_ptr<TimerService> timer, std::unique_ptr<Persister> persister,
+    std::unique_ptr<Protocol> protocol)
+    : config_(config),
+      state_machine_(std::move(state_machine)),
+      network_(std::move(network)),
+      timer_(std::move(timer)),
+      persister_(std::move(persister)),
+      protocol_(std::move(protocol)) {
+  server_id_ = config.node_id;
+  peer_addrs_ = config.peers;
+
+  // Build peer map
+  for (const auto& addr : peer_addrs_) {
+    NodeId peer_id = ParseNodeId(addr);
+    peer_map_[peer_id] = addr;
+  }
+
+  if (!state_machine_) {
+    throw std::invalid_argument("StateMachine cannot be null");
+  }
+  if (!network_) {
+    throw std::invalid_argument("NetworkTransport cannot be null");
+  }
+  if (!timer_) {
+    throw std::invalid_argument("TimerService cannot be null");
+  }
+
+  // Initialize metrics if enabled
+  if (config.metrics_enabled) {
+    metrics_ = std::make_unique<MetricsRegistry>();
+  }
+
+  // Initialize cluster config from peers
+  cluster_config_.nodes.push_back(server_id_);
+  for (const auto& addr : peer_addrs_) {
+    NodeId peer_id = ParseNodeId(addr);
+    if (peer_id >= 0) {
+      cluster_config_.nodes.push_back(peer_id);
+    }
+  }
+  cluster_config_.version = 1;
+
+  LOG_INFO("RaftNodeImpl created for node {}", server_id_);
+}
+
+RaftNode::RaftNodeImpl::~RaftNodeImpl() {
+  if (state_ == NodeState::kRunning) {
+    Stop();
+  }
+}
+
+Status RaftNode::RaftNodeImpl::Start() {
+  NodeState expected = NodeState::kInitialized;
+  if (!state_.compare_exchange_strong(expected, NodeState::kRunning)) {
+    return Status::Error("Already started or stopped");
+  }
+
+  LOG_INFO("Starting RaftNode {} on {}...", config_.node_id,
+           config_.listen_addr);
+
+  // 1. Initialize persistence
+  if (persister_) {
+    auto status = persister_->Open(config_.data_dir);
+    if (!status.ok()) {
+      state_ = NodeState::kInitialized;
+      return status;
+    }
+
+    // Restore persistent state
+    PersistentState state;
+    if (persister_->LoadState(state).ok()) {
+      current_term_ = state.current_term;
+      voted_for_ = state.voted_for;
+      LOG_INFO("Restored state: term={}, voted_for={}", current_term_,
+               voted_for_);
+    }
+
+    // Initialize and start LogPersister
+    LogPersistenceConfig log_config;
+    log_config.batch_size = config_.max_entries_per_append;
+    log_config.batch_interval_ms = config_.heartbeat_interval_ms / 2;
+    log_config.data_dir = config_.data_dir;
+    log_persister_ =
+        std::make_unique<LogPersister>(std::move(persister_), log_config);
+    log_persister_->Start();
+
+    // Restore log entries from disk
+    auto restored_entries = log_persister_->Restore(log_.GetFirstIndex());
+    for (const auto& entry : restored_entries) {
+      log_.AppendLogEntry(entry);
+    }
+
+    // All restored entries are already durably persisted
+    flushed_index_ = log_.LastLogIndex();
+  }
+
+  // 2. Initialize network layer
+  auto handler = [this](NodeId from, const std::string& req,
+                        std::string& resp) {
+    HandleIncomingRpc(from, req, resp);
+  };
+
+  auto status = network_->Initialize(config_.listen_addr, handler);
+  if (!status.ok()) {
+    if (persister_) persister_->Close();
+    state_ = NodeState::kInitialized;
+    return status;
+  }
+
+  status = network_->Start();
+  if (!status.ok()) {
+    if (persister_) persister_->Close();
+    state_ = NodeState::kInitialized;
+    return status;
+  }
+
+  // 3. Start timer service
+  timer_->Start();
+
+  // 4. Start metrics HTTP server
+  if (metrics_ && !config_.metrics_addr.empty()) {
+    metrics_server_ = std::make_unique<MetricsHttpServer>(
+        config_.metrics_addr, metrics_.get());
+    metrics_server_->Start();
+  }
+
+  // 5. Enter Follower state
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    BecomeFollowerLocked(current_term_);
+  }
+
+  LOG_INFO("RaftNode {} started successfully", config_.node_id);
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::Stop() {
+  NodeState expected = NodeState::kRunning;
+  if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
+    if (state_ == NodeState::kStopped) {
+      return Status::OK();  // Already stopped
+    }
+    return Status::Error("Node not running");
+  }
+
+  LOG_INFO("Stopping RaftNode {}...", config_.node_id);
+
+  // 1. Stop metrics server
+  if (metrics_server_) {
+    metrics_server_->Stop();
+    metrics_server_.reset();
+  }
+
+  // 2. Stop timers (with lock)
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    CancelElectionTimerLocked();
+    StopHeartbeatTimerLocked();
+  }
+
+  // 3. Stop TimerService
+  if (timer_) {
+    timer_->Stop();
+  }
+
+  // 4. Stop NetworkTransport
+  if (network_) {
+    network_->Stop();
+  }
+
+  // 5. Stop LogPersister (flushes remaining entries)
+  if (log_persister_) {
+    log_persister_->Stop();
+  }
+
+  // 6. Clean up pending proposals
+  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>> callbacks_to_run;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& [id, proposal] : pending_proposals_) {
+      callbacks_to_run.emplace_back(id, std::move(proposal.callback));
+    }
+    pending_proposals_.clear();
+  }
+  for (auto& [id, callback] : callbacks_to_run) {
+    ApplyResult result;
+    result.success = false;
+    result.error_message = "Node stopped";
+    callback(result);
+  }
+
+  state_ = NodeState::kStopped;
+  LOG_INFO("RaftNode {} stopped", config_.node_id);
+  return Status::OK();
+}
+
+bool RaftNode::RaftNodeImpl::IsLeader() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return role_ == RaftNodeRole::LEADER;
+}
+
+RaftNodeRole RaftNode::RaftNodeImpl::GetRole() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return role_;
+}
+
+Term RaftNode::RaftNodeImpl::CurrentTerm() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return current_term_;
+}
+
+std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  return leader_addr_;
+}
+
+void RaftNode::RaftNodeImpl::SetRoleChangeCallback(
+    std::function<void(RaftNodeRole, uint64_t)> cb) {
+  role_change_callback_ = std::move(cb);
+}
+
+void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
+    std::function<void(NodeId, std::string)> cb) {
+  leader_change_callback_ = std::move(cb);
+}
+
+Status RaftNode::RaftNodeImpl::Propose(
+    const std::string& command,
+    std::function<void(const ApplyResult&)> callback) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "rejected_not_leader"}})
+          .Increment();
+    }
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Append to local log
+  auto [index, status] = log_.Append(current_term_, command);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry (async with callback)
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      log_persister_->Append(
+          *entry_opt, [this, index](Status s) {
+            if (!s.ok()) {
+              LOG_WARN("Node {} log persistence failed for index {}: {}",
+                       server_id_, index, s.ToString());
+              if (log_persister_ && !log_persister_->IsHealthy()) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                if (role_ == RaftNodeRole::LEADER) {
+                  LOG_ERROR("Node {} stepping down due to disk failure",
+                            server_id_);
+                  BecomeFollowerLocked(current_term_);
+                }
+              }
+              return;
+            }
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (!IsRunning()) {
+              return;
+            }
+            if (role_ != RaftNodeRole::LEADER) {
+              return;
+            }
+            if (index > flushed_index_) {
+              flushed_index_ = index;
+            }
+            // Retry commit now that this entry is durable
+            TryCommitLocked();
+            // Replicate to followers
+            BroadcastAppendEntriesLocked();
+          });
+    }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    flushed_index_ = std::max(flushed_index_, index);
+  }
+
+  // Record pending proposal
+  PendingProposal proposal;
+  proposal.index = index;
+  proposal.callback = std::move(callback);
+  proposal.propose_time = std::chrono::steady_clock::now();
+  pending_proposals_[index] = std::move(proposal);
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
+        .Increment();
+  }
+
+  // Trigger log replication only if no persister (otherwise callback triggers it)
+  if (!log_persister_) {
+    BroadcastAppendEntriesLocked();
+  }
+
+  return Status::OK();
+}
+
+ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
+    const std::string& command) {
+  // Use promise/future for synchronous wait
+  std::promise<ApplyResult> promise;
+  auto future = promise.get_future();
+
+  // Create callback that will set the promise value
+  auto callback = [&promise](const ApplyResult& result) {
+    promise.set_value(result);
+  };
+
+  // Append to local log
+  auto [index, status] = log_.Append(current_term_, command);
+  if (!status.ok()) {
+    ApplyResult error_result;
+    error_result.success = false;
+    error_result.error_message = status.GetMessage();
+    return error_result;
+  }
+
+  // Persist log entry synchronously before replication
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        if (log_persister_ && !log_persister_->IsHealthy()) {
+          LOG_ERROR("Node {} stepping down due to disk failure",
+                    server_id_);
+          BecomeFollowerLocked(current_term_);
+        }
+        ApplyResult error_result;
+        error_result.success = false;
+        error_result.error_message = flush_status.GetMessage();
+        return error_result;
+      }
+      flushed_index_ = std::max(flushed_index_, index);
+    }
+  } else {
+    flushed_index_ = std::max(flushed_index_, index);
+  }
+
+  // Record pending proposal
+  PendingProposal proposal;
+  proposal.index = index;
+  proposal.callback = std::move(callback);
+  proposal.propose_time = std::chrono::steady_clock::now();
+  pending_proposals_[index] = std::move(proposal);
+
+  // Trigger log replication
+  BroadcastAppendEntriesLocked();
+
+  // Unlock mutex while waiting to allow other threads to make progress
+  mtx_.unlock();
+
+  // Wait for commit and apply with timeout
+  auto wait_status = future.wait_for(std::chrono::seconds(5));
+
+  mtx_.lock();
+
+  if (wait_status == std::future_status::timeout) {
+    if (metrics_) {
+      metrics_->GetCounter("raft_propose_total", {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
+          .Increment();
+    }
+    // Remove pending proposal on timeout
+    pending_proposals_.erase(index);
+    ApplyResult timeout_result;
+    timeout_result.success = false;
+    timeout_result.error_message = "Command execution timeout";
+    return timeout_result;
+  }
+
+  return future.get();
+}
+
+Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Create pending read request
+  uint64_t read_id = next_read_id_++;
+  PendingReadIndex read_req;
+  read_req.read_index = commit_index_;
+  read_req.callback = std::move(callback);
+  read_req.start_time = std::chrono::steady_clock::now();
+  read_req.acks.insert(server_id_);  // Leader acknowledges itself
+
+  pending_reads_[read_id] = std::move(read_req);
+
+  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
+           read_id, commit_index_);
+
+  if (metrics_) {
+    metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
+
+  // Send heartbeats to confirm leadership
+  BroadcastReadIndexHeartbeatsLocked(read_id);
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node already exists
+  if (cluster_config_.Contains(id)) {
+    return Status::Error("Node already in cluster");
+  }
+
+  // Check if only changing one node at a time
+  // (This is a simplified check - in production, track pending changes)
+
+  // Create config change entry as a special command
+  std::string cmd = "CONFIG_CHANGE:ADD:" + std::to_string(id) + ":" + addr;
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry synchronously for configuration changes
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist AddNode log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
+    }
+  }
+
+  // Add to peer map immediately (optimistic)
+  peer_map_[id] = addr;
+  next_index_[id] = log_.GetLastLogInfo().first + 1;
+  match_index_[id] = 0;
+
+  LOG_INFO("Node {} proposing AddNode for {} at index {}", server_id_, id,
+           index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
+  std::lock_guard<std::mutex> lock(mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node exists
+  if (!cluster_config_.Contains(id)) {
+    return Status::Error("Node not in cluster");
+  }
+
+  // Prevent removing ourselves while leader
+  // (We should step down first)
+  if (id == server_id_) {
+    LOG_WARN("Node {} removing itself from cluster - will step down", id);
+  }
+
+  // Create config change entry
+  std::string cmd = "CONFIG_CHANGE:REMOVE:" + std::to_string(id);
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry synchronously for configuration changes
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist RemoveNode log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
+    }
+  }
+
+  // Remove from peer map immediately (optimistic)
+  peer_map_.erase(id);
+  next_index_.erase(id);
+  match_index_.erase(id);
+
+  // Remove from peer_addrs_
+  peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                                   [id, this](const NodeAddr& a) {
+                                     return ParseNodeId(a) == id;
+                                   }),
+                    peer_addrs_.end());
+
+  LOG_INFO("Node {} proposing RemoveNode for {} at index {}", server_id_, id,
+           index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  // If removing ourselves, step down
+  if (id == server_id_) {
+    BecomeFollowerLocked(current_term_);
+  }
+
+  return Status::OK();
+}
+
+ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
+  std::lock_guard<std::mutex> lock(config_mutex_);
+  return cluster_config_;
+}
+
+uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
+  if (index == 0) return 0;
+  return log_.GetLogTerm(index);
+}
+
+NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
+  // Simple parsing: extract port number as ID from address
+  // In production, should use configured node_id mapping
+  auto pos = addr.find(':');
+  if (pos == std::string::npos) return -1;
+  try {
+    return static_cast<NodeId>(std::stoi(addr.substr(pos + 1)));
+  } catch (...) {
+    return -1;
+  }
+}

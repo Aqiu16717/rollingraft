@@ -60,10 +60,14 @@ void AsioTimerService::Stop() {
     timers_copy = timers_;
   }
   for (auto& [id, timer] : timers_copy) {
-    try {
-      timer->asio_timer->cancel();
-    } catch (...) {
-      // Ignore errors during cleanup
+    if (timer && timer->asio_timer && io_ptr_) {
+      asio::post(*io_ptr_, [timer]() {
+        try {
+          timer->asio_timer->cancel();
+        } catch (...) {
+          // Ignore errors during cleanup
+        }
+      });
     }
   }
 
@@ -188,18 +192,29 @@ bool AsioTimerService::CancelTimer(TimerId timer_id) {
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(timers_mutex_);
-  auto it = timers_.find(timer_id);
-  if (it == timers_.end()) {
-    return false;
+  std::shared_ptr<Timer> timer;
+  {
+    std::lock_guard<std::mutex> lock(timers_mutex_);
+    auto it = timers_.find(timer_id);
+    if (it == timers_.end()) {
+      return false;
+    }
+    timer = it->second;
+    timers_.erase(it);
   }
 
-  try {
-    it->second->asio_timer->cancel();
-  } catch (...) {
-    // Ignore errors during cancel
+  if (timer && timer->asio_timer && io_ptr_) {
+    // Post cancel to io_context to serialize with handler execution.
+    // asio::steady_timer is not thread-safe; concurrent cancel() and
+    // expires_after()/async_wait() from different threads cause data race.
+    asio::post(*io_ptr_, [timer]() {
+      try {
+        timer->asio_timer->cancel();
+      } catch (...) {
+        // Ignore errors during cancel
+      }
+    });
   }
-  timers_.erase(it);
   return true;
 }
 

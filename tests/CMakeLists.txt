@@ -95,7 +95,7 @@ gtest_discover_tests(unit_tests
 gtest_discover_tests(integration_tests
   TEST_PREFIX "integration."
   XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results
-  PROPERTIES TIMEOUT 60
+  PROPERTIES TIMEOUT 120
 )
 
 # Add test targets

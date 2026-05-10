@@ -178,224 +178,252 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
 void RaftNode::RaftNodeImpl::HandleAppendEntries(
     const AppendEntriesRequest& req, AppendEntriesResponse& resp) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Phase 1: Election state check under election_mtx_ only.
+  {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
 
-  if (metrics_) {
-    metrics_
-        ->GetCounter("raft_appendentries_received_total",
-                     {{"node_id", std::to_string(server_id_)}})
-        .Increment();
-  }
+    if (metrics_) {
+      metrics_
+          ->GetCounter("raft_appendentries_received_total",
+                       {{"node_id", std::to_string(server_id_)}})
+          .Increment();
+    }
 
-  resp.term_ = current_term_;
-  resp.success_ = false;
-  resp.conflict_index_ = 0;
-  resp.entries_count_ = 0;
-
-  // If leader term is higher, revert to Follower
-  if (req.term_ > current_term_) {
-    BecomeFollowerLocked(req.term_);
     resp.term_ = current_term_;
-  }
+    resp.success_ = false;
+    resp.conflict_index_ = 0;
+    resp.entries_count_ = 0;
 
-  // Reject stale term leader
-  if (req.term_ < current_term_) {
-    LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_,
-              req.term_, current_term_);
-    return;
-  }
+    // If leader term is higher, revert to Follower
+    if (req.term_ > current_term_) {
+      BecomeFollowerLocked(req.term_);
+      resp.term_ = current_term_;
+    }
 
-  // Update leader info
-  leader_id_ = req.leader_id_;
-  auto it = peer_map_.find(leader_id_);
-  if (it != peer_map_.end()) {
-    leader_addr_ = it->second;
-  }
-
-  // Reset election timer
-  ResetElectionTimerLocked();
-
-  // Check if prev_log matches
-  if (req.prev_log_index_ > 0) {
-    Term prev_term = GetLogTermLocked(req.prev_log_index_);
-    if (prev_term != req.prev_log_term_) {
-      LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}",
-                server_id_, req.prev_log_index_, prev_term, req.prev_log_term_);
-      resp.conflict_index_ = req.prev_log_index_;
+    // Reject stale term leader
+    if (req.term_ < current_term_) {
+      LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_,
+                req.term_, current_term_);
       return;
     }
-  }
 
-  // Append log entries
-  if (!req.entries_.empty()) {
-    // Check for conflicts and truncate
-    for (const auto& entry : req.entries_) {
-      Term existing_term = GetLogTermLocked(entry.index_);
-      if (existing_term != 0 && existing_term != entry.term_) {
-        LOG_INFO("Node {} truncating log from index {}", server_id_,
-                 entry.index_);
-        log_.TruncateSuffix(entry.index_);
-        break;
+    // Update leader info
+    leader_id_ = req.leader_id_;
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      auto it = peer_map_.find(leader_id_);
+      if (it != peer_map_.end()) {
+        leader_addr_ = it->second;
       }
     }
 
-    // Append new entries
-    for (const auto& entry : req.entries_) {
-      auto [idx, status] = log_.Append(entry.term_, entry.data_);
-      (void)idx;
-      if (!status.ok()) {
-        LOG_ERROR("Node {} failed to append entry: {}", server_id_,
-                  status.ToString());
+    // Reset election timer
+    ResetElectionTimerLocked();
+  }
+
+  // Phase 2: Replication work.  ApplyCommittedLocked() acquires
+  // membership_mtx_ + applier_mtx_ internally; we must not hold them here
+  // to avoid double-lock deadlock.
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+
+    // Check if prev_log matches
+    if (req.prev_log_index_ > 0) {
+      Term prev_term = GetLogTermLocked(req.prev_log_index_);
+      if (prev_term != req.prev_log_term_) {
+        LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}",
+                  server_id_, req.prev_log_index_, prev_term, req.prev_log_term_);
+        resp.conflict_index_ = req.prev_log_index_;
         return;
       }
-
-      // Persist log entry (async)
-      if (log_persister_) {
-        log_persister_->Append(entry);
-      }
     }
-    resp.entries_count_ = req.entries_.size();
-    LOG_INFO("Node {} appended {} entries", server_id_, req.entries_.size());
-  }
 
-  // Update commit_index
-  if (req.leader_commit_ > commit_index_) {
-    auto [last_index, _] = log_.GetLastLogInfo();
-    commit_index_ = std::min(req.leader_commit_, last_index);
-    ApplyCommittedLocked();
-  }
+    // Append log entries
+    if (!req.entries_.empty()) {
+      // Check for conflicts and truncate
+      for (const auto& entry : req.entries_) {
+        Term existing_term = GetLogTermLocked(entry.index_);
+        if (existing_term != 0 && existing_term != entry.term_) {
+          LOG_INFO("Node {} truncating log from index {}", server_id_,
+                   entry.index_);
+          log_.TruncateSuffix(entry.index_);
+          break;
+        }
+      }
 
-  resp.success_ = true;
+      // Append new entries
+      for (const auto& entry : req.entries_) {
+        auto [idx, status] = log_.Append(entry.term_, entry.data_);
+        (void)idx;
+        if (!status.ok()) {
+          LOG_ERROR("Node {} failed to append entry: {}", server_id_,
+                    status.ToString());
+          return;
+        }
+
+        // Persist log entry (async)
+        if (log_persister_) {
+          log_persister_->Append(entry);
+        }
+      }
+      resp.entries_count_ = req.entries_.size();
+      LOG_INFO("Node {} appended {} entries", server_id_, req.entries_.size());
+    }
+
+    // Update commit_index
+    if (req.leader_commit_ > commit_index_) {
+      auto [last_index, _] = log_.GetLastLogInfo();
+      commit_index_ = std::min(req.leader_commit_, last_index);
+      ApplyCommittedLocked();
+    }
+
+    resp.success_ = true;
+  }
 }
 
 void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Phase 1: Election state check under election_mtx_ only.
+  {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
 
-  resp.term_ = current_term_;
-
-  // Term check: reject stale leader
-  if (req.term_ < current_term_) {
-    LOG_DEBUG("Node {} reject InstallSnapshot: req.term {} < {}", server_id_,
-              req.term_, current_term_);
-    return;
-  }
-
-  // Higher term: revert to follower
-  if (req.term_ > current_term_) {
-    LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
-             current_term_, req.term_);
-    BecomeFollowerLocked(req.term_);
     resp.term_ = current_term_;
-  }
 
-  // Update leader info
-  leader_id_ = req.leader_id_;
-  auto it = peer_map_.find(leader_id_);
-  if (it != peer_map_.end()) {
-    leader_addr_ = it->second;
-  }
-
-  // Reset election timer (we have a valid leader)
-  ResetElectionTimerLocked();
-
-  if (metrics_) {
-    metrics_
-        ->GetCounter("raft_snapshots_received_total",
-                     {{"node_id", std::to_string(server_id_)}})
-        .Increment();
-  }
-
-  // Handle snapshot chunk
-  if (req.offset_ == 0) {
-    // New snapshot transfer, clear buffer
-    snapshot_temp_data_.clear();
-    LOG_INFO("Node {} starting snapshot receive: index={}, term={}", server_id_,
-             req.last_included_index_, req.last_included_term_);
-  }
-
-  // Append chunk data
-  snapshot_temp_data_.append(req.data_.data(), req.data_.size());
-  LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}",
-            server_id_, req.offset_, req.data_.size(), req.done_);
-
-  // Final chunk: restore state machine
-  if (req.done_) {
-    LOG_INFO(
-        "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-        server_id_, snapshot_temp_data_.size(), req.last_included_index_,
-        req.last_included_term_);
-
-    // Restore state machine
-    std::vector<uint8_t> snapshot_bytes(snapshot_temp_data_.begin(),
-                                        snapshot_temp_data_.end());
-
-    if (!state_machine_->Restore(snapshot_bytes)) {
-      LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
-      // Clear buffer and wait for leader to retry
-      snapshot_temp_data_.clear();
+    // Term check: reject stale leader
+    if (req.term_ < current_term_) {
+      LOG_DEBUG("Node {} reject InstallSnapshot: req.term {} < {}", server_id_,
+                req.term_, current_term_);
       return;
     }
 
-    // Update log: discard all entries covered by snapshot
-    uint64_t old_first_index = log_.GetFirstIndex();
-    log_.SetStartIndex(req.last_included_index_ + 1);
-    last_snapshot_index_ = req.last_included_index_;
+    // Higher term: revert to follower
+    if (req.term_ > current_term_) {
+      LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
+               current_term_, req.term_);
+      BecomeFollowerLocked(req.term_);
+      resp.term_ = current_term_;
+    }
 
-    // Truncate persisted log
-    if (log_persister_) {
-      auto status =
-          log_persister_->TruncatePrefix(req.last_included_index_ + 1);
-      if (!status.ok()) {
-        LOG_WARN("Node {} failed to truncate persisted log after snapshot: {}",
-                 server_id_, status.ToString());
+    // Update leader info
+    leader_id_ = req.leader_id_;
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      auto it = peer_map_.find(leader_id_);
+      if (it != peer_map_.end()) {
+        leader_addr_ = it->second;
       }
     }
+
+    // Reset election timer (we have a valid leader)
+    ResetElectionTimerLocked();
 
     if (metrics_) {
       metrics_
-          ->GetCounter("raft_log_compactions_total",
-                       {{"node_id", std::to_string(server_id_)},
-                        {"trigger", "snapshot"}})
+          ->GetCounter("raft_snapshots_received_total",
+                       {{"node_id", std::to_string(server_id_)}})
           .Increment();
-      if (req.last_included_index_ >= old_first_index) {
-        uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+    }
+  }
+
+  // Phase 2: Snapshot + replication + applier work.
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    std::lock_guard<std::mutex> lock_a(applier_mtx_);
+
+    // Handle snapshot chunk
+    if (req.offset_ == 0) {
+      // New snapshot transfer, clear buffer
+      snapshot_temp_data_.clear();
+      LOG_INFO("Node {} starting snapshot receive: index={}, term={}", server_id_,
+               req.last_included_index_, req.last_included_term_);
+    }
+
+    // Append chunk data
+    snapshot_temp_data_.append(req.data_.data(), req.data_.size());
+    LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}",
+              server_id_, req.offset_, req.data_.size(), req.done_);
+
+    // Final chunk: restore state machine
+    if (req.done_) {
+      LOG_INFO(
+          "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
+          server_id_, snapshot_temp_data_.size(), req.last_included_index_,
+          req.last_included_term_);
+
+      // Restore state machine
+      std::vector<uint8_t> snapshot_bytes(snapshot_temp_data_.begin(),
+                                          snapshot_temp_data_.end());
+
+      if (!state_machine_->Restore(snapshot_bytes)) {
+        LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
+        // Clear buffer and wait for leader to retry
+        snapshot_temp_data_.clear();
+        return;
+      }
+
+      // Update log: discard all entries covered by snapshot
+      uint64_t old_first_index = log_.GetFirstIndex();
+      log_.SetStartIndex(req.last_included_index_ + 1);
+      last_snapshot_index_ = req.last_included_index_;
+
+      // Truncate persisted log
+      if (log_persister_) {
+        auto status =
+            log_persister_->TruncatePrefix(req.last_included_index_ + 1);
+        if (!status.ok()) {
+          LOG_WARN("Node {} failed to truncate persisted log after snapshot: {}",
+                   server_id_, status.ToString());
+        }
+      }
+
+      if (metrics_) {
         metrics_
-            ->GetCounter("raft_log_entries_compacted_total",
-                         {{"node_id", std::to_string(server_id_)}})
-            .Increment(compacted);
+            ->GetCounter("raft_log_compactions_total",
+                         {{"node_id", std::to_string(server_id_)},
+                          {"trigger", "snapshot"}})
+            .Increment();
+        if (req.last_included_index_ >= old_first_index) {
+          uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+          metrics_
+              ->GetCounter("raft_log_entries_compacted_total",
+                           {{"node_id", std::to_string(server_id_)}})
+              .Increment(compacted);
+        }
       }
-    }
 
-    // Update indices
-    last_applied_ = req.last_included_index_;
-    commit_index_ = req.last_included_index_;
+      // Update indices
+      last_applied_ = req.last_included_index_;
+      commit_index_ = req.last_included_index_;
 
-    // Persist snapshot if persister available
-    if (persister_) {
-      auto status = persister_->SaveSnapshot(snapshot_temp_data_,
-                                             req.last_included_index_,
-                                             req.last_included_term_);
-      if (!status.ok()) {
-        LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
-                 status.ToString());
-        // Non-fatal: we can continue, snapshot will be resent if needed
+      // Persist snapshot if persister available
+      if (persister_) {
+        auto status = persister_->SaveSnapshot(snapshot_temp_data_,
+                                               req.last_included_index_,
+                                               req.last_included_term_);
+        if (!status.ok()) {
+          LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
+                   status.ToString());
+          // Non-fatal: we can continue, snapshot will be resent if needed
+        }
       }
+
+      // Clear buffer
+      snapshot_temp_data_.clear();
+
+      LOG_INFO(
+          "Node {} successfully restored from snapshot, log start={}, "
+          "commit_index={}",
+          server_id_, log_.GetFirstIndex(), commit_index_);
     }
-
-    // Clear buffer
-    snapshot_temp_data_.clear();
-
-    LOG_INFO(
-        "Node {} successfully restored from snapshot, log start={}, "
-        "commit_index={}",
-        server_id_, log_.GetFirstIndex(), commit_index_);
   }
 }
 
 void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
                                                  ClientResponse& resp) {
-  mtx_.lock();
+  // Bridge pattern: election_mtx_ -> replication_mtx_
+  std::unique_lock<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
 
   // Check if we are the leader
   if (role_ != RaftNodeRole::LEADER) {
@@ -403,7 +431,6 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.error = "Not leader";
     resp.leader_id = leader_id_;
     resp.leader_addr = leader_addr_;
-    mtx_.unlock();
     return;
   }
 
@@ -412,7 +439,6 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     // TODO: Implement linearizable read using ReadIndex
     resp.success = false;
     resp.error = "Read not yet implemented";
-    mtx_.unlock();
     return;
   }
 
@@ -429,7 +455,6 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.leader_addr = config_.listen_addr;
     LOG_INFO("Client {} seq {} is old (last={}), returning cached result",
              req.client_id, req.seq, session.last_seq);
-    mtx_.unlock();
     return;
   }
 
@@ -442,19 +467,23 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.leader_addr = config_.listen_addr;
     LOG_INFO("Client {} seq {} is duplicate, returning cached result",
              req.client_id, req.seq);
-    mtx_.unlock();
     return;
   }
 
-  // Case 3: New request (seq > last_seq) - execute normally
-  auto result = ProposeAndWaitLocked(req.command);
+  // Case 3: New request (seq > last_seq) - execute normally.
+  // Release election_mtx_ before waiting so that AppendEntries responses
+  // (which need election_mtx_) can make progress and trigger commit.
+  lock_e.unlock();
+  auto result = ProposeAndWaitLocked(req.command, lock_r);
+  lock_e.lock();
 
   // Update session cache if successful
+  auto& session2 = client_sessions_[req.client_id];
   if (result.success) {
-    session.last_seq = req.seq;
-    session.last_response = result.response;
-    session.last_index = result.applied_index;
-    session.last_term = current_term_;
+    session2.last_seq = req.seq;
+    session2.last_response = result.response;
+    session2.last_index = result.applied_index;
+    session2.last_term = current_term_;
   }
 
   resp.success = result.success;
@@ -463,6 +492,4 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
   resp.last_applied_index = result.applied_index;
   resp.leader_id = server_id_;
   resp.leader_addr = config_.listen_addr;
-
-  mtx_.unlock();
 }

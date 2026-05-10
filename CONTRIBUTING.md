@@ -160,44 +160,66 @@ class Example {
 
 ## Commit Message Guidelines
 
-We follow [Conventional Commits](https://www.conventionalcommits.org/) specification.
+We follow a **Linux kernel inspired** commit message style combined with
+[Conventional Commits](https://www.conventionalcommits.org/) type prefixes.
+The full specification is in `doc/commit-message-convention.md`.
+
+### Core Principle: Why > What
+
+The code diff shows *what* changed. The commit message must explain
+*why* the change is necessary, *what problem* it solves, and *what
+happens if we do not apply it*.
 
 ### Format
 
 ```
-<type>(<scope>): <subject>
+type: Imperative summary under 50 chars
 
-<body>
+* Problem: what triggered this change
+* Impact: who is affected and how severely
+* Solution: high-level approach (not line-by-line)
+* Side effects: any behavioural or API change
+* Testing: verification results (test counts, sanitizer output)
 
-<footer>
+Fixes: #<issue_number> (if applicable)
 ```
 
-### Types
+### Rules
 
-| Type | Description |
-|------|-------------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation changes |
-| `style` | Code style changes (formatting, no logic change) |
-| `refactor` | Code refactoring |
-| `perf` | Performance improvements |
-| `test` | Adding or updating tests |
-| `chore` | Build, dependencies, tooling |
+* **Subject line**: imperative mood, 50 chars max, no trailing period
+* **Type prefix**: `feat`, `fix`, `refactor`, `perf`, `docs`, `build`, `ci`, `style`, `test`, `chore`
+* **Body**: explain *why*, not just *what*; use `*` for bullet points
+* **Language**: all commit messages must be in English
+* **Footer**: reference issues with `Fixes: #<number>` or `Refs: #<number>`
 
-### Examples
+### Quick Examples
 
+**Good**:
 ```
-feat: add ReadIndex for linearizable reads
+fix: repair deadlock when Stop() holds mutex during callback
 
-* Leader sends heartbeats to confirm authority
-* Callback triggered when read is safe to execute
-* Add unit tests for read index flow
+* Problem: Stop() iterates pending_proposals_ while holding mtx_,
+  then directly invokes user-provided callbacks. If the callback
+  re-enters RaftNode, mtx_ is already held -> deadlock.
 
-fix: handle race condition in log replication
+* Solution: Collect callbacks into a local vector, release mtx_,
+  then invoke callbacks outside the critical section.
 
-Prevent concurrent access to pending_reads_ queue
-when commit_index advances during snapshot install.
+* Testing: 167/167 unit tests pass. TSan clean.
+
+Fixes: #4
+```
+
+**Bad** (vague, no why, no testing):
+```
+fixed some bugs and changed code
+
+- fixed the thing Tom found
+- updated raft_node.cpp
+```
+
+For the full specification, examples, and checklist, see
+`doc/commit-message-convention.md`.
 
 docs: update README with membership change API
 

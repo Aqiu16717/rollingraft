@@ -39,6 +39,7 @@ enum class RaftMessageType : int8_t {
 /** Base class for all Raft requests. */
 struct RaftRequest {
   RaftMessageType type_;
+  uint64_t correlation_id_ = 0;  // Unique ID for request-response matching
 
   RaftRequest() = delete;
   explicit RaftRequest(RaftMessageType type) : type_(type) {}
@@ -48,6 +49,7 @@ struct RaftRequest {
 /** Base class for all Raft responses. */
 struct RaftResponse {
   RaftMessageType type_;
+  uint64_t correlation_id_ = 0;  // Mirrors the request's correlation ID
 
   RaftResponse() = default;
   explicit RaftResponse(RaftMessageType type) : type_(type) {}

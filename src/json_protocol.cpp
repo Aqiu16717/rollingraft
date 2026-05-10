@@ -64,6 +64,8 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
                                       std::string& output) const {
   try {
     nlohmann::json j;
+    j["correlation_id"] = req.correlation_id_;
+
     switch (req.type_) {
       case RaftMessageType::KRequestVoteRequest: {
         const RequestVoteRequest& vote_req =
@@ -144,6 +146,8 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
       return Status::ProtocolError("Unknown request type: " +
                                    std::to_string(type_id));
     }
+
+    req.correlation_id_ = j.value("correlation_id", 0);
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteRequest: {
@@ -247,6 +251,8 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
   try {
     nlohmann::json j;
 
+    j["correlation_id"] = res.correlation_id_;
+
     switch (res.type_) {
       case RaftMessageType::KRequestVoteResponse: {
         const RequestVoteResponse& vote_res =
@@ -318,6 +324,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
       return Status::ProtocolError("Unknown response type: " +
                                    std::to_string(type_id));
     }
+
+    res.correlation_id_ = j.value("correlation_id", 0);
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteResponse: {

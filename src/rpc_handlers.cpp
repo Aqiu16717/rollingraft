@@ -30,6 +30,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
           return;
         }
         RequestVoteResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
         HandleRequestVote(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -48,6 +49,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
           return;
         }
         AppendEntriesResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
         HandleAppendEntries(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -66,6 +68,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
           return;
         }
         InstallSnapshotResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
         HandleInstallSnapshot(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -84,6 +87,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
           return;
         }
         ClientResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
         HandleClientRequest(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {

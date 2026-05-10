@@ -32,7 +32,7 @@ class MockNetworkTransport : public NetworkTransport {
   Status Stop() override;
 
   void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
-               std::chrono::milliseconds timeout,
+               uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override;
 
   // Test control interface

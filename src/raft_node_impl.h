@@ -231,6 +231,7 @@ class RaftNode::RaftNodeImpl {
     kStopped = 3
   };
   std::atomic<NodeState> state_{NodeState::kInitialized};
+  std::atomic<uint64_t> next_correlation_id_{1};
 
   // ========== Thread Synchronization ==========
   mutable std::mutex mtx_;

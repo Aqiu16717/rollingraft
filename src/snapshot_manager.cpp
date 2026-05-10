@@ -217,6 +217,8 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   req.offset_ = static_cast<uint32_t>(state.offset);
   req.data_ = std::move(buffer);
   req.done_ = is_last;
+  req.correlation_id_ =
+      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   // Serialize
   std::string data;
@@ -247,7 +249,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
       server_id_, peer_id, state.offset, bytes_read, is_last);
 
   // Send
-  network_->SendRpc(peer_id, it_addr->second, data,
+  network_->SendRpc(peer_id, it_addr->second, data, req.correlation_id_,
                     std::chrono::milliseconds(config_.rpc_timeout_ms),
                     [this, peer_id](const std::string& resp, bool success,
                                     const std::string& error) {

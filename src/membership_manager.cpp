@@ -18,7 +18,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     NodeId id = std::stoll(cmd.substr(pos1, pos2 - pos1));
     NodeAddr addr = cmd.substr(pos2 + 1);
 
-    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
 
     // Add to config if not already present
     if (!cluster_config_.Contains(id)) {
@@ -46,7 +46,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     size_t pos = strlen("CONFIG_CHANGE:REMOVE:");
     NodeId id = std::stoll(cmd.substr(pos));
 
-    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
 
     // Remove from config
     cluster_config_.nodes.erase(std::remove(cluster_config_.nodes.begin(),

@@ -21,13 +21,15 @@ COPY . .
 # Initialize submodules (if needed)
 RUN git submodule update --init --recursive || true
 
-# Build with all optimizations
+# Build with all optimizations and install to a staging prefix
 RUN cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=ON \
     -DBUILD_EXAMPLES=ON \
     -DBUILD_BENCHMARK=ON \
-    && cmake --build build -j$(nproc)
+    -DCMAKE_INSTALL_PREFIX=/build/install \
+    && cmake --build build -j$(nproc) \
+    && cmake --install build
 
 # Runtime stage
 FROM ubuntu:22.04 AS runtime
@@ -43,14 +45,12 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy binaries from builder
-COPY --from=builder /build/build/librollingraft.a /app/lib/
-COPY --from=builder /build/build/example/example_counter_server /app/bin/
-COPY --from=builder /build/build/example/example_counter_client /app/bin/
-COPY --from=builder /build/build/tests/unit_tests /app/bin/
-COPY --from=builder /build/build/tests/integration_tests /app/bin/
-COPY --from=builder /build/build/benchmark/benchmark_client /app/bin/
-COPY --from=builder /build/build/benchmark/benchmark_latency_curve /app/bin/
+# Copy installed binaries and libraries from builder
+COPY --from=builder /build/install/ /app/
+
+# Copy wait-for-cluster helper script
+COPY --from=builder /build/scripts/wait-for-cluster.sh /app/bin/
+RUN chmod +x /app/bin/wait-for-cluster.sh
 
 # Create data directory
 RUN mkdir -p /app/data

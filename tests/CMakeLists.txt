@@ -80,6 +80,11 @@ target_link_libraries(integration_tests
     ${GTEST_MAIN_LIBRARIES}
 )
 
+# Install test binaries
+install(TARGETS unit_tests integration_tests
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 # Register tests
 include(GoogleTest)
 gtest_discover_tests(unit_tests

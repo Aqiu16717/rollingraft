@@ -12,9 +12,7 @@ MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr,
                                      MetricsRegistry* registry)
     : bind_addr_(bind_addr), registry_(registry) {}
 
-MetricsHttpServer::~MetricsHttpServer() {
-  Stop();
-}
+MetricsHttpServer::~MetricsHttpServer() { Stop(); }
 
 void MetricsHttpServer::Start() {
   if (running_.exchange(true)) {
@@ -66,9 +64,7 @@ void MetricsHttpServer::Stop() {
   }
 }
 
-void MetricsHttpServer::Run() {
-  io_ctx_->run();
-}
+void MetricsHttpServer::Run() { io_ctx_->run(); }
 
 void MetricsHttpServer::DoAccept() {
   if (!running_) return;
@@ -88,7 +84,7 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
   socket_ptr->async_read_some(
       asio::buffer(*buffer),
       [this, buffer, socket_ptr](std::error_code ec,
-                                  std::size_t bytes) mutable {
+                                 std::size_t bytes) mutable {
         if (ec) return;
 
         std::string request(buffer->data(), bytes);
@@ -96,8 +92,7 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
         std::string response_body;
         std::string status_line;
 
-        if (request.find("GET /metrics") != std::string::npos &&
-            registry_) {
+        if (request.find("GET /metrics") != std::string::npos && registry_) {
           response_body = registry_->FormatPrometheus();
           status_line = "HTTP/1.1 200 OK\r\n";
         } else {
@@ -114,14 +109,13 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
         response << response_body;
 
         auto resp_str = std::make_shared<std::string>(response.str());
-        asio::async_write(
-            *socket_ptr, asio::buffer(*resp_str),
-            [resp_str, socket_ptr](std::error_code, std::size_t) {
-              std::error_code close_ec;
-              socket_ptr->shutdown(asio::ip::tcp::socket::shutdown_both,
-                                   close_ec);
-              socket_ptr->close(close_ec);
-            });
+        asio::async_write(*socket_ptr, asio::buffer(*resp_str),
+                          [resp_str, socket_ptr](std::error_code, std::size_t) {
+                            std::error_code close_ec;
+                            socket_ptr->shutdown(
+                                asio::ip::tcp::socket::shutdown_both, close_ec);
+                            socket_ptr->close(close_ec);
+                          });
       });
 }
 

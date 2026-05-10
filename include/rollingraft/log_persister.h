@@ -106,8 +106,9 @@ class LogPersister {
    * @param timeout Maximum time to wait for flush
    * @return Status indicating success or failure
    */
-  Status AppendSync(const RaftLogEntry& entry,
-                    std::chrono::milliseconds timeout = std::chrono::seconds(5));
+  Status AppendSync(
+      const RaftLogEntry& entry,
+      std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
   /**
    * Force flush all buffered entries to disk.

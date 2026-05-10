@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
@@ -17,9 +17,7 @@ using namespace rollingraft;
 
 class SnapshotTransferTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {
@@ -74,12 +72,10 @@ TEST_F(SnapshotTransferTest, StateMachine_RestoreFromSnapshot) {
   auto config = MakeConfig(1, {2, 3});
 
   // Create some state in state machine
-  sm_->Apply(std::span<const uint8_t>(
-                 reinterpret_cast<const uint8_t*>("cmd1"), 4),
-             1);
-  sm_->Apply(std::span<const uint8_t>(
-                 reinterpret_cast<const uint8_t*>("cmd2"), 4),
-             2);
+  sm_->Apply(
+      std::span<const uint8_t>(reinterpret_cast<const uint8_t*>("cmd1"), 4), 1);
+  sm_->Apply(
+      std::span<const uint8_t>(reinterpret_cast<const uint8_t*>("cmd2"), 4), 2);
 
   // Create snapshot
   auto snapshot = sm_->CreateSnapshot();
@@ -100,8 +96,7 @@ TEST_F(SnapshotTransferTest, Persister_SnapshotSaveAndLoad) {
 
   // Save snapshot
   std::string snapshot_data = "test_snapshot_data";
-  auto status =
-      persister->SaveSnapshot(snapshot_data, 100, 5);
+  auto status = persister->SaveSnapshot(snapshot_data, 100, 5);
   EXPECT_TRUE(status.ok());
 
   // Load snapshot

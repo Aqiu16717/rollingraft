@@ -12,10 +12,9 @@
 
 #pragma once
 
-#include <spdlog/fmt/fmt.h>
-
 #include <memory>
 #include <mutex>
+#include <spdlog/fmt/fmt.h>
 #include <string>
 
 namespace rollingraft {
@@ -95,36 +94,36 @@ class LoggerFactory {
  * Internal macro for logging with formatting.
  * Use LOG_TRACE, LOG_DEBUG, etc. instead of calling directly.
  */
-#define LOG_MESSAGE(level, fmt_str, ...)                       \
-  do {                                                         \
-    Logger* logger = LoggerFactory::Instance().GetLogger();    \
-    if (logger && logger->GetLogLevel() <= level) {            \
-      logger->Log(level, fmt::format(fmt_str __VA_OPT__(,) __VA_ARGS__)); \
-    }                                                          \
+#define LOG_MESSAGE(level, fmt_str, ...)                                   \
+  do {                                                                     \
+    Logger* logger = LoggerFactory::Instance().GetLogger();                \
+    if (logger && logger->GetLogLevel() <= level) {                        \
+      logger->Log(level, fmt::format(fmt_str __VA_OPT__(, ) __VA_ARGS__)); \
+    }                                                                      \
   } while (0)
 
 /** Log a TRACE message. */
 #define LOG_TRACE(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::TRACE, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::TRACE, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 /** Log a DEBUG message. */
 #define LOG_DEBUG(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::DEBUG, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::DEBUG, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 /** Log an INFO message. */
 #define LOG_INFO(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::INFO, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::INFO, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 /** Log a WARN message. */
 #define LOG_WARN(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::WARN, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::WARN, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 /** Log an ERROR message. */
 #define LOG_ERROR(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::ERROR, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::ERROR, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 /** Log a FATAL message. */
 #define LOG_FATAL(fmt_str, ...) \
-  LOG_MESSAGE(rollingraft::LogLevel::FATAL, fmt_str __VA_OPT__(,) __VA_ARGS__)
+  LOG_MESSAGE(rollingraft::LogLevel::FATAL, fmt_str __VA_OPT__(, ) __VA_ARGS__)
 
 }  // namespace rollingraft

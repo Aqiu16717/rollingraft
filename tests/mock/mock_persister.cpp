@@ -122,9 +122,7 @@ void MockPersister::InjectFailure(const std::string& error_msg) {
   failure_msg_ = error_msg;
 }
 
-void MockPersister::ClearFailure() {
-  failure_msg_.clear();
-}
+void MockPersister::ClearFailure() { failure_msg_.clear(); }
 
 size_t MockPersister::EntryCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -139,8 +137,6 @@ void MockPersister::Reset() {
   write_count_ = 0;
 }
 
-bool MockPersister::CheckFailure() {
-  return !failure_msg_.empty();
-}
+bool MockPersister::CheckFailure() { return !failure_msg_.empty(); }
 
 }  // namespace rollingraft

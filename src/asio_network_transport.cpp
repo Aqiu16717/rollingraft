@@ -358,8 +358,7 @@ class AsioNetworkTransport : public NetworkTransport {
 
         std::error_code ec;
         socket.connect(endpoint, ec);
-        if (ec == asio::error::in_progress ||
-            ec == asio::error::would_block) {
+        if (ec == asio::error::in_progress || ec == asio::error::would_block) {
           fd_set write_fds;
           FD_ZERO(&write_fds);
           FD_SET(fd, &write_fds);

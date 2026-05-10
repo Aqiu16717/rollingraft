@@ -5,8 +5,7 @@
 namespace rollingraft {
 
 Counter& MetricsRegistry::GetCounter(
-    const std::string& name,
-    const std::map<std::string, std::string>& labels) {
+    const std::string& name, const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   MetricKey key{name, labels};
   auto it = counters_.find(key);
@@ -20,8 +19,7 @@ Counter& MetricsRegistry::GetCounter(
 }
 
 Gauge& MetricsRegistry::GetGauge(
-    const std::string& name,
-    const std::map<std::string, std::string>& labels) {
+    const std::string& name, const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   MetricKey key{name, labels};
   auto it = gauges_.find(key);
@@ -70,8 +68,8 @@ std::string MetricsRegistry::FormatPrometheus() const {
 
   for (const auto& [key, counter] : counters_) {
     oss << "# TYPE " << key.name << " counter\n";
-    oss << key.name << FormatLabels(key.labels) << " "
-        << counter->GetValue() << "\n";
+    oss << key.name << FormatLabels(key.labels) << " " << counter->GetValue()
+        << "\n";
   }
 
   for (const auto& [key, gauge] : gauges_) {

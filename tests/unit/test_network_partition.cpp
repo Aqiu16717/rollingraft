@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_network.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
@@ -17,9 +17,7 @@ using namespace rollingraft;
 
 class NetworkPartitionTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {
@@ -91,13 +89,12 @@ TEST_F(NetworkPartitionTest, MockNetwork_AutoResponse) {
   std::atomic<bool> callback_called{false};
   std::string response_data;
 
-  network.SendRpc(2, "127.0.0.1:8002", "request",
-                  std::chrono::milliseconds(1000),
-                  [&](const std::string& resp, bool success,
-                      const std::string&) {
-                    callback_called = true;
-                    if (success) response_data = resp;
-                  });
+  network.SendRpc(
+      2, "127.0.0.1:8002", "request", std::chrono::milliseconds(1000),
+      [&](const std::string& resp, bool success, const std::string&) {
+        callback_called = true;
+        if (success) response_data = resp;
+      });
 
   EXPECT_TRUE(callback_called);
   EXPECT_EQ(response_data, "{\"success\": true}");
@@ -154,15 +151,14 @@ TEST_F(NetworkPartitionTest, MockNetwork_TriggerResponse) {
   std::atomic<bool> callback_called{false};
   std::string received_response;
 
-  network.SendRpc(2, "127.0.0.1:8002", "request",
-                  std::chrono::milliseconds(1000),
-                  [&](const std::string& resp, bool success,
-                      const std::string&) {
-                    if (success) {
-                      received_response = resp;
-                    }
-                    callback_called = true;
-                  });
+  network.SendRpc(
+      2, "127.0.0.1:8002", "request", std::chrono::milliseconds(1000),
+      [&](const std::string& resp, bool success, const std::string&) {
+        if (success) {
+          received_response = resp;
+        }
+        callback_called = true;
+      });
 
   // Manually trigger response
   network.TriggerResponse(0, "{\"vote_granted\": true}", true);

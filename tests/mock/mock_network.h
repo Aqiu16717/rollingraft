@@ -31,8 +31,7 @@ class MockNetworkTransport : public NetworkTransport {
   Status Start() override;
   Status Stop() override;
 
-  void SendRpc(NodeId to, const NodeAddr& addr,
-               const std::string& request_data,
+  void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
                std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override;
 
@@ -60,8 +59,7 @@ class MockNetworkTransport : public NetworkTransport {
    * Trigger a response for a specific request.
    */
   void TriggerResponse(size_t request_index, const std::string& response_data,
-                       bool success = true,
-                       const std::string& error = "");
+                       bool success = true, const std::string& error = "");
 
   /**
    * Set auto-response for all future requests.

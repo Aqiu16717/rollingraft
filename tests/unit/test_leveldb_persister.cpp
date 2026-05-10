@@ -3,10 +3,9 @@
  * @brief Unit tests for LevelDBPersister with CRC32 validation
  */
 
-#include <gtest/gtest.h>
-
 #include <filesystem>
 #include <fstream>
+#include <gtest/gtest.h>
 
 #include "rollingraft/persister.h"
 
@@ -46,8 +45,7 @@ class LevelDBPersisterTest : public ::testing::Test {
     persister_->Close();
 
     // Find and corrupt the LevelDB files
-    for (const auto& entry :
-         std::filesystem::directory_iterator(test_dir_)) {
+    for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
       if (entry.is_regular_file() && entry.path().extension() == ".ldb") {
         // Read file
         std::ifstream in(entry.path(), std::ios::binary);
@@ -139,8 +137,7 @@ TEST_F(LevelDBPersisterTest, DetectsCorruptedData) {
   persister_->Close();
 
   // Corrupt LevelDB files
-  for (const auto& file :
-       std::filesystem::directory_iterator(test_dir_)) {
+  for (const auto& file : std::filesystem::directory_iterator(test_dir_)) {
     if (file.is_regular_file()) {
       // Try to corrupt .ldb files
       std::string ext = file.path().extension().string();
@@ -268,13 +265,15 @@ TEST_F(LevelDBPersisterTest, SaveAndLoadSnapshot) {
   uint64_t last_index = 100;
   uint64_t last_term = 5;
 
-  ASSERT_TRUE(persister_->SaveSnapshot(snapshot_data, last_index, last_term).ok());
+  ASSERT_TRUE(
+      persister_->SaveSnapshot(snapshot_data, last_index, last_term).ok());
   EXPECT_TRUE(persister_->HasSnapshot());
 
   // Load it back
   std::string loaded_data;
   uint64_t loaded_index, loaded_term;
-  ASSERT_TRUE(persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
+  ASSERT_TRUE(
+      persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
 
   EXPECT_EQ(loaded_data, snapshot_data);
   EXPECT_EQ(loaded_index, last_index);
@@ -289,7 +288,8 @@ TEST_F(LevelDBPersisterTest, SnapshotSha256Verification) {
   // Load should succeed with correct data
   std::string loaded_data;
   uint64_t loaded_index, loaded_term;
-  ASSERT_TRUE(persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
+  ASSERT_TRUE(
+      persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
   EXPECT_EQ(loaded_data, snapshot_data);
 }
 
@@ -306,7 +306,8 @@ TEST_F(LevelDBPersisterTest, SnapshotCorruptionDetected) {
     if (file.is_regular_file()) {
       std::string ext = file.path().extension().string();
       if (ext == ".ldb" || ext == ".log") {
-        std::fstream fs(file.path(), std::ios::in | std::ios::out | std::ios::binary);
+        std::fstream fs(file.path(),
+                        std::ios::in | std::ios::out | std::ios::binary);
         if (fs) {
           fs.seekg(0, std::ios::end);
           auto size = fs.tellg();
@@ -329,7 +330,8 @@ TEST_F(LevelDBPersisterTest, SnapshotCorruptionDetected) {
   // Load should fail or return empty data due to corruption
   std::string loaded_data;
   uint64_t loaded_index, loaded_term;
-  auto status = persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term);
+  auto status =
+      persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term);
 
   // Either load fails with integrity error, or data is empty
   if (status.ok()) {

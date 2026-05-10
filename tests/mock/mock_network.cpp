@@ -12,13 +12,9 @@ void MockNetworkTransport::SetConnectionCallback(ConnectionCallback callback) {
   connection_callback_ = std::move(callback);
 }
 
-Status MockNetworkTransport::Start() {
-  return Status::OK();
-}
+Status MockNetworkTransport::Start() { return Status::OK(); }
 
-Status MockNetworkTransport::Stop() {
-  return Status::OK();
-}
+Status MockNetworkTransport::Stop() { return Status::OK(); }
 
 void MockNetworkTransport::SendRpc(NodeId to, const NodeAddr& addr,
                                    const std::string& request_data,

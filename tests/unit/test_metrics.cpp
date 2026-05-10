@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-
 #include <thread>
 #include <vector>
 
@@ -50,10 +49,10 @@ TEST(MetricsTest, HistogramObserve) {
 
   EXPECT_EQ(hist.GetCount(), 4);
   EXPECT_DOUBLE_EQ(hist.GetSum(), 255.5);
-  EXPECT_EQ(hist.GetBucketCount(0), 1);   // <= 1
-  EXPECT_EQ(hist.GetBucketCount(1), 2);   // <= 10
-  EXPECT_EQ(hist.GetBucketCount(2), 3);   // <= 100
-  EXPECT_EQ(hist.GetBucketCount(3), 4);   // <= +Inf
+  EXPECT_EQ(hist.GetBucketCount(0), 1);  // <= 1
+  EXPECT_EQ(hist.GetBucketCount(1), 2);  // <= 10
+  EXPECT_EQ(hist.GetBucketCount(2), 3);  // <= 100
+  EXPECT_EQ(hist.GetBucketCount(3), 4);  // <= +Inf
 }
 
 TEST(MetricsTest, FormatPrometheus) {

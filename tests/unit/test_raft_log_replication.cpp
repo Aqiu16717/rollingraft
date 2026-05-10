@@ -1,17 +1,17 @@
-#include <gtest/gtest.h>
-
 #include <chrono>
+#include <gtest/gtest.h>
 #include <memory>
+
+#include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
-#include "rollingraft/raft_node.h"
 
 using namespace rollingraft;
 
 /**
  * Log replication tests.
- * 
+ *
  * These tests verify:
  * - Follower rejects propose
  * - Log persistence integration
@@ -19,9 +19,7 @@ using namespace rollingraft;
 
 class RaftLogReplicationTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    sm_ = std::make_shared<MockStateMachine>();
-  }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
 
   void TearDown() override {
     if (node_) {
@@ -55,9 +53,8 @@ TEST_F(RaftLogReplicationTest, Follower_RejectPropose) {
 
   // As follower, propose should fail
   std::atomic<bool> callback_called{false};
-  auto status = node_->Propose("cmd1", [&](const ApplyResult&) {
-    callback_called = true;
-  });
+  auto status = node_->Propose(
+      "cmd1", [&](const ApplyResult&) { callback_called = true; });
 
   // Should return error immediately
   EXPECT_FALSE(status.ok());
@@ -115,7 +112,7 @@ TEST_F(RaftLogReplicationTest, Persistence_LogsRestored) {
   // Pre-populate persister with log entries
   auto persister = std::make_unique<MockPersister>();
   persister->Open("/tmp/test");
-  
+
   std::vector<RaftLogEntry> entries;
   entries.push_back({1, 1, "cmd1"});
   entries.push_back({2, 1, "cmd2"});
@@ -131,7 +128,8 @@ TEST_F(RaftLogReplicationTest, Persistence_LogsRestored) {
 
   // The node should have restored logs (verified via persister)
   // Note: Direct log access is internal, but we can verify no crash
-  EXPECT_TRUE(node_->IsLeader() || !node_->IsLeader());  // Just verify state is valid
+  EXPECT_TRUE(node_->IsLeader() ||
+              !node_->IsLeader());  // Just verify state is valid
 }
 
 // Note: Full log replication testing requires:

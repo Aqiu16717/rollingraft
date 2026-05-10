@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
-#include <memory>
 #include <vector>
 
 namespace rollingraft {
@@ -120,10 +120,9 @@ class MetricsRegistry {
   Gauge& GetGauge(const std::string& name,
                   const std::map<std::string, std::string>& labels = {});
 
-  Histogram& GetHistogram(const std::string& name,
-                          const std::vector<double>& buckets,
-                          const std::map<std::string, std::string>& labels =
-                              {});
+  Histogram& GetHistogram(
+      const std::string& name, const std::vector<double>& buckets,
+      const std::map<std::string, std::string>& labels = {});
 
   std::string FormatPrometheus() const;
 

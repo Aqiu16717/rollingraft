@@ -12,11 +12,10 @@ using namespace rollingraft;
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0]
-              << " <server1> [server2] [server3]..." << std::endl;
-    std::cerr << "Example: " << argv[0]
-              << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003"
+    std::cerr << "Usage: " << argv[0] << " <server1> [server2] [server3]..."
               << std::endl;
+    std::cerr << "Example: " << argv[0]
+              << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003" << std::endl;
     return 1;
   }
 

@@ -1,0 +1,14 @@
+# ThreadSanitizer suppressions for RollingRaft
+#
+# These are known false positives from third-party libraries or
+# OS-level synchronization primitives that TSan cannot instrument.
+
+# ASIO kqueue/epoll reactor false positives
+# ASIO's reactor uses kernel-level synchronization (kqueue/epoll syscalls)
+# that TSan cannot instrument. Multiple threads calling io_context::run()
+# triggers benign race warnings in the reactor's descriptor state allocation.
+# See: https://github.com/chriskohlhoff/asio/issues/...
+race:asio::detail::kqueue_reactor::run
+race:asio::detail::epoll_reactor::run
+race:asio::detail::allocate_descriptor_state
+race:asio::detail::descriptor_state::do_complete

@@ -3,12 +3,14 @@
 using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
+  // PRECONDITION: replication_mtx_ is held by caller
   heartbeat_timer_ = timer_->SetInterval(
       std::chrono::milliseconds(config_.heartbeat_interval_ms),
       [this]() { OnHeartbeatTimeout(); });
 }
 
 void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
+  // PRECONDITION: replication_mtx_ is held by caller
   if (heartbeat_timer_ != 0) {
     timer_->CancelTimer(heartbeat_timer_);
     heartbeat_timer_ = 0;
@@ -16,7 +18,10 @@ void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: acquire election_mtx_ first, then replication_mtx_
+  // to safely access both role_ (election) and next_index_ (replication).
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;
@@ -115,7 +120,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 }
 
 void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ first, then replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
 
@@ -144,7 +151,8 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
            server_id_, retry.attempts, peer_id, delay);
 
   timer_->SetTimeout(std::chrono::milliseconds(delay), [this, peer_id]() {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
     if (role_ == RaftNodeRole::LEADER) {
       SendAppendEntriesToPeerLocked(peer_id);
     }
@@ -153,7 +161,11 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
 
 void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     NodeId from, const AppendEntriesResponse& resp) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ first, then replication_mtx_
+  // HandleAppendEntriesResponse may trigger leader step-down (election state)
+  // and updates match_index_/next_index_ (replication state).
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;

@@ -256,6 +256,12 @@ clean:
 	@rm -rf $(BUILD_ROOT)
 	$(call log_success,"Clean complete!")
 
+.PHONY: distclean
+distclean: clean
+	$(call log_warn,"Clearing ccache...")
+	@ccache -C >/dev/null 2>&1 || true
+	$(call log_success,"Distclean complete! All build artifacts and cache cleared.")
+
 # ============================================================
 # Docker targets
 # ============================================================

@@ -232,7 +232,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
       Term prev_term = GetLogTermLocked(req.prev_log_index_);
       if (prev_term != req.prev_log_term_) {
         LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}",
-                  server_id_, req.prev_log_index_, prev_term, req.prev_log_term_);
+                  server_id_, req.prev_log_index_, prev_term,
+                  req.prev_log_term_);
         resp.conflict_index_ = req.prev_log_index_;
         return;
       }
@@ -335,8 +336,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     if (req.offset_ == 0) {
       // New snapshot transfer, clear buffer
       snapshot_temp_data_.clear();
-      LOG_INFO("Node {} starting snapshot receive: index={}, term={}", server_id_,
-               req.last_included_index_, req.last_included_term_);
+      LOG_INFO("Node {} starting snapshot receive: index={}, term={}",
+               server_id_, req.last_included_index_, req.last_included_term_);
     }
 
     // Append chunk data
@@ -372,8 +373,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
         auto status =
             log_persister_->TruncatePrefix(req.last_included_index_ + 1);
         if (!status.ok()) {
-          LOG_WARN("Node {} failed to truncate persisted log after snapshot: {}",
-                   server_id_, status.ToString());
+          LOG_WARN(
+              "Node {} failed to truncate persisted log after snapshot: {}",
+              server_id_, status.ToString());
         }
       }
 

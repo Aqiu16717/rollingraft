@@ -6,6 +6,7 @@
 #include <functional>
 #include <future>
 #include <mutex>
+#include <shared_mutex>
 #include <random>
 #include <set>
 #include <span>
@@ -91,7 +92,8 @@ class RaftNode::RaftNodeImpl {
   Status ProposeBatch(
       const std::vector<std::string>& commands,
       std::function<void(const std::vector<ApplyResult>& results)> callback);
-  ApplyResult ProposeAndWaitLocked(const std::string& command);
+  ApplyResult ProposeAndWaitLocked(const std::string& command,
+                                   std::unique_lock<std::mutex>& lock_r);
   Status ReadIndex(std::function<void()> callback);
 
   // Membership change (only for leader)
@@ -107,12 +109,12 @@ class RaftNode::RaftNodeImpl {
   void HandleClientRequest(const ClientRequest&, ClientResponse&);
 
  private:
-  // State transitions (must hold mtx_ when calling)
+  // State transitions (must hold election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
 
-  // Timer management (must hold mtx_ when calling)
+  // Timer management (must hold appropriate manager mtx when calling)
   void ResetElectionTimerLocked();
   void CancelElectionTimerLocked();
   void StartHeartbeatTimerLocked();
@@ -204,7 +206,8 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Cluster Config ==========
   ClusterConfig cluster_config_;
-  mutable std::mutex config_mutex_;  // Protects cluster_config_
+  // Note: config_mutex_ replaced by membership_mtx_ (std::shared_mutex)
+  // to allow concurrent config reads without serializing with writes.
 
   // ========== Timer State ==========
   TimerId election_timer_ = 0;
@@ -234,7 +237,21 @@ class RaftNode::RaftNodeImpl {
   std::atomic<uint64_t> next_correlation_id_{1};
 
   // ========== Thread Synchronization ==========
-  mutable std::mutex mtx_;
+  // Lock hierarchy (strict left-to-right):
+  //   election_mtx_ -> replication_mtx_ -> snapshot_mtx_ ->
+  //   membership_mtx_ -> applier_mtx_
+  // Violating this order WILL cause deadlocks.
+  //
+  // Cross-manager call rules:
+  // * Read-only snapshot: acquire in hierarchy order (Pattern A)
+  // * Mutations: drop caller lock, then call downstream (Pattern B)
+  // * Callbacks: always invoke outside all locks (Pattern C)
+  //
+  mutable std::mutex election_mtx_;
+  mutable std::mutex replication_mtx_;
+  mutable std::mutex snapshot_mtx_;
+  mutable std::shared_mutex membership_mtx_;  // Read-heavy config access
+  mutable std::mutex applier_mtx_;
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;

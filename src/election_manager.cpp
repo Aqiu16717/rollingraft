@@ -13,8 +13,14 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   leader_addr_.clear();
 
   // Stop leader timers
-  StopHeartbeatTimerLocked();
-  StopSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    StopHeartbeatTimerLocked();
+  }
+  {
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    StopSnapshotCheckTimerLocked();
+  }
 
   // Reset and start election timer
   ResetElectionTimerLocked();
@@ -121,10 +127,16 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   CancelElectionTimerLocked();
 
   // Start heartbeat timer
-  StartHeartbeatTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    StartHeartbeatTimerLocked();
+  }
 
   // Start auto-snapshot check timer
-  StartSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    StartSnapshotCheckTimerLocked();
+  }
 
   // Invoke callback
   if (old_role != role_ && role_change_callback_) {
@@ -173,7 +185,7 @@ void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::OnElectionTimeout() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
 
   if (!IsRunning()) return;
   if (role_ == RaftNodeRole::LEADER) return;
@@ -263,7 +275,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
   LOG_INFO("Node {} received RequestVoteResponse from {}: granted={}, term={}",
            server_id_, from, resp.vote_granted_, resp.term_);
 
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
 
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::CANDIDATE) {

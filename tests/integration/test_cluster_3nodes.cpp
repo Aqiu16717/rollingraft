@@ -69,8 +69,9 @@ class Cluster3NodesTest : public ::testing::Test {
       state_machines_.push_back(sm);
 
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
-      EXPECT_TRUE(nodes_[i]->Start().ok())
-          << "Failed to start node " << (i + 1);
+      auto start_status = nodes_[i]->Start();
+      EXPECT_TRUE(start_status.ok())
+          << "Failed to start node " << (i + 1) << ": " << start_status.ToString();
     }
   }
 

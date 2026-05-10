@@ -135,7 +135,7 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // 5. Enter Follower state
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
     BecomeFollowerLocked(current_term_);
   }
 
@@ -160,12 +160,11 @@ Status RaftNode::RaftNodeImpl::Stop() {
     metrics_server_.reset();
   }
 
-  // 2. Stop timers (with lock)
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    CancelElectionTimerLocked();
-    StopHeartbeatTimerLocked();
-  }
+  // 2. Stop timers (no locks needed — state_ is kStopping, callbacks
+  // check IsRunning() and return early)
+  CancelElectionTimerLocked();
+  StopHeartbeatTimerLocked();
+  StopSnapshotCheckTimerLocked();
 
   // 3. Stop TimerService
   if (timer_) {
@@ -186,7 +185,7 @@ Status RaftNode::RaftNodeImpl::Stop() {
   std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>>
       callbacks_to_run;
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
       callbacks_to_run.emplace_back(id, std::move(proposal.callback));
     }
@@ -205,22 +204,22 @@ Status RaftNode::RaftNodeImpl::Stop() {
 }
 
 bool RaftNode::RaftNodeImpl::IsLeader() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return role_ == RaftNodeRole::LEADER;
 }
 
 RaftNodeRole RaftNode::RaftNodeImpl::GetRole() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return role_;
 }
 
 Term RaftNode::RaftNodeImpl::CurrentTerm() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return current_term_;
 }
 
 std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::lock_guard<std::mutex> lock(election_mtx_);
   return leader_addr_;
 }
 
@@ -237,7 +236,9 @@ void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
 Status RaftNode::RaftNodeImpl::Propose(
     const std::string& command,
     std::function<void(const ApplyResult&)> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -269,7 +270,9 @@ Status RaftNode::RaftNodeImpl::Propose(
           LOG_WARN("Node {} log persistence failed for index {}: {}",
                    server_id_, index, s.ToString());
           if (log_persister_ && !log_persister_->IsHealthy()) {
-            std::lock_guard<std::mutex> lock(mtx_);
+            // Disk failure: step down. Runs on persister thread with no
+            // locks held, so acquiring election_mtx_ is safe.
+            std::lock_guard<std::mutex> lock_e(election_mtx_);
             if (role_ == RaftNodeRole::LEADER) {
               LOG_ERROR("Node {} stepping down due to disk failure",
                         server_id_);
@@ -278,7 +281,9 @@ Status RaftNode::RaftNodeImpl::Propose(
           }
           return;
         }
-        std::lock_guard<std::mutex> lock(mtx_);
+        // Commit/broadcast: runs on persister thread with no locks held.
+        std::lock_guard<std::mutex> lock_e(election_mtx_);
+        std::lock_guard<std::mutex> lock_r(replication_mtx_);
         if (!IsRunning()) {
           return;
         }
@@ -326,7 +331,9 @@ Status RaftNode::RaftNodeImpl::Propose(
 Status RaftNode::RaftNodeImpl::ProposeBatch(
     const std::vector<std::string>& commands,
     std::function<void(const std::vector<ApplyResult>& results)> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -362,7 +369,7 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
 
   // Register individual callbacks that feed into the batch callback.
   // The last callback to fire posts the batch completion to the timer
-  // service thread to avoid invoking user code under mtx_.
+  // service thread to avoid invoking user code under lock.
   for (size_t i = 0; i < commands.size(); ++i) {
     Index index = indices[i];
 
@@ -375,7 +382,9 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             LOG_WARN("Node {} log persistence failed for index {}: {}",
                      server_id_, index, s.ToString());
             if (log_persister_ && !log_persister_->IsHealthy()) {
-              std::lock_guard<std::mutex> lock(mtx_);
+              // Disk failure: step down. Runs on persister thread with no
+              // locks held, so acquiring election_mtx_ is safe.
+              std::lock_guard<std::mutex> lock_e(election_mtx_);
               if (role_ == RaftNodeRole::LEADER) {
                 LOG_ERROR("Node {} stepping down due to disk failure",
                           server_id_);
@@ -384,7 +393,9 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             }
             return;
           }
-          std::lock_guard<std::mutex> lock(mtx_);
+          // Commit/broadcast: runs on persister thread with no locks held.
+          std::lock_guard<std::mutex> lock_e(election_mtx_);
+          std::lock_guard<std::mutex> lock_r(replication_mtx_);
           if (!IsRunning()) {
             return;
           }
@@ -427,7 +438,12 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
 }
 
 ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
-    const std::string& command) {
+    const std::string& command, std::unique_lock<std::mutex>& lock_r) {
+  // PRECONDITION: caller holds replication_mtx_ (via lock_r).
+  // election_mtx_ may or may not be held; this method only accesses
+  // replication state (log_, pending_proposals_, flushed_index_).
+  // This method unlocks replication_mtx_ while waiting for commit.
+
   // Use promise/future for synchronous wait
   std::promise<ApplyResult> promise;
   auto future = promise.get_future();
@@ -452,10 +468,9 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        if (log_persister_ && !log_persister_->IsHealthy()) {
-          LOG_ERROR("Node {} stepping down due to disk failure", server_id_);
-          BecomeFollowerLocked(current_term_);
-        }
+        // Disk failure: let async persister callback handle step-down
+        // (Phase 5 migrated persister callbacks to fine-grained locks).
+        LOG_ERROR("Node {} disk unhealthy, rejecting command", server_id_);
         ApplyResult error_result;
         error_result.success = false;
         error_result.error_message = flush_status.GetMessage();
@@ -477,13 +492,26 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
   // Trigger log replication
   BroadcastAppendEntriesLocked();
 
-  // Unlock mutex while waiting to allow other threads to make progress
-  mtx_.unlock();
+  // Unlock replication_mtx_ while waiting to allow commit progress.
+  // NOTE: election_mtx_ remains held, which blocks election timeouts.
+  // This is a known limitation of synchronous propose.
+  struct ReacquireGuard {
+    std::unique_lock<std::mutex>& lock;
+    bool need_relock = true;
+    ~ReacquireGuard() {
+      if (need_relock && !lock.owns_lock()) {
+        lock.lock();
+      }
+    }
+  } guard{lock_r};
+
+  lock_r.unlock();
 
   // Wait for commit and apply with timeout
   auto wait_status = future.wait_for(std::chrono::seconds(5));
 
-  mtx_.lock();
+  lock_r.lock();
+  guard.need_relock = false;
 
   if (wait_status == std::future_status::timeout) {
     if (metrics_) {
@@ -505,7 +533,8 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 }
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Phase 1: Election state check under election_mtx_ only.
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -515,34 +544,44 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
-  // Create pending read request
-  uint64_t read_id = next_read_id_++;
-  PendingReadIndex read_req;
-  read_req.read_index = commit_index_;
-  read_req.callback = std::move(callback);
-  read_req.start_time = std::chrono::steady_clock::now();
-  read_req.acks.insert(server_id_);  // Leader acknowledges itself
+  // Phase 2: ReadIndex work under full hierarchy.
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    std::lock_guard<std::mutex> lock_a(applier_mtx_);
 
-  pending_reads_[read_id] = std::move(read_req);
+    // Create pending read request
+    uint64_t read_id = next_read_id_++;
+    PendingReadIndex read_req;
+    read_req.read_index = commit_index_;
+    read_req.callback = std::move(callback);
+    read_req.start_time = std::chrono::steady_clock::now();
+    read_req.acks.insert(server_id_);  // Leader acknowledges itself
 
-  LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
-           read_id, commit_index_);
+    pending_reads_[read_id] = std::move(read_req);
 
-  if (metrics_) {
-    metrics_
-        ->GetCounter("raft_readindex_total",
-                     {{"node_id", std::to_string(server_id_)}})
-        .Increment();
+    LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
+             read_id, commit_index_);
+
+    if (metrics_) {
+      metrics_
+          ->GetCounter("raft_readindex_total",
+                       {{"node_id", std::to_string(server_id_)}})
+          .Increment();
+    }
+
+    // Send heartbeats to confirm leadership
+    BroadcastReadIndexHeartbeatsLocked(read_id);
   }
-
-  // Send heartbeats to confirm leadership
-  BroadcastReadIndexHeartbeatsLocked(read_id);
 
   return Status::OK();
 }
 
 Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -597,7 +636,10 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
 }
 
 Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -658,8 +700,12 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   // Trigger replication
   BroadcastAppendEntriesLocked();
 
-  // If removing ourselves, step down
+  // If removing ourselves, step down.
+  // Must drop downstream locks before calling BecomeFollowerLocked,
+  // which acquires replication_mtx_ + snapshot_mtx_ internally.
   if (id == server_id_) {
+    lock_m.unlock();
+    lock_r.unlock();
     BecomeFollowerLocked(current_term_);
   }
 
@@ -667,7 +713,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 }
 
 ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
-  std::lock_guard<std::mutex> lock(config_mutex_);
+  std::shared_lock<std::shared_mutex> lock(membership_mtx_);
   return cluster_config_;
 }
 

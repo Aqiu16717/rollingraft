@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, ci/capture-logs]
   pull_request:
     branches: [main, master]
 
@@ -82,11 +82,21 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+          cmake --build build -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4) 2>&1 | tee build.log
           ccache -s
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure ${{ matrix.test_filter }}
+        run: ctest --test-dir build --output-on-failure ${{ matrix.test_filter }} 2>&1 | tee test.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.build_type }}
+          path: |
+            build.log
+            test.log
+          retention-days: 3
 
   # ============================================================
   # Sanitizer Matrix (unit tests only -- integration tests are
@@ -138,12 +148,22 @@ jobs:
             -DBUILD_EXAMPLES=OFF
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build -j$(nproc) 2>&1 | tee build.log
 
       - name: Run unit tests
-        run: ctest --test-dir build -R "unit\\." --output-on-failure
+        run: ctest --test-dir build -R "unit\\." --output-on-failure 2>&1 | tee test.log
         env:
           TSAN_OPTIONS: suppressions=${{ github.workspace }}/tsan_suppressions.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-sanitizer-${{ matrix.sanitizer }}
+          path: |
+            build.log
+            test.log
+          retention-days: 3
 
   # ============================================================
   # Werror Build (Treat Warnings as Errors)
@@ -171,10 +191,20 @@ jobs:
             -DCMAKE_CXX_FLAGS="-Werror"
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build -j$(nproc) 2>&1 | tee build.log
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure 2>&1 | tee test.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-werror
+          path: |
+            build.log
+            test.log
+          retention-days: 3
 
   # ============================================================
   # Code Formatting Check

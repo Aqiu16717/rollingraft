@@ -554,7 +554,10 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
 }
 
 Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -609,7 +612,10 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
 }
 
 Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -670,8 +676,12 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   // Trigger replication
   BroadcastAppendEntriesLocked();
 
-  // If removing ourselves, step down
+  // If removing ourselves, step down.
+  // Must drop downstream locks before calling BecomeFollowerLocked,
+  // which acquires replication_mtx_ + snapshot_mtx_ internally.
   if (id == server_id_) {
+    lock_m.unlock();
+    lock_r.unlock();
     BecomeFollowerLocked(current_term_);
   }
 

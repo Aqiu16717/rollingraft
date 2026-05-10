@@ -135,7 +135,7 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // 5. Enter Follower state
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
     BecomeFollowerLocked(current_term_);
   }
 
@@ -160,12 +160,11 @@ Status RaftNode::RaftNodeImpl::Stop() {
     metrics_server_.reset();
   }
 
-  // 2. Stop timers (with lock)
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    CancelElectionTimerLocked();
-    StopHeartbeatTimerLocked();
-  }
+  // 2. Stop timers (no locks needed — state_ is kStopping, callbacks
+  // check IsRunning() and return early)
+  CancelElectionTimerLocked();
+  StopHeartbeatTimerLocked();
+  StopSnapshotCheckTimerLocked();
 
   // 3. Stop TimerService
   if (timer_) {
@@ -186,7 +185,7 @@ Status RaftNode::RaftNodeImpl::Stop() {
   std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>>
       callbacks_to_run;
   {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
       callbacks_to_run.emplace_back(id, std::move(proposal.callback));
     }
@@ -439,7 +438,12 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
 }
 
 ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
-    const std::string& command) {
+    const std::string& command, std::unique_lock<std::mutex>& lock_r) {
+  // PRECONDITION: caller holds replication_mtx_ (via lock_r).
+  // election_mtx_ may or may not be held; this method only accesses
+  // replication state (log_, pending_proposals_, flushed_index_).
+  // This method unlocks replication_mtx_ while waiting for commit.
+
   // Use promise/future for synchronous wait
   std::promise<ApplyResult> promise;
   auto future = promise.get_future();
@@ -464,10 +468,9 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        if (log_persister_ && !log_persister_->IsHealthy()) {
-          LOG_ERROR("Node {} stepping down due to disk failure", server_id_);
-          BecomeFollowerLocked(current_term_);
-        }
+        // Disk failure: let async persister callback handle step-down
+        // (Phase 5 migrated persister callbacks to fine-grained locks).
+        LOG_ERROR("Node {} disk unhealthy, rejecting command", server_id_);
         ApplyResult error_result;
         error_result.success = false;
         error_result.error_message = flush_status.GetMessage();
@@ -489,13 +492,26 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
   // Trigger log replication
   BroadcastAppendEntriesLocked();
 
-  // Unlock mutex while waiting to allow other threads to make progress
-  mtx_.unlock();
+  // Unlock replication_mtx_ while waiting to allow commit progress.
+  // NOTE: election_mtx_ remains held, which blocks election timeouts.
+  // This is a known limitation of synchronous propose.
+  struct ReacquireGuard {
+    std::unique_lock<std::mutex>& lock;
+    bool need_relock = true;
+    ~ReacquireGuard() {
+      if (need_relock && !lock.owns_lock()) {
+        lock.lock();
+      }
+    }
+  } guard{lock_r};
+
+  lock_r.unlock();
 
   // Wait for commit and apply with timeout
   auto wait_status = future.wait_for(std::chrono::seconds(5));
 
-  mtx_.lock();
+  lock_r.lock();
+  guard.need_relock = false;
 
   if (wait_status == std::future_status::timeout) {
     if (metrics_) {

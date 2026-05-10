@@ -92,7 +92,8 @@ class RaftNode::RaftNodeImpl {
   Status ProposeBatch(
       const std::vector<std::string>& commands,
       std::function<void(const std::vector<ApplyResult>& results)> callback);
-  ApplyResult ProposeAndWaitLocked(const std::string& command);
+  ApplyResult ProposeAndWaitLocked(const std::string& command,
+                                   std::unique_lock<std::mutex>& lock_r);
   Status ReadIndex(std::function<void()> callback);
 
   // Membership change (only for leader)
@@ -108,12 +109,12 @@ class RaftNode::RaftNodeImpl {
   void HandleClientRequest(const ClientRequest&, ClientResponse&);
 
  private:
-  // State transitions (must hold mtx_ when calling)
+  // State transitions (must hold election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
 
-  // Timer management (must hold mtx_ when calling)
+  // Timer management (must hold appropriate manager mtx when calling)
   void ResetElectionTimerLocked();
   void CancelElectionTimerLocked();
   void StartHeartbeatTimerLocked();
@@ -245,8 +246,6 @@ class RaftNode::RaftNodeImpl {
   // * Mutations: drop caller lock, then call downstream (Pattern B)
   // * Callbacks: always invoke outside all locks (Pattern C)
   //
-  // TODO(Phase 6): Remove mtx_ once all call sites are migrated.
-  mutable std::mutex mtx_;
   mutable std::mutex election_mtx_;
   mutable std::mutex replication_mtx_;
   mutable std::mutex snapshot_mtx_;

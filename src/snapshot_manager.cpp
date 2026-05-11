@@ -122,20 +122,17 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   log_.SetStartIndex(snapshot_index + 1);
   last_snapshot_index_ = snapshot_index;
 
-  // Schedule async truncation of persisted log after releasing locks.
-  // TruncatePrefix I/O can be slow; performing it asynchronously prevents
-  // blocking the Raft event loop while holding manager locks.
+  // Truncate persisted log with retention buffer
   if (log_persister_) {
     uint64_t compact_before = 1;
     if (snapshot_index + 1 > config_.log_retention_entries) {
       compact_before = snapshot_index + 1 - config_.log_retention_entries;
     }
-    log_persister_->TruncatePrefixAsync(compact_before, [this](Status status) {
-      if (!status.ok()) {
-        LOG_WARN("Node {} async truncate failed: {}", server_id_,
-                 status.ToString());
-      }
-    });
+    auto status = log_persister_->TruncatePrefix(compact_before);
+    if (!status.ok()) {
+      LOG_WARN("Node {} failed to truncate persisted log: {}", server_id_,
+               status.ToString());
+    }
   }
 
   if (metrics_) {

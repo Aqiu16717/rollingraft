@@ -90,6 +90,20 @@ make test
 make format
 ```
 
+### CI Pipeline
+
+Every push to `main` runs the full verification matrix (see `.github/workflows/ci.yml`):
+
+| Dimension | Configurations |
+|-----------|---------------|
+| **Compilers** | GCC, Clang |
+| **Platforms** | Ubuntu 22.04, macOS latest |
+| **Build types** | Release, Debug |
+| **Sanitizers** | ASan, TSan, UBSan |
+| **Additional checks** | Werror, format-check (clang-format-18), Docker test |
+
+All 10 jobs must pass before merge. 🔥
+
 Or use CMake directly:
 
 ```bash

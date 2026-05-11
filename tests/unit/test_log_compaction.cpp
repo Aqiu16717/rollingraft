@@ -1,3 +1,4 @@
+#include <future>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -132,6 +133,43 @@ TEST(LogCompactionTest, TruncatePrefixWithBufferedEntries) {
   EXPECT_EQ(mock_ptr->entries_.count(2), 0);
   EXPECT_EQ(mock_ptr->entries_.count(3), 1);
   EXPECT_EQ(mock_ptr->entries_.count(5), 1);
+
+  lp.Stop();
+}
+
+TEST(LogCompactionTest, TruncatePrefixAsync) {
+  auto mock = std::make_unique<MockPersister>();
+  auto* mock_ptr = mock.get();
+  LogPersister lp(std::move(mock));
+  lp.Start();
+
+  // Append 10 entries
+  for (int i = 1; i <= 10; ++i) {
+    RaftLogEntry entry;
+    entry.index_ = i;
+    entry.term_ = 1;
+    lp.Append(entry);
+  }
+
+  lp.FlushSync();
+  EXPECT_EQ(mock_ptr->entries_.size(), 10);
+
+  // Truncate prefix asynchronously at 5 (delete entries 1-4)
+  std::promise<Status> result_promise;
+  lp.TruncatePrefixAsync(5, [&result_promise](Status s) {
+    result_promise.set_value(s);
+  });
+
+  auto future = result_promise.get_future();
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  EXPECT_TRUE(future.get().ok());
+
+  EXPECT_EQ(mock_ptr->entries_.size(), 6);
+  EXPECT_EQ(mock_ptr->entries_.count(1), 0);
+  EXPECT_EQ(mock_ptr->entries_.count(4), 0);
+  EXPECT_EQ(mock_ptr->entries_.count(5), 1);
+  EXPECT_EQ(mock_ptr->entries_.count(10), 1);
 
   lp.Stop();
 }

@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -146,6 +147,20 @@ class LogPersister {
   Status TruncatePrefix(uint64_t before_index);
 
   /**
+   * Delete persisted log entries before the given index (async).
+   *
+   * Drains the write buffer synchronously, then performs the actual
+   * truncation on a background thread. The callback is invoked with
+   * the result when truncation completes.
+   *
+   * @param before_index Delete entries with index < before_index
+   * @param callback Optional callback invoked when truncation completes
+   */
+  using TruncateCallback = std::function<void(Status)>;
+  void TruncatePrefixAsync(uint64_t before_index,
+                           TruncateCallback callback = nullptr);
+
+  /**
    * Restore log entries from persistent storage.
    *
    * @param start_index Index to start restoring from (typically after snapshot)
@@ -205,6 +220,11 @@ class LogPersister {
   // Statistics
   std::atomic<uint64_t> total_flushed_{0};
   std::atomic<uint64_t> total_flush_ops_{0};
+
+  // Async truncation tracking
+  std::atomic<bool> shutdown_{false};
+  mutable std::mutex futures_mutex_;
+  std::vector<std::future<Status>> truncate_futures_;
 };
 
 }  // namespace rollingraft

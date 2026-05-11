@@ -47,6 +47,14 @@ struct LogPersistenceConfig {
 
   /** Directory to check for disk space. Empty = skip check. */
   std::string data_dir;
+
+  /**
+   * Optional executor for async work scheduling.
+   * If provided, TruncatePrefixAsync posts work to this executor.
+   * If empty, TruncatePrefixAsync falls back to synchronous execution.
+   */
+  using Executor = std::function<void(std::function<void()>)>;
+  Executor executor;
 };
 
 /**
@@ -68,7 +76,7 @@ class LogPersister {
    * @param persister Underlying persistent storage
    * @param config Persistence configuration
    */
-  LogPersister(std::unique_ptr<Persister> persister,
+  LogPersister(std::shared_ptr<Persister> persister,
                LogPersistenceConfig config = {});
 
   ~LogPersister();
@@ -145,6 +153,22 @@ class LogPersister {
    */
   Status TruncatePrefix(uint64_t before_index);
 
+  /** Callback type invoked when async truncation completes. */
+  using TruncateCallback = std::function<void(Status)>;
+
+  /**
+   * Delete persisted log entries asynchronously.
+   *
+   * Drains the write buffer synchronously, then schedules the actual
+   * truncation via the configured executor (or caller thread if none).
+   * Safe to call while holding Raft manager locks.
+   *
+   * @param before_index Delete entries with index < before_index
+   * @param callback Optional callback invoked when truncation completes
+   */
+  void TruncatePrefixAsync(uint64_t before_index,
+                           TruncateCallback callback = nullptr);
+
   /**
    * Restore log entries from persistent storage.
    *
@@ -184,7 +208,7 @@ class LogPersister {
     FlushCallback callback;
   };
 
-  std::unique_ptr<Persister> persister_;
+  std::shared_ptr<Persister> persister_;
   LogPersistenceConfig config_;
 
   // Buffer for pending entries
@@ -205,6 +229,16 @@ class LogPersister {
   // Statistics
   std::atomic<uint64_t> total_flushed_{0};
   std::atomic<uint64_t> total_flush_ops_{0};
+
+  // Async truncation state
+  struct AsyncState {
+    std::atomic<bool> shutdown{false};
+    std::atomic<size_t> pending_count{0};
+    std::shared_ptr<Persister> persister;
+    std::mutex cv_mutex;
+    std::condition_variable cv;
+  };
+  std::shared_ptr<AsyncState> async_state_;
 };
 
 }  // namespace rollingraft

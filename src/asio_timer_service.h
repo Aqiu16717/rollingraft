@@ -102,6 +102,12 @@ class AsioTimerService : public TimerService {
    */
   bool IsTimerActive(TimerId timer_id) const override;
 
+  /**
+   * Get the underlying io_context (if using external or internal mode).
+   * @return Pointer to io_context, or nullptr if not started
+   */
+  asio::io_context* GetIoContext() const { return io_ptr_; }
+
  private:
   struct Timer {
     // Underlying Asio timer

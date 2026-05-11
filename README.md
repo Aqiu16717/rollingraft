@@ -19,11 +19,12 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 - **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, and connection pooling
 - **Raft Features**:
   - Leader election with randomized timeouts
-  - Log replication with batching
+  - Log replication with batching (`ProposeBatch` API)
   - Snapshot support with automatic triggering
-  - Log compaction with configurable retention
+  - Log compaction with configurable retention (`TruncatePrefix`)
   - Membership changes (add/remove nodes dynamically)
   - ReadIndex for linearizable reads
+  - Fine-grained locking per manager (election / log / snapshot / membership / applier)
 - **Observability**: Built-in Prometheus-style metrics with HTTP `/metrics` endpoint
 
 ## Current Status
@@ -43,6 +44,7 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 **Known Limitations:**
 - No TLS encryption for node-to-node communication
 - No runtime configuration hot-reload
+- Async `TruncatePrefix` pending implementation
 - Not battle-tested in production environments
 
 **Use Cases:**
@@ -63,12 +65,34 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 
 ### Build
 
+RollingRaft uses a **Makefile** for convenient multi-config builds:
+
 ```bash
 # Clone with submodules
 git clone --recursive https://github.com/Aqiu16717/rollingraft.git
 cd rollingraft
 
-# Build
+# Release build
+make release
+
+# Debug build
+make debug
+
+# With sanitizers
+make asan
+make tsan
+make ubsan
+
+# Run tests
+make test
+
+# Format check
+make format
+```
+
+Or use CMake directly:
+
+```bash
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
@@ -415,17 +439,31 @@ rollingraft/
 │                    RaftNode                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
 │  │   Election  │  │ Log Replica │  │   Snapshot      │  │
-│  │   (5.2)     │  │   (5.3)     │  │   (7)           │  │
+│  │   Manager   │  │   Manager   │  │   Manager       │  │
 │  └─────────────┘  └─────────────┘  └─────────────────┘  │
+│  ┌─────────────┐  ┌─────────────┐                       │
+│  │  Membership │  │   Applier   │                       │
+│  │   Manager   │  │   Manager   │                       │
+│  └─────────────┘  └─────────────┘                       │
 └─────────────────────┬───────────────────────────────────┘
                       │
     ┌─────────────────┼─────────────────┐
     │                 │                 │
 ┌───▼────┐     ┌─────▼──────┐   ┌──────▼──────┐
 │Network │     │ Persister  │   │    Timer    │
-│ (TCP)  │     │ (LevelDB)  │   │   (ASIO)    │
+│ (ASIO) │     │ (LevelDB)  │   │   (ASIO)    │
 └────────┘     └────────────┘   └─────────────┘
 ```
+
+### Lock Hierarchy
+
+Fine-grained locks follow a strict hierarchy to prevent deadlocks:
+
+```
+election_mtx_ → replication_mtx_ → snapshot_mtx_ → membership_mtx_ → applier_mtx_
+```
+
+Cross-manager calls use two-phase or bridge patterns to maintain safety.
 
 ## Advanced Usage
 
@@ -472,8 +510,8 @@ ctest --output-on-failure
 ./build/tests/unit_tests --gtest_filter="RaftElection*"
 ```
 
-**Test Coverage:** 148 unit tests + 9 integration tests
-- Raft core: 59 tests (election, log replication, snapshots, membership)
+**Test Coverage:** 170 unit tests + 9 integration tests
+- Raft core: 81 tests (election, log replication, snapshots, membership, batch propose)
 - Client library: 80 tests (result handling, leader tracking, retry policy, connection pool, client)
 - Metrics: 6 tests (counter, gauge, histogram, registry)
 - Log compaction: 3 tests (truncate prefix, buffer safety, retention math)
@@ -492,6 +530,21 @@ ctest --output-on-failure
   -k 'pkill -f "counter_server 1"' \
   127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
 ```
+
+## Recent Improvements
+
+### Phase 2 — Network Layer & Core Refactoring
+
+| Improvement | Details |
+|-------------|---------|
+| **Fine-grained Locks** | Replaced monolithic `mtx_` with 5 manager-specific mutexes following strict hierarchy |
+| **ASIO Thread Pool** | Replaced per-RPC `std::thread` with ASIO thread pool + strand serialization |
+| **Correlation ID** | RPC matching via `correlation_id` instead of FIFO callback queue |
+| **Batch Propose** | `ProposeBatch()` API with atomic append + shared result collection |
+| **CI Stability** | 10/10 jobs green including TSan, ASan, UBSan across GCC/Clang × Linux/macOS |
+| **Test Coverage** | 170 unit tests + 9 integration tests, all passing under TSan |
+
+See [`doc/`](doc/) for design documents and [`doc/commit-message-convention.md`](doc/commit-message-convention.md) for commit standards.
 
 ## License
 

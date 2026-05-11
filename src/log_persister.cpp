@@ -28,16 +28,8 @@ LogPersister::LogPersister(std::unique_ptr<Persister> persister,
     : persister_(std::move(persister)), config_(config) {}
 
 LogPersister::~LogPersister() {
-  shutdown_ = true;
   if (running_) {
     Stop();
-  }
-  // Wait for all async truncations to complete before destroying persister_
-  std::lock_guard<std::mutex> lock(futures_mutex_);
-  for (auto& f : truncate_futures_) {
-    if (f.valid()) {
-      f.wait();
-    }
   }
 }
 
@@ -180,54 +172,6 @@ Status LogPersister::TruncatePrefix(uint64_t before_index) {
   }
 
   return persister_->TruncatePrefix(before_index);
-}
-
-void LogPersister::TruncatePrefixAsync(uint64_t before_index,
-                                       TruncateCallback callback) {
-  if (shutdown_.load()) {
-    if (callback) {
-      callback(Status::Error("LogPersister is shut down"));
-    }
-    return;
-  }
-
-  // Drain buffer synchronously (fast - typically empty or small batch)
-  auto status = FlushSync(std::chrono::seconds(1));
-  if (!status.ok()) {
-    if (callback) {
-      callback(status);
-    }
-    return;
-  }
-
-  if (!persister_) {
-    if (callback) {
-      callback(Status::Error("Persister is null"));
-    }
-    return;
-  }
-
-  // Capture persister by raw pointer - shutdown_ flag ensures
-  // no new async truncations are started during destructor.
-  // Destructor waits for all pending futures before destroying persister_.
-  auto* p = persister_.get();
-  auto future =
-      std::async(std::launch::async, [this, p, before_index, callback]() {
-        if (shutdown_.load()) {
-          if (callback) {
-            callback(Status::Error("LogPersister is shut down"));
-          }
-          return Status::Error("LogPersister is shut down");
-        }
-        auto status = p->TruncatePrefix(before_index);
-        if (callback) {
-          callback(status);
-        }
-        return status;
-      });
-
-  std::lock_guard<std::mutex> lock(futures_mutex_);
-  truncate_futures_.push_back(std::move(future));
 }
 
 std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {

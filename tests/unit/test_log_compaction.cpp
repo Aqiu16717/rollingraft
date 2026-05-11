@@ -156,8 +156,9 @@ TEST(LogCompactionTest, TruncatePrefixAsync) {
 
   // Truncate prefix asynchronously at 5 (delete entries 1-4)
   std::promise<Status> result_promise;
-  lp.TruncatePrefixAsync(
-      5, [&result_promise](Status s) { result_promise.set_value(s); });
+  lp.TruncatePrefixAsync(5, [&result_promise](Status s) {
+    result_promise.set_value(s);
+  });
 
   auto future = result_promise.get_future();
   ASSERT_EQ(future.wait_for(std::chrono::seconds(5)),

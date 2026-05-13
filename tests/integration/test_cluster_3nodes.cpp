@@ -7,6 +7,7 @@
 
 #include "rollingraft/raft_node.h"
 
+#include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
 
 using namespace rollingraft;
@@ -59,12 +60,11 @@ class Cluster3NodesTest : public ::testing::Test {
   }
 
   void StartCluster() {
-    // Use high ports to avoid conflicts with system services
-    std::vector<std::string> addrs = {"127.0.0.1:19001", "127.0.0.1:19002",
-                                      "127.0.0.1:19003"};
+    auto ports = AllocateEphemeralPorts(3);
+    addrs_ = FormatAddrs(ports);
 
     for (int i = 0; i < 3; ++i) {
-      auto config = MakeConfig(i + 1, addrs[i], addrs);
+      auto config = MakeConfig(i + 1, addrs_[i], addrs_);
       auto sm = std::make_shared<MockStateMachine>();
       state_machines_.push_back(sm);
 
@@ -125,6 +125,7 @@ class Cluster3NodesTest : public ::testing::Test {
   }
 
   std::vector<std::string> data_dirs_;
+  std::vector<std::string> addrs_;
   std::vector<std::unique_ptr<RaftNode>> nodes_;
   std::vector<std::shared_ptr<MockStateMachine>> state_machines_;
 };

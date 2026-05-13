@@ -7,6 +7,7 @@
 
 #include "rollingraft/raft_node.h"
 
+#include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
 
 using namespace rollingraft;
@@ -42,11 +43,13 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   void StartCluster() {
-    std::vector<std::string> addrs = {"127.0.0.1:19101", "127.0.0.1:19102",
-                                      "127.0.0.1:19103"};
+    auto ports = AllocateEphemeralPorts(6);
+    raft_addrs_ = FormatAddrs({ports[0], ports[1], ports[2]});
+    metrics_addrs_ = FormatAddrs({ports[3], ports[4], ports[5]});
 
     for (int i = 0; i < 3; ++i) {
-      auto config = MakeConfig(i + 1, addrs[i], addrs);
+      auto config =
+          MakeConfig(i + 1, raft_addrs_[i], raft_addrs_, metrics_addrs_[i]);
       auto sm = std::make_shared<MockStateMachine>();
       state_machines_.push_back(sm);
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
@@ -57,7 +60,8 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   RaftNodeConfig MakeConfig(NodeId id, const std::string& addr,
-                            const std::vector<std::string>& all_addrs) {
+                            const std::vector<std::string>& all_addrs,
+                            const std::string& metrics_addr) {
     RaftNodeConfig config;
     config.node_id = id;
     config.listen_addr = addr;
@@ -69,7 +73,7 @@ class MetricsEndpointTest : public ::testing::Test {
     config.max_retry_delay_ms = 100;
     config.max_retry_attempts = 10;
     config.metrics_enabled = true;
-    config.metrics_addr = "127.0.0.1:" + std::to_string(9200 + id);
+    config.metrics_addr = metrics_addr;
 
     for (const auto& peer_addr : all_addrs) {
       if (peer_addr != addr) {
@@ -112,6 +116,8 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   std::vector<std::string> data_dirs_;
+  std::vector<std::string> raft_addrs_;
+  std::vector<std::string> metrics_addrs_;
   std::vector<std::unique_ptr<RaftNode>> nodes_;
   std::vector<std::shared_ptr<MockStateMachine>> state_machines_;
 };
@@ -124,8 +130,7 @@ TEST_F(MetricsEndpointTest, MetricsServerResponds) {
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   for (int i = 0; i < 3; ++i) {
-    std::string addr = "127.0.0.1:" + std::to_string(9201 + i);
-    std::string output = FetchMetrics(addr);
+    std::string output = FetchMetrics(metrics_addrs_[i]);
     EXPECT_FALSE(output.empty()) << "Node " << (i + 1) << " metrics empty";
     EXPECT_NE(output.find("# TYPE"), std::string::npos)
         << "Node " << (i + 1) << " missing TYPE header";
@@ -141,8 +146,7 @@ TEST_F(MetricsEndpointTest, MetricsShowRoleAndTerm) {
   std::string leader_output;
   std::string follower_output;
   for (int i = 0; i < 3; ++i) {
-    std::string addr = "127.0.0.1:" + std::to_string(9201 + i);
-    std::string out = FetchMetrics(addr);
+    std::string out = FetchMetrics(metrics_addrs_[i]);
     if (nodes_[i]->IsLeader()) {
       leader_output = out;
     } else {
@@ -181,8 +185,7 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
   for (int i = 0; i < 3; ++i) {
     if (nodes_[i]->IsLeader()) leader_idx = i;
   }
-  std::string addr = "127.0.0.1:" + std::to_string(9201 + leader_idx);
-  std::string output = FetchMetrics(addr);
+  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
   EXPECT_NE(output.find("raft_propose_total"), std::string::npos)
       << "Missing propose counter";

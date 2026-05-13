@@ -43,13 +43,9 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   void StartCluster() {
-    auto ports = AllocateEphemeralPorts(4);
+    auto ports = AllocateEphemeralPorts(6);
     raft_addrs_ = FormatAddrs({ports[0], ports[1], ports[2]});
-    metrics_addrs_ = FormatAddrs({ports[3], ports[3], ports[3]});
-    // Each node gets a unique metrics port
-    metrics_addrs_[0] = "127.0.0.1:" + std::to_string(ports[3]);
-    metrics_addrs_[1] = "127.0.0.1:" + std::to_string(ports[3] + 1);
-    metrics_addrs_[2] = "127.0.0.1:" + std::to_string(ports[3] + 2);
+    metrics_addrs_ = FormatAddrs({ports[3], ports[4], ports[5]});
 
     for (int i = 0; i < 3; ++i) {
       auto config =

@@ -19,7 +19,9 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
                                  : CreateDefaultNetworkTransport(),
           config.timer_factory ? config.timer_factory()
                                : TimerService::CreateDefault(),
-          config.persister_factory ? config.persister_factory() : nullptr,
+          config.persister_factory
+              ? std::shared_ptr<Persister>(config.persister_factory())
+              : nullptr,
           config.protocol_factory ? config.protocol_factory()
                                   : std::make_unique<JsonProtocol>())) {}
 

@@ -23,14 +23,28 @@
 
 namespace rollingraft {
 
-LogPersister::LogPersister(std::unique_ptr<Persister> persister,
+LogPersister::LogPersister(std::shared_ptr<Persister> persister,
                            LogPersistenceConfig config)
-    : persister_(std::move(persister)), config_(config) {}
+    : persister_(std::move(persister)),
+      config_(config),
+      async_state_(std::make_shared<AsyncState>()) {
+  async_state_->persister = persister_;
+}
 
 LogPersister::~LogPersister() {
+  async_state_->shutdown.store(true, std::memory_order_release);
+
   if (running_) {
     Stop();
   }
+
+  // Wait unconditionally for all pending async truncations to complete.
+  // AsyncState holds a shared_ptr<Persister>, so the Persister object
+  // stays alive until the last executor lambda releases its reference.
+  std::unique_lock<std::mutex> lock(async_state_->cv_mutex);
+  async_state_->cv.wait(lock, [this] {
+    return async_state_->pending_count.load(std::memory_order_acquire) == 0;
+  });
 }
 
 void LogPersister::Start() {
@@ -172,6 +186,83 @@ Status LogPersister::TruncatePrefix(uint64_t before_index) {
   }
 
   return persister_->TruncatePrefix(before_index);
+}
+
+void LogPersister::TruncatePrefixAsync(uint64_t before_index,
+                                       TruncateCallback callback) {
+  // 1. Check shutdown
+  if (async_state_->shutdown.load(std::memory_order_acquire)) {
+    if (callback) {
+      callback(Status::Error("LogPersister is shut down"));
+    }
+    return;
+  }
+
+  // 2. Increment pending_count BEFORE any long operation.
+  // This ensures ~LogPersister() cannot return while FlushSync
+  // or the async task is still in flight.
+  async_state_->pending_count.fetch_add(1, std::memory_order_release);
+
+  // 3. Drain buffer synchronously (fast — typically empty or small batch)
+  auto status = FlushSync(std::chrono::seconds(1));
+  if (!status.ok()) {
+    if (callback) {
+      callback(status);
+    }
+    async_state_->pending_count.fetch_sub(1, std::memory_order_release);
+    async_state_->cv.notify_all();
+    return;
+  }
+
+  // 4. Re-check shutdown (may have been set during FlushSync)
+  if (async_state_->shutdown.load(std::memory_order_acquire)) {
+    if (callback) {
+      callback(Status::Error("LogPersister is shut down"));
+    }
+    async_state_->pending_count.fetch_sub(1, std::memory_order_release);
+    async_state_->cv.notify_all();
+    return;
+  }
+
+  if (!persister_) {
+    if (callback) {
+      callback(Status::Error("Persister is null"));
+    }
+    async_state_->pending_count.fetch_sub(1, std::memory_order_release);
+    async_state_->cv.notify_all();
+    return;
+  }
+
+  // 5. Capture shared state by value (keeps AsyncState + Persister alive)
+  auto state = async_state_;  // shared_ptr copy
+  auto cb = std::move(callback);
+
+  auto do_truncate = [state, before_index, cb]() mutable {
+    if (state->shutdown.load(std::memory_order_acquire)) {
+      if (cb) {
+        cb(Status::Error("Truncation cancelled: LogPersister shut down"));
+      }
+      state->pending_count.fetch_sub(1, std::memory_order_release);
+      state->cv.notify_all();
+      return;
+    }
+
+    auto status = state->persister->TruncatePrefix(before_index);
+    if (cb) {
+      cb(status);
+    }
+    state->pending_count.fetch_sub(1, std::memory_order_release);
+    state->cv.notify_all();
+  };
+
+  // 6. Dispatch
+  if (config_.executor) {
+    config_.executor(std::move(do_truncate));
+  } else {
+    // No executor configured — run synchronously on caller thread.
+    // This path is used in unit tests without ASIO infrastructure.
+    do_truncate();
+  }
 }
 
 std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {

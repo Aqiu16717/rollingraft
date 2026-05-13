@@ -200,7 +200,7 @@ test-asan: asan
 .PHONY: test-tsan
 test-tsan: tsan
 	$(call log_info,"Running tests under TSan...")
-	@cd $(BUILD_TSAN) && ctest --output-on-failure
+	@cd $(BUILD_TSAN) && TSAN_OPTIONS=suppressions=$(PWD)/tsan_suppressions.txt ctest --output-on-failure
 	$(call log_success,"TSan tests passed!")
 
 .PHONY: test-ubsan

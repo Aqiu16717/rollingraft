@@ -1,5 +1,6 @@
 #include <atomic>
 
+#include "asio_timer_service.h"
 #include "raft_node_impl.h"
 
 using namespace rollingraft;
@@ -7,7 +8,7 @@ using namespace rollingraft;
 RaftNode::RaftNodeImpl::RaftNodeImpl(
     const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
     std::unique_ptr<NetworkTransport> network,
-    std::unique_ptr<TimerService> timer, std::unique_ptr<Persister> persister,
+    std::unique_ptr<TimerService> timer, std::shared_ptr<Persister> persister,
     std::unique_ptr<Protocol> protocol)
     : config_(config),
       state_machine_(std::move(state_machine)),
@@ -89,8 +90,17 @@ Status RaftNode::RaftNodeImpl::Start() {
     log_config.batch_size = config_.max_entries_per_append;
     log_config.batch_interval_ms = config_.heartbeat_interval_ms / 2;
     log_config.data_dir = config_.data_dir;
-    log_persister_ =
-        std::make_unique<LogPersister>(std::move(persister_), log_config);
+
+    // Wire ASIO executor for async truncation if using AsioTimerService
+    if (auto* asio_timer = dynamic_cast<AsioTimerService*>(timer_.get())) {
+      if (auto* io = asio_timer->GetIoContext()) {
+        log_config.executor = [io](std::function<void()> fn) {
+          asio::post(*io, std::move(fn));
+        };
+      }
+    }
+
+    log_persister_ = std::make_unique<LogPersister>(persister_, log_config);
     log_persister_->Start();
 
     // Restore log entries from disk

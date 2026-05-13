@@ -1,9 +1,17 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <thread>
 
 #include "rollingraft/log_persister.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/raft_log.h"
+
+#if defined(__has_include)
+#if __has_include(<asio.hpp>)
+#include <asio.hpp>
+#define ROLLINGRAFT_HAS_ASIO
+#endif
+#endif
 
 using namespace rollingraft;
 
@@ -80,9 +88,9 @@ class MockPersister : public Persister {
 };
 
 TEST(LogCompactionTest, TruncatePrefixDeletesOldEntries) {
-  auto mock = std::make_unique<MockPersister>();
+  auto mock = std::make_shared<MockPersister>();
   auto* mock_ptr = mock.get();
-  LogPersister lp(std::move(mock));
+  LogPersister lp(mock);
   lp.Start();
 
   // Append 10 entries
@@ -110,9 +118,9 @@ TEST(LogCompactionTest, TruncatePrefixDeletesOldEntries) {
 }
 
 TEST(LogCompactionTest, TruncatePrefixWithBufferedEntries) {
-  auto mock = std::make_unique<MockPersister>();
+  auto mock = std::make_shared<MockPersister>();
   auto* mock_ptr = mock.get();
-  LogPersister lp(std::move(mock));
+  LogPersister lp(mock);
   lp.Start();
 
   // Append entries without flushing
@@ -163,3 +171,101 @@ TEST(LogCompactionTest, RetentionMath) {
   }
   EXPECT_EQ(compact_before, 1);
 }
+
+TEST(LogCompactionTest, TruncatePrefixAsyncSyncFallback) {
+  auto mock = std::make_shared<MockPersister>();
+  auto* mock_ptr = mock.get();
+  LogPersister lp(mock);
+  lp.Start();
+
+  // Append and flush entries
+  for (int i = 1; i <= 10; ++i) {
+    RaftLogEntry entry;
+    entry.index_ = i;
+    entry.term_ = 1;
+    lp.Append(entry);
+  }
+  lp.FlushSync();
+
+  // No executor configured → sync fallback
+  std::promise<Status> promise;
+  lp.TruncatePrefixAsync(5, [&promise](Status s) { promise.set_value(s); });
+
+  auto future = promise.get_future();
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)),
+            std::future_status::ready);
+  EXPECT_TRUE(future.get().ok());
+  EXPECT_EQ(mock_ptr->entries_.size(), 6);
+
+  lp.Stop();
+}
+
+#ifdef ROLLINGRAFT_HAS_ASIO
+TEST(LogCompactionTest, TruncatePrefixAsyncWithExecutor) {
+  asio::io_context io;
+  auto work = asio::make_work_guard(io);
+  std::thread io_thread([&]() { io.run(); });
+
+  LogPersistenceConfig config;
+  config.executor = [&io](std::function<void()> fn) {
+    asio::post(io, std::move(fn));
+  };
+
+  auto mock = std::make_shared<MockPersister>();
+  auto* mock_ptr = mock.get();
+  LogPersister lp(mock, config);
+  lp.Start();
+
+  // Append and flush entries
+  for (int i = 1; i <= 10; ++i) {
+    RaftLogEntry entry;
+    entry.index_ = i;
+    entry.term_ = 1;
+    lp.Append(entry);
+  }
+  lp.FlushSync();
+
+  std::promise<Status> promise;
+  lp.TruncatePrefixAsync(5, [&promise](Status s) { promise.set_value(s); });
+
+  // Must pump io_context to execute posted work
+  work.reset();
+  io_thread.join();
+
+  auto future = promise.get_future();
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)),
+            std::future_status::ready);
+  EXPECT_TRUE(future.get().ok());
+  EXPECT_EQ(mock_ptr->entries_.size(), 6);
+
+  lp.Stop();
+}
+
+TEST(LogCompactionTest, TruncatePrefixAsyncShutdownSafety) {
+  asio::io_context io;
+  auto work = asio::make_work_guard(io);
+  std::thread io_thread([&]() { io.run(); });
+
+  LogPersistenceConfig config;
+  config.executor = [&io](std::function<void()> fn) {
+    asio::post(io, std::move(fn));
+  };
+
+  {
+    auto mock = std::make_shared<MockPersister>();
+    LogPersister lp(mock, config);
+    lp.Start();
+
+    // Fire async truncation then immediately destroy
+    lp.TruncatePrefixAsync(5, [](Status s) {
+      // Should either succeed or return shutdown error
+      (void)s;
+    });
+
+    // Destructor must not crash or UAF
+  }  // lp destroyed here
+
+  work.reset();
+  io_thread.join();
+}
+#endif  // ROLLINGRAFT_HAS_ASIO

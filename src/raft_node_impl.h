@@ -72,7 +72,7 @@ class RaftNode::RaftNodeImpl {
                std::shared_ptr<StateMachine> state_machine,
                std::unique_ptr<NetworkTransport> network,
                std::unique_ptr<TimerService> timer,
-               std::unique_ptr<Persister> persister,
+               std::shared_ptr<Persister> persister,
                std::unique_ptr<Protocol> protocol);
   ~RaftNodeImpl();
 
@@ -222,7 +222,7 @@ class RaftNode::RaftNodeImpl {
   std::shared_ptr<StateMachine> state_machine_;
   std::unique_ptr<NetworkTransport> network_;
   std::unique_ptr<TimerService> timer_;
-  std::unique_ptr<Persister> persister_;
+  std::shared_ptr<Persister> persister_;
   std::unique_ptr<LogPersister> log_persister_;
   std::unique_ptr<Protocol> protocol_;
 

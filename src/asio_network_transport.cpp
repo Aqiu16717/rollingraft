@@ -360,6 +360,7 @@ class AsioNetworkTransport : public NetworkTransport {
     }
 
     running_.store(true, std::memory_order_relaxed);
+    io_threads_exited_.store(0, std::memory_order_relaxed);
 
     // Start io_context thread pool
     work_guard_ = std::make_unique<
@@ -376,6 +377,7 @@ class AsioNetworkTransport : public NetworkTransport {
         } catch (const std::exception& e) {
           LOG_ERROR("IO context error: {}", e.what());
         }
+        io_threads_exited_.fetch_add(1, std::memory_order_release);
       });
     }
 
@@ -414,10 +416,34 @@ class AsioNetworkTransport : public NetworkTransport {
       io_context_.stop();
     }
 
-    // Join all io_context threads
+    // Wake up kqueue-blocked threads on macOS.
+    // io_context::stop() alone may not wake threads blocked in kevent/epoll.
+    // Posting a no-op forces the reactor to return even after stop().
+    try {
+      asio::post(io_context_, []() {});
+    } catch (const std::exception& e) {
+      LOG_WARN("AsioNetworkTransport no-op post failed: {}", e.what());
+    }
+
+    // Wait for all worker threads to exit run() with timeout.
+    bool all_exited = false;
+    for (int i = 0; i < 200; ++i) {
+      auto exited = io_threads_exited_.load(std::memory_order_acquire);
+      if (exited == io_threads_.size()) {
+        all_exited = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
     for (auto& t : io_threads_) {
       if (t.joinable()) {
-        t.join();
+        if (all_exited) {
+          t.join();
+        } else {
+          LOG_WARN("AsioNetworkTransport thread did not exit in 2s, detaching");
+          t.detach();
+        }
       }
     }
     io_threads_.clear();
@@ -515,6 +541,7 @@ class AsioNetworkTransport : public NetworkTransport {
   mutable std::mutex mutex_;
   bool initialized_ = false;
   std::atomic<bool> running_{false};
+  std::atomic<size_t> io_threads_exited_{0};
 
   asio::io_context io_context_;
   std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>

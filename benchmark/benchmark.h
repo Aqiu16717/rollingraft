@@ -84,7 +84,7 @@ class Benchmark {
   virtual ~Benchmark() = default;
 
   // Run the benchmark and return statistics
-  BenchmarkStats Run();
+  virtual BenchmarkStats Run();
 
   // Get the name of this benchmark
   virtual std::string Name() const = 0;

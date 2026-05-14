@@ -26,12 +26,11 @@ namespace rollingraft {
 /**
  * Configuration for the benchmark cluster.
  */
-struct ClusterConfig {
+struct BenchmarkClusterConfig {
   size_t num_nodes = 3;
   std::chrono::milliseconds election_timeout{300};
   std::chrono::milliseconds heartbeat_interval{50};
   size_t snapshot_threshold_entries = 0;  // 0 = disabled
-  std::chrono::milliseconds snapshot_interval{0};  // 0 = disabled
 };
 
 /**
@@ -40,7 +39,7 @@ struct ClusterConfig {
 class ClusterBenchmark : public Benchmark {
  public:
   explicit ClusterBenchmark(const BenchmarkConfig& config,
-                            const ClusterConfig& cluster_config = {});
+                            const BenchmarkClusterConfig& cluster_config = {});
   ~ClusterBenchmark() override;
 
  protected:
@@ -72,7 +71,8 @@ class ClusterBenchmark : public Benchmark {
   RaftNodeConfig MakeConfig(NodeId id, const std::string& addr,
                             const std::vector<std::string>& all_addrs);
 
-  ClusterConfig cluster_config_;
+ protected:
+  BenchmarkClusterConfig cluster_config_;
   std::vector<std::unique_ptr<RaftNode>> nodes_;
   std::vector<std::shared_ptr<MockStateMachine>> state_machines_;
   std::vector<std::string> addrs_;

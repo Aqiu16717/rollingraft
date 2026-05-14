@@ -16,7 +16,6 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
-#include <iostream>
 #include <thread>
 #include <unordered_map>
 
@@ -385,7 +384,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   void EnqueueSend(std::string request_data, uint64_t correlation_id,
                    RpcResponseCallback callback,
                    std::chrono::milliseconds timeout) {
-    asio::post(io_ctx_, asio::bind_executor(strand_, [self = shared_from_this(),
+    asio::post(strand_, [self = shared_from_this(),
                              request_data = std::move(request_data),
                              correlation_id, callback = std::move(callback),
                              timeout]() {
@@ -421,12 +420,12 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       if (state == State::kFailed || state == State::kDisconnected) {
         self->StartConnecting();
       }
-    }));
+    });
   }
 
   // Force close + drain callbacks with error (idempotent)
   void Close() {
-    asio::post(io_ctx_, asio::bind_executor(strand_, [self = shared_from_this()]() {
+    asio::post(strand_, [self = shared_from_this()]() {
       if (self->state_.load(std::memory_order_relaxed) == State::kDisconnected) {
         return;  // Idempotent
       }
@@ -438,7 +437,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       }
       self->DrainPendingSendsWithError("Transport stopped");
       self->state_.store(State::kDisconnected, std::memory_order_release);
-    }));
+    });
   }
 
   State GetState() const {
@@ -608,6 +607,7 @@ class AsioNetworkTransport : public NetworkTransport {
     }
 
     running_.store(true, std::memory_order_relaxed);
+    io_threads_exited_.store(0, std::memory_order_relaxed);
 
     // Start io_context thread pool
     work_guard_ = std::make_unique<

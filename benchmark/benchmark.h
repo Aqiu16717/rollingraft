@@ -84,7 +84,7 @@ class Benchmark {
   virtual ~Benchmark() = default;
 
   // Run the benchmark and return statistics
-  BenchmarkStats Run();
+  virtual BenchmarkStats Run();
 
   // Get the name of this benchmark
   virtual std::string Name() const = 0;
@@ -173,6 +173,24 @@ class FailoverBenchmark : public Benchmark {
 /**
  * Utility functions for benchmark output.
  */
+/**
+ * Statistics collected from repeated benchmark runs.
+ */
+struct RepeatedBenchmarkStats {
+  BenchmarkStats mean;
+  BenchmarkStats stddev;
+  std::vector<BenchmarkStats> runs;
+  int repetition_count = 0;
+
+  std::string ToString() const;
+  void SaveToJson(const std::string& filename,
+                  const std::string& benchmark_name,
+                  const std::map<std::string, std::string>& parameters) const;
+};
+
+// Run a benchmark multiple times and collect statistics
+RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions = 3);
+
 namespace benchmark {
 
 // Print benchmark results in a formatted table
@@ -181,8 +199,14 @@ void PrintResults(const std::vector<BenchmarkStats>& results);
 // Compare multiple benchmark runs
 void PrintComparison(const std::map<std::string, BenchmarkStats>& results);
 
-// Save results to JSON file
+// Save results to JSON file (legacy simple format)
 void SaveToJson(const std::string& filename, const BenchmarkStats& stats);
+
+// Save repeated benchmark stats to JSON (schema v1.0)
+void SaveToJson(const std::string& filename,
+                const RepeatedBenchmarkStats& stats,
+                const std::string& benchmark_name,
+                const std::map<std::string, std::string>& parameters);
 
 }  // namespace benchmark
 

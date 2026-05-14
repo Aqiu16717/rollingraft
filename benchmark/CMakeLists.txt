@@ -3,16 +3,21 @@
 # Benchmark library
 add_library(rollingraft_benchmark STATIC
   benchmark.cpp
+  cluster_benchmark.cpp
+  scenario_registry.cpp
 )
 
 target_include_directories(rollingraft_benchmark
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tests
 )
 
 target_link_libraries(rollingraft_benchmark
   PUBLIC
     rollingraft
+    test_mocks
 )
 
 # Client benchmark executable
@@ -47,7 +52,23 @@ target_link_libraries(benchmark_failover
     rollingraft
 )
 
+# Unified benchmark runner
+add_executable(benchmark_runner
+  main.cpp
+  scenarios/single_leader_write.cpp
+  scenarios/latency_curve.cpp
+  scenarios/failover.cpp
+  scenarios/snapshot_recovery.cpp
+  scenarios/leader_transfer.cpp
+)
+
+target_link_libraries(benchmark_runner
+  PRIVATE
+    rollingraft_benchmark
+    rollingraft
+)
+
 # Install benchmark executables
-install(TARGETS benchmark_client benchmark_latency_curve benchmark_failover
+install(TARGETS benchmark_client benchmark_latency_curve benchmark_failover benchmark_runner
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}/benchmark
 )

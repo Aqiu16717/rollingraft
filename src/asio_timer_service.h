@@ -141,6 +141,8 @@ class AsioTimerService : public TimerService {
   std::thread io_thread_;
   // Service state flag
   std::atomic<bool> running_{false};
+  // Tracks whether io_thread has exited run() (for join timeout)
+  std::atomic<bool> io_thread_exited_{false};
 };
 
 }  // namespace rollingraft

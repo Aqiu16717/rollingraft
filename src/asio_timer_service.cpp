@@ -29,6 +29,7 @@ void AsioTimerService::Start() {
   LOG_INFO("Starting AsioTimerService...");
 
   if (owns_io_context_) {
+    io_thread_exited_.store(false, std::memory_order_relaxed);
     work_guard_ = std::make_unique<
         asio::executor_work_guard<asio::io_context::executor_type>>(
         io_context_.get_executor());
@@ -38,6 +39,7 @@ void AsioTimerService::Start() {
       } catch (const std::exception& e) {
         LOG_ERROR("TimerService IO error: {}", e.what());
       }
+      io_thread_exited_.store(true, std::memory_order_release);
     });
   }
 
@@ -75,11 +77,30 @@ void AsioTimerService::Stop() {
     // Stop io_context before joining thread
     work_guard_.reset();
     io_context_.stop();
+    // Post a no-op to wake up any thread blocked in kevent/epoll
+    // (macOS kqueue may not wake on stop() alone)
+    try {
+      asio::post(io_context_, []() {});
+    } catch (const std::exception& e) {
+      LOG_WARN("AsioTimerService no-op post failed: {}", e.what());
+    }
 
     if (io_thread_.joinable()) {
-      // Use try_join_for to avoid indefinite blocking (C++20)
-      // For C++11/14/17, use a detached approach with atomic flag
-      io_thread_.join();
+      // Wait for thread to exit with timeout (avoid indefinite hang on macOS)
+      bool exited = false;
+      for (int i = 0; i < 200; ++i) {
+        if (io_thread_exited_.load(std::memory_order_acquire)) {
+          exited = true;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      if (exited) {
+        io_thread_.join();
+      } else {
+        LOG_WARN("AsioTimerService thread did not exit in 2s, detaching");
+        io_thread_.detach();
+      }
     }
   }
 

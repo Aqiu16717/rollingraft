@@ -213,11 +213,19 @@ test-ubsan: ubsan
 # Benchmark targets
 # ============================================================
 
-.PHONY: benchmark
+.PHONY: benchmark benchmark-release benchmark-update-baseline
 benchmark: $(BUILD_RELEASE)/CMakeCache.txt
 	@cmake --build $(BUILD_RELEASE) -j$(NPROCS) \
-		--target benchmark_client benchmark_latency_curve benchmark_failover
+		--target benchmark_runner benchmark_client benchmark_latency_curve benchmark_failover
 	$(call log_success,"Benchmarks built: $(BUILD_RELEASE)/benchmark/")
+
+benchmark-release: $(BUILD_RELEASE)/CMakeCache.txt
+	@cmake --build $(BUILD_RELEASE) -j$(NPROCS) --target benchmark_runner
+	@./$(BUILD_RELEASE)/benchmark/benchmark_runner --all --output-dir=benchmark/results
+
+benchmark-update-baseline: benchmark-release
+	@cp benchmark/results/*.json benchmark/baselines/main/
+	@echo "Baseline updated. Commit benchmark/baselines/ to persist."
 
 # ============================================================
 # Code formatting

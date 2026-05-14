@@ -357,4 +357,201 @@ void SaveToJson(const std::string& filename, const BenchmarkStats& stats) {
 
 }  // namespace benchmark
 
+// ========== RepeatedBenchmarkStats ==========
+
+RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions) {
+  RepeatedBenchmarkStats result;
+  result.repetition_count = repetitions;
+  result.runs.reserve(repetitions);
+
+  for (int i = 0; i < repetitions; ++i) {
+    std::cout << "Run " << (i + 1) << "/" << repetitions << "..." << std::endl;
+    auto stats = benchmark->Run();
+    result.runs.push_back(stats);
+  }
+
+  if (result.runs.empty()) {
+    return result;
+  }
+
+  // Calculate mean
+  auto& mean = result.mean;
+  mean.total_operations = 0;
+  mean.success_count = 0;
+  mean.failure_count = 0;
+  mean.operations_per_second = 0.0;
+  mean.latency_min_us = 0.0;
+  mean.latency_max_us = 0.0;
+  mean.latency_avg_us = 0.0;
+  mean.latency_p50_us = 0.0;
+  mean.latency_p99_us = 0.0;
+  mean.latency_p999_us = 0.0;
+  mean.success_rate = 0.0;
+  mean.duration_ms = result.runs[0].duration_ms;
+
+  for (const auto& run : result.runs) {
+    mean.total_operations += run.total_operations;
+    mean.success_count += run.success_count;
+    mean.failure_count += run.failure_count;
+    mean.operations_per_second += run.operations_per_second;
+    mean.latency_min_us += run.latency_min_us;
+    mean.latency_max_us += run.latency_max_us;
+    mean.latency_avg_us += run.latency_avg_us;
+    mean.latency_p50_us += run.latency_p50_us;
+    mean.latency_p99_us += run.latency_p99_us;
+    mean.latency_p999_us += run.latency_p999_us;
+    mean.success_rate += run.success_rate;
+  }
+
+  double n = static_cast<double>(result.runs.size());
+  mean.total_operations = static_cast<uint64_t>(mean.total_operations / n);
+  mean.success_count = static_cast<uint64_t>(mean.success_count / n);
+  mean.failure_count = static_cast<uint64_t>(mean.failure_count / n);
+  mean.operations_per_second /= n;
+  mean.latency_min_us /= n;
+  mean.latency_max_us /= n;
+  mean.latency_avg_us /= n;
+  mean.latency_p50_us /= n;
+  mean.latency_p99_us /= n;
+  mean.latency_p999_us /= n;
+  mean.success_rate /= n;
+
+  // Calculate stddev
+  auto& stddev = result.stddev;
+  auto calc_stddev = [&](double mean_val,
+                         std::function<double(const BenchmarkStats&)> getter) {
+    double sum_sq = 0.0;
+    for (const auto& run : result.runs) {
+      double diff = getter(run) - mean_val;
+      sum_sq += diff * diff;
+    }
+    return std::sqrt(sum_sq / n);
+  };
+
+  stddev.operations_per_second =
+      calc_stddev(mean.operations_per_second,
+                  [](const BenchmarkStats& s) { return s.operations_per_second; });
+  stddev.latency_p50_us =
+      calc_stddev(mean.latency_p50_us,
+                  [](const BenchmarkStats& s) { return s.latency_p50_us; });
+  stddev.latency_p99_us =
+      calc_stddev(mean.latency_p99_us,
+                  [](const BenchmarkStats& s) { return s.latency_p99_us; });
+  stddev.latency_p999_us =
+      calc_stddev(mean.latency_p999_us,
+                  [](const BenchmarkStats& s) { return s.latency_p999_us; });
+  stddev.success_rate =
+      calc_stddev(mean.success_rate,
+                  [](const BenchmarkStats& s) { return s.success_rate; });
+
+  return result;
+}
+
+std::string RepeatedBenchmarkStats::ToString() const {
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(2);
+  oss << "Repeated Benchmark Results (" << repetition_count << " runs)\n";
+  oss << "========================================\n";
+  oss << "Throughput: " << mean.operations_per_second << " ± "
+      << stddev.operations_per_second << " ops/sec\n";
+  oss << "Success Rate: " << (mean.success_rate * 100.0) << " ± "
+      << (stddev.success_rate * 100.0) << "%\n";
+  oss << "Latency P50: " << mean.latency_p50_us << " ± "
+      << stddev.latency_p50_us << " us\n";
+  oss << "Latency P99: " << mean.latency_p99_us << " ± "
+      << stddev.latency_p99_us << " us\n";
+  oss << "Latency P999: " << mean.latency_p999_us << " ± "
+      << stddev.latency_p999_us << " us\n";
+  return oss.str();
+}
+
+void RepeatedBenchmarkStats::SaveToJson(
+    const std::string& filename, const std::string& benchmark_name,
+    const std::map<std::string, std::string>& parameters) const {
+  benchmark::SaveToJson(filename, *this, benchmark_name, parameters);
+}
+
+// ========== Enhanced JSON (Schema v1.0) ==========
+
+namespace benchmark {
+
+void SaveToJson(const std::string& filename,
+                const RepeatedBenchmarkStats& stats,
+                const std::string& benchmark_name,
+                const std::map<std::string, std::string>& parameters) {
+  std::ofstream file(filename);
+  if (!file.is_open()) return;
+
+  auto now = std::chrono::system_clock::now();
+  auto time_t = std::chrono::system_clock::to_time_t(now);
+  std::tm tm = *std::gmtime(&time_t);
+
+  file << "{\n";
+  file << "  \"schema_version\": \"1.0\",\n";
+  file << "  \"benchmark_name\": \"" << benchmark_name << "\",\n";
+  file << "  \"timestamp\": \"";
+  file << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+  file << "\",\n";
+
+  // Parameters
+  file << "  \"parameters\": {\n";
+  bool first = true;
+  for (const auto& [key, value] : parameters) {
+    if (!first) file << ",\n";
+    file << "    \"" << key << "\": " << value;
+    first = false;
+  }
+  file << "\n  },\n";
+
+  // Statistics
+  file << "  \"statistics\": {\n";
+  file << "    \"repetitions\": " << stats.repetition_count << ",\n";
+
+  // Throughput
+  file << "    \"throughput_ops_per_sec\": {\n";
+  file << "      \"mean\": " << stats.mean.operations_per_second << ",\n";
+  file << "      \"stddev\": " << stats.stddev.operations_per_second << ",\n";
+  file << "      \"min\": " << stats.mean.operations_per_second - stats.stddev.operations_per_second << ",\n";
+  file << "      \"max\": " << stats.mean.operations_per_second + stats.stddev.operations_per_second << "\n";
+  file << "    },\n";
+
+  // Latency
+  file << "    \"latency_us\": {\n";
+  file << "      \"p50\": { \"mean\": " << stats.mean.latency_p50_us
+       << ", \"stddev\": " << stats.stddev.latency_p50_us << " },\n";
+  file << "      \"p99\": { \"mean\": " << stats.mean.latency_p99_us
+       << ", \"stddev\": " << stats.stddev.latency_p99_us << " },\n";
+  file << "      \"p999\": { \"mean\": " << stats.mean.latency_p999_us
+       << ", \"stddev\": " << stats.stddev.latency_p999_us << " }\n";
+  file << "    },\n";
+
+  // Success rate
+  file << "    \"success_rate\": {\n";
+  file << "      \"mean\": " << stats.mean.success_rate << ",\n";
+  file << "      \"stddev\": " << stats.stddev.success_rate << "\n";
+  file << "    }\n";
+  file << "  },\n";
+
+  // Individual runs
+  file << "  \"runs\": [\n";
+  for (size_t i = 0; i < stats.runs.size(); ++i) {
+    const auto& run = stats.runs[i];
+    file << "    {\n";
+    file << "      \"run_id\": " << (i + 1) << ",\n";
+    file << "      \"throughput\": " << run.operations_per_second << ",\n";
+    file << "      \"latency_p50\": " << run.latency_p50_us << ",\n";
+    file << "      \"latency_p99\": " << run.latency_p99_us << ",\n";
+    file << "      \"latency_p999\": " << run.latency_p999_us << ",\n";
+    file << "      \"success_rate\": " << run.success_rate << ",\n";
+    file << "      \"total_operations\": " << run.total_operations << "\n";
+    file << "    }";
+    if (i + 1 < stats.runs.size()) file << ",";
+    file << "\n";
+  }
+  file << "  ]\n";
+  file << "}\n";
+}
+
+}  // namespace benchmark
+
 }  // namespace rollingraft

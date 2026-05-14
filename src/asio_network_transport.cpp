@@ -47,7 +47,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   void Start() {
     LOG_INFO("TcpConnection::Start: peer_id={}, socket_open={}", peer_id_,
              socket_.is_open());
-    connected_ = true;
+    connected_.store(true, std::memory_order_release);
     DoReadHeader();
     LOG_INFO("TcpConnection::Start completed: peer_id={}", peer_id_);
   }
@@ -60,7 +60,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         std::error_code ec;
         socket_.close(ec);
       }
-      connected_ = false;
+      connected_.store(false, std::memory_order_release);
       drained = std::move(pending_callbacks_);
       pending_callbacks_.clear();
     }
@@ -70,7 +70,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
   }
 
-  bool IsConnected() const { return connected_ && socket_.is_open(); }
+  bool IsConnected() const {
+    return connected_.load(std::memory_order_acquire) && socket_.is_open();
+  }
 
   NodeId GetPeerId() const { return peer_id_; }
   NodeAddr GetAddr() const { return addr_; }
@@ -114,7 +116,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       if (cb) {
         cb("", false, "Request timeout");
       }
-      self->connected_ = false;
+      // NOTE: Do NOT set connected_ = false here. RPC timeout is an
+      // application-layer event, not a transport-layer disconnect.
+      // PeerConnection handles connection lifecycle; TcpConnection should
+      // only mark itself disconnected on actual socket errors (read/write
+      // failure) or explicit Close().
     });
 
     // Send message (serialized through strand)
@@ -138,9 +144,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             if (cb) {
               cb("", false, "Send failed: " + ec.message());
             }
-            self->connected_ = false;
+            self->connected_.store(false, std::memory_order_release);
           }
-          // On success: do NOT cancel timer — it covers response wait too
+          // On success: do NOT cancel timer -- it covers response wait too
           // Response will be handled by DoRead -> HandleMessage
         }));
   }
@@ -164,7 +170,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             if (ec != asio::error::eof) {
               LOG_ERROR("Read header error: {}", ec.message());
             }
-            connected_ = false;
+            connected_.store(false, std::memory_order_release);
             return;
           }
 
@@ -178,7 +184,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             DoReadBody(length);
           } else {
             LOG_ERROR("Invalid message length: {}", length);
-            connected_ = false;
+            connected_.store(false, std::memory_order_release);
           }
         }));
   }
@@ -187,18 +193,18 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(body_buffer_),
-        asio::bind_executor(strand_,
-                            [this, self](std::error_code ec,
-                                         std::size_t /*bytes_transferred*/) {
-                              if (ec) {
-                                LOG_ERROR("Read body error: {}", ec.message());
-                                connected_ = false;
-                                return;
-                              }
+        asio::bind_executor(
+            strand_, [this, self](std::error_code ec,
+                                  std::size_t /*bytes_transferred*/) {
+              if (ec) {
+                LOG_ERROR("Read body error: {}", ec.message());
+                connected_.store(false, std::memory_order_release);
+                return;
+              }
 
-                              HandleMessage();
-                              DoReadHeader();
-                            }));
+              HandleMessage();
+              DoReadHeader();
+            }));
   }
 
   void HandleMessage() {
@@ -297,6 +303,252 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
     return nullptr;
   }
+};
+
+// ========== PeerConnection (async connect + pending send queue) ==========
+class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
+ public:
+  enum class State : uint8_t {
+    kDisconnected,
+    kConnecting,
+    kConnected,
+    kFailed
+  };
+
+  static constexpr std::chrono::milliseconds kConnectTimeout{5000};
+  static constexpr size_t kMaxPendingSends = 1000;
+
+  PeerConnection(asio::io_context& io_ctx, NodeId peer_id, NodeAddr addr)
+      : io_ctx_(io_ctx),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(peer_id),
+        addr_(std::move(addr)),
+        reconnect_timer_(io_ctx),
+        connect_timer_(io_ctx) {
+    // Parse and cache host/port
+    auto pos = addr_.find(':');
+    if (pos != std::string::npos) {
+      host_ = addr_.substr(0, pos);
+      port_ = static_cast<uint16_t>(std::stoi(addr_.substr(pos + 1)));
+    }
+  }
+
+  // NOTE: ~PeerConnection() does NOT call Close() because Close() uses
+  // shared_from_this() which is unsafe during destruction. Owners must call
+  // Close() explicitly before the last shared_ptr is dropped.
+
+  // Initiate async connect (idempotent; CAS-guarded)
+  void StartConnecting() {
+    State expected = State::kDisconnected;
+    if (!state_.compare_exchange_strong(expected, State::kConnecting,
+                                        std::memory_order_acq_rel)) {
+      expected = State::kFailed;
+      if (!state_.compare_exchange_strong(expected, State::kConnecting,
+                                          std::memory_order_acq_rel)) {
+        return;
+      }
+    }
+
+    auto conn = std::make_shared<TcpConnection>(io_ctx_, peer_id_, addr_);
+    conn_ = conn;
+
+    auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_ctx_);
+
+    // Connect timeout: if async_connect doesn't complete in 5s, treat as
+    // failure. CRITICAL: Do NOT cancel this timer from resolver/connect
+    // callbacks. Let it fire naturally; CAS in OnConnect ensures only the first
+    // callback wins.
+    connect_timer_.expires_after(kConnectTimeout);
+    connect_timer_.async_wait(asio::bind_executor(
+        strand_, [self = shared_from_this(), conn](std::error_code ec) {
+          if (ec) return;  // Cancelled
+          self->OnConnect(asio::error::timed_out, conn);
+        }));
+
+    resolver->async_resolve(
+        host_, std::to_string(port_),
+        asio::bind_executor(
+            strand_, [self = shared_from_this(), conn, resolver](
+                         std::error_code ec,
+                         asio::ip::tcp::resolver::results_type results) {
+              if (ec) {
+                self->OnConnect(ec, conn);
+                return;
+              }
+              asio::async_connect(
+                  conn->Socket(), results,
+                  asio::bind_executor(
+                      self->strand_,
+                      [self, conn](std::error_code ec,
+                                   asio::ip::tcp::endpoint /*ep*/) {
+                        self->OnConnect(ec, conn);
+                      }));
+            }));
+  }
+
+  // Enqueue a send. Dispatches to strand for state-machine consistency.
+  void EnqueueSend(std::string request_data, uint64_t correlation_id,
+                   RpcResponseCallback callback,
+                   std::chrono::milliseconds timeout) {
+    asio::post(strand_, [self = shared_from_this(),
+                         request_data = std::move(request_data), correlation_id,
+                         callback = std::move(callback), timeout]() {
+      auto state = self->state_.load(std::memory_order_relaxed);
+
+      if (state == State::kConnected) {
+        // Lazy disconnect detection: if TcpConnection dropped, transition to
+        // Failed
+        if (self->conn_ && !self->conn_->IsConnected()) {
+          self->state_.store(State::kFailed, std::memory_order_release);
+          self->pending_sends_.push_back({std::move(request_data),
+                                          correlation_id, std::move(callback),
+                                          timeout});
+          self->StartConnecting();
+          return;
+        }
+        self->conn_->Send(request_data, correlation_id, callback, timeout);
+        return;
+      }
+
+      // Buffer for later flush
+      self->pending_sends_.push_back({std::move(request_data), correlation_id,
+                                      std::move(callback), timeout});
+
+      // Enforce queue size cap (drop oldest on overflow)
+      if (self->pending_sends_.size() >= kMaxPendingSends) {
+        auto dropped = std::move(self->pending_sends_.front());
+        self->pending_sends_.pop_front();
+        if (dropped.callback) {
+          dropped.callback("", false, "Send queue full");
+        }
+      }
+
+      // If we're in a terminal failed/disconnected state, attempt reconnect now
+      if (state == State::kFailed || state == State::kDisconnected) {
+        self->StartConnecting();
+      }
+    });
+  }
+
+  // Force close + drain callbacks with error (idempotent)
+  void Close() {
+    asio::post(strand_, [self = shared_from_this()]() {
+      if (self->state_.load(std::memory_order_relaxed) ==
+          State::kDisconnected) {
+        return;  // Idempotent
+      }
+      self->connect_timer_.cancel();
+      self->reconnect_timer_.cancel();
+      if (self->conn_) {
+        self->conn_->Close();
+        self->conn_.reset();
+      }
+      self->DrainPendingSendsWithError("Transport stopped");
+      self->state_.store(State::kDisconnected, std::memory_order_release);
+    });
+  }
+
+  State GetState() const { return state_.load(std::memory_order_acquire); }
+
+ private:
+  void OnConnect(std::error_code ec,
+                 std::shared_ptr<TcpConnection> expected_conn) {
+    // Identity check: stale callback from replaced connection
+    if (conn_ != expected_conn) {
+      if (expected_conn) expected_conn->Close();
+      return;
+    }
+
+    if (!ec) {
+      // Success path
+      LOG_INFO("PeerConnection connected to peer {} at {}", peer_id_, addr_);
+
+      // Cancel connect timer so it doesn't fire later and cause spurious
+      // timeout callbacks.
+      connect_timer_.cancel();
+
+      State expected = State::kConnecting;
+      if (!state_.compare_exchange_strong(expected, State::kConnected,
+                                          std::memory_order_acq_rel)) {
+        // Timeout or another error raced ahead and already transitioned to
+        // kFailed. The socket is connected but we lost the race. Close it.
+        if (conn_) conn_->Close();
+        return;
+      }
+
+      // Reset backoff on successful connection
+      reconnect_delay_ = std::chrono::milliseconds(100);
+      reconnect_timer_.cancel();
+
+      conn_->Start();  // Begin async_read loop
+      FlushPendingSends();
+      return;
+    }
+
+    // Error path (includes timeout and operation_aborted from Close())
+    State expected = State::kConnecting;
+    if (!state_.compare_exchange_strong(expected, State::kFailed,
+                                        std::memory_order_acq_rel)) {
+      return;  // Already handled by another callback path
+    }
+
+    if (conn_) conn_->Close();  // Ensure socket closed, inflight ops cancelled
+    LOG_WARN("Failed to connect to {}: {}", addr_, ec.message());
+    DrainPendingSendsWithError("Connection failed: " + ec.message());
+    StartBackoffReconnect();
+  }
+
+  void FlushPendingSends() {
+    auto sends = std::move(pending_sends_);
+    for (auto& s : sends) {
+      if (conn_) {
+        conn_->Send(s.request_data, s.correlation_id, s.callback, s.timeout);
+      }
+    }
+  }
+
+  void DrainPendingSendsWithError(const std::string& error_msg) {
+    auto sends = std::move(pending_sends_);
+    for (auto& s : sends) {
+      if (s.callback) s.callback("", false, error_msg);
+    }
+  }
+
+  void StartBackoffReconnect() {
+    reconnect_timer_.expires_after(reconnect_delay_);
+    reconnect_timer_.async_wait(asio::bind_executor(
+        strand_, [self = shared_from_this()](std::error_code ec) {
+          if (ec) return;  // Cancelled
+          if (self->state_.load(std::memory_order_acquire) == State::kFailed) {
+            self->StartConnecting();
+          }
+        }));
+
+    reconnect_delay_ =
+        std::min(reconnect_delay_ * 2, std::chrono::milliseconds(5000));
+  }
+
+  struct PendingSend {
+    std::string request_data;
+    uint64_t correlation_id;
+    RpcResponseCallback callback;
+    std::chrono::milliseconds timeout;
+  };
+
+  asio::io_context& io_ctx_;
+  asio::strand<asio::io_context::executor_type> strand_;
+  NodeId peer_id_;
+  NodeAddr addr_;
+  std::string host_;
+  uint16_t port_ = 0;
+  std::atomic<State> state_{State::kDisconnected};
+
+  std::shared_ptr<TcpConnection> conn_;
+  std::deque<PendingSend> pending_sends_;  // accessed only on strand_
+
+  std::chrono::milliseconds reconnect_delay_{100};
+  asio::steady_timer reconnect_timer_;
+  asio::steady_timer connect_timer_;
 };
 
 class AsioNetworkTransport : public NetworkTransport {
@@ -405,11 +657,11 @@ class AsioNetworkTransport : public NetworkTransport {
         acceptor_->close(ec);
       }
 
-      // Close all connections
-      for (auto& [id, conn] : connections_) {
-        conn->Close();
+      // Close all peer connections
+      for (auto& [id, peer] : peers_) {
+        peer->Close();
       }
-      connections_.clear();
+      peers_.clear();
 
       // Stop io_context
       work_guard_.reset();
@@ -417,8 +669,6 @@ class AsioNetworkTransport : public NetworkTransport {
     }
 
     // Wake up kqueue-blocked threads on macOS.
-    // io_context::stop() alone may not wake threads blocked in kevent/epoll.
-    // Posting a no-op forces the reactor to return even after stop().
     try {
       asio::post(io_context_, []() {});
     } catch (const std::exception& e) {
@@ -441,7 +691,6 @@ class AsioNetworkTransport : public NetworkTransport {
         if (all_exited) {
           t.join();
         } else {
-          LOG_WARN("AsioNetworkTransport thread did not exit in 2s, detaching");
           t.detach();
         }
       }
@@ -462,12 +711,8 @@ class AsioNetworkTransport : public NetworkTransport {
     // Post to io_context for async execution on the thread pool
     asio::post(io_context_, [this, to, addr, request_data, correlation_id,
                              timeout, callback]() {
-      auto conn = GetOrCreateConnection(to, addr);
-      if (!conn) {
-        callback("", false, "Failed to connect to " + addr);
-        return;
-      }
-      conn->Send(request_data, correlation_id, callback, timeout);
+      auto peer = GetOrCreatePeerConnection(to, addr);
+      peer->EnqueueSend(request_data, correlation_id, callback, timeout);
     });
   }
 
@@ -480,7 +725,7 @@ class AsioNetworkTransport : public NetworkTransport {
       if (!ec) {
         new_conn->SetRequestHandler(request_handler_);
         new_conn->Start();
-        // Inbound connections are NOT stored in connections_ (which is
+        // Inbound connections are NOT stored in peers_ (which is
         // for outbound peer connections only). Storing with peer_id=-1
         // would cause overwriting and use-after-free.
         LOG_INFO("Accepted inbound connection from {}",
@@ -495,50 +740,27 @@ class AsioNetworkTransport : public NetworkTransport {
     });
   }
 
-  std::shared_ptr<TcpConnection> GetOrCreateConnection(NodeId peer_id,
-                                                       const NodeAddr& addr) {
+  std::shared_ptr<PeerConnection> GetOrCreatePeerConnection(
+      NodeId peer_id, const NodeAddr& addr) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    auto it = connections_.find(peer_id);
-    if (it != connections_.end()) {
-      if (it->second->IsConnected()) {
-        return it->second;
+    auto it = peers_.find(peer_id);
+    if (it != peers_.end()) {
+      auto peer = it->second;
+      auto state = peer->GetState();
+      if (state == PeerConnection::State::kConnected ||
+          state == PeerConnection::State::kConnecting) {
+        return peer;
       }
-      it->second->Close();
-      connections_.erase(it);
+      // Failed or unexpected state: close old peer and reconnect
+      peer->Close();
+      peers_.erase(it);
     }
 
-    // Parse address
-    auto pos = addr.find(':');
-    if (pos == std::string::npos) {
-      return nullptr;
-    }
-
-    std::string host = addr.substr(0, pos);
-    uint16_t port = static_cast<uint16_t>(std::stoi(addr.substr(pos + 1)));
-
-    try {
-      asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);
-
-      auto conn = std::make_shared<TcpConnection>(io_context_, peer_id, addr);
-
-      // Use synchronous connect to ensure connection is ready before returning
-      std::error_code ec;
-      conn->Socket().connect(endpoint, ec);
-      if (ec) {
-        LOG_WARN("Failed to connect to {}: {}", addr, ec.message());
-        return nullptr;
-      }
-
-      // Start reading immediately after successful connection
-      conn->Start();
-      connections_[peer_id] = conn;
-      LOG_INFO("Connected to peer {} at {}", peer_id, addr);
-      return conn;
-    } catch (const std::exception& e) {
-      LOG_ERROR("Failed to create connection: {}", e.what());
-      return nullptr;
-    }
+    auto peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr);
+    peers_[peer_id] = peer;
+    peer->StartConnecting();
+    return peer;
   }
 
  private:
@@ -557,7 +779,7 @@ class AsioNetworkTransport : public NetworkTransport {
   RpcRequestHandler request_handler_;
   ConnectionCallback connection_callback_;
 
-  std::unordered_map<NodeId, std::shared_ptr<TcpConnection>> connections_;
+  std::unordered_map<NodeId, std::shared_ptr<PeerConnection>> peers_;
 };
 
 // Factory function

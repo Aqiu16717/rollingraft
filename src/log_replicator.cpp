@@ -127,7 +127,11 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
   // Bridge pattern: election_mtx_ first, then replication_mtx_
   std::lock_guard<std::mutex> lock_e(election_mtx_);
   std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  ScheduleAppendEntriesRetryLocked(peer_id);
+}
 
+void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
+  // Precondition: caller holds election_mtx_ + replication_mtx_
   if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
 
   auto& retry = retry_state_[peer_id];
@@ -218,7 +222,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     }
 
     // Use exponential backoff retry for log mismatch too
-    ScheduleAppendEntriesRetry(from);
+    ScheduleAppendEntriesRetryLocked(from);
   }
 }
 

@@ -120,24 +120,35 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
   std::atomic<bool> success{false};
   std::string error_msg;
 
-  nodes_[leader_idx]->Propose(command, [&](const ApplyResult& result) {
-    success = result.success;
-    if (!result.success) {
-      error_msg = result.error_message;
-    }
-    done = true;
-  });
+  auto status = nodes_[leader_idx]->Propose(
+      command, [&](const ApplyResult& result) {
+        success.store(result.success, std::memory_order_release);
+        if (!result.success) {
+          error_msg = result.error_message;
+        }
+        done.store(true, std::memory_order_release);
+      });
+
+  if (!status.ok()) {
+    return Status::Error("Propose rejected: " + status.ToString());
+  }
 
   auto wait_start = std::chrono::steady_clock::now();
-  while (!done.load()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  while (!done.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // If leader changed, proposal may be lost; return error for retry
+    if (GetLeaderIndex() != leader_idx) {
+      return Status::Error("Leader changed during proposal");
+    }
+
     if (std::chrono::steady_clock::now() - wait_start >
         std::chrono::seconds(5)) {
       return Status::Error("Timeout waiting for commit");
     }
   }
 
-  if (!success.load()) {
+  if (!success.load(std::memory_order_acquire)) {
     return Status::Error("Propose failed: " + error_msg);
   }
   return Status::OK();

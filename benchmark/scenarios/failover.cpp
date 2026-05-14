@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -24,7 +25,7 @@ class FailoverScenario : public ClusterBenchmark {
               return config;
             }(),
             []() {
-              ClusterConfig config;
+              BenchmarkClusterConfig config;
               config.num_nodes = 3;
               config.election_timeout = std::chrono::milliseconds(300);
               config.heartbeat_interval = std::chrono::milliseconds(50);

@@ -18,13 +18,13 @@ class SingleLeaderWriteScenario : public ClusterBenchmark {
       : ClusterBenchmark(
             []() {
               BenchmarkConfig config;
-              config.duration = std::chrono::seconds(30);
+              config.duration = std::chrono::seconds(5);
               config.num_clients = 1;
               config.payload_size = 100;
               return config;
             }(),
             []() {
-              ClusterConfig config;
+              BenchmarkClusterConfig config;
               config.num_nodes = 3;
               config.election_timeout = std::chrono::milliseconds(300);
               config.heartbeat_interval = std::chrono::milliseconds(50);

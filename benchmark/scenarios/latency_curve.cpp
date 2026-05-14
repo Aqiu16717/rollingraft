@@ -4,6 +4,7 @@
  */
 
 #include <chrono>
+#include <iostream>
 #include <map>
 #include <string>
 
@@ -25,7 +26,7 @@ class LatencyCurveScenario : public ClusterBenchmark {
               return config;
             }(),
             []() {
-              ClusterConfig config;
+              BenchmarkClusterConfig config;
               config.num_nodes = 3;
               config.election_timeout = std::chrono::milliseconds(300);
               config.heartbeat_interval = std::chrono::milliseconds(50);

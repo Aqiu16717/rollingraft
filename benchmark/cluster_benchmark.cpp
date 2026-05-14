@@ -12,7 +12,7 @@
 namespace rollingraft {
 
 ClusterBenchmark::ClusterBenchmark(const BenchmarkConfig& config,
-                                   const ClusterConfig& cluster_config)
+                                   const BenchmarkClusterConfig& cluster_config)
     : Benchmark(config), cluster_config_(cluster_config) {}
 
 ClusterBenchmark::~ClusterBenchmark() {
@@ -115,20 +115,21 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
     return Status::Error("No leader elected");
   }
 
-  std::vector<uint8_t> data(command.begin(), command.end());
-  auto result = nodes_[leader_idx]->Propose(data);
-  if (!result.ok()) {
-    return Status::Error("Propose failed: " + result.error_message());
-  }
+  // Propose is async callback-based; block until callback fires
+  std::atomic<bool> done{false};
+  std::atomic<bool> success{false};
+  std::string error_msg;
 
-  // Wait for commit
-  bool committed = false;
-  nodes_[leader_idx]->WaitIndex(result.value(), [&committed]() {
-    committed = true;
+  nodes_[leader_idx]->Propose(command, [&](const ApplyResult& result) {
+    success = result.success;
+    if (!result.success) {
+      error_msg = result.error_message;
+    }
+    done = true;
   });
 
   auto wait_start = std::chrono::steady_clock::now();
-  while (!committed) {
+  while (!done.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     if (std::chrono::steady_clock::now() - wait_start >
         std::chrono::seconds(5)) {
@@ -136,6 +137,9 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
     }
   }
 
+  if (!success.load()) {
+    return Status::Error("Propose failed: " + error_msg);
+  }
   return Status::OK();
 }
 
@@ -196,12 +200,10 @@ RaftNodeConfig ClusterBenchmark::MakeConfig(NodeId id,
   config.heartbeat_interval_ms =
       static_cast<int>(cluster_config_.heartbeat_interval.count());
   config.snapshot_threshold_entries = cluster_config_.snapshot_threshold_entries;
-  config.snapshot_interval_ms =
-      static_cast<int>(cluster_config_.snapshot_interval.count());
 
   for (const auto& peer_addr : all_addrs) {
     if (peer_addr != addr) {
-      config.peer_addresses.push_back(peer_addr);
+      config.peers.push_back(peer_addr);
     }
   }
 

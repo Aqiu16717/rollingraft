@@ -355,6 +355,8 @@ void SaveToJson(const std::string& filename, const BenchmarkStats& stats) {
   file << "}\n";
 }
 
+}  // namespace benchmark
+
 // ========== RepeatedBenchmarkStats ==========
 
 RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions) {

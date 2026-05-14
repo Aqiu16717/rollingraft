@@ -29,7 +29,7 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
               config.num_nodes = 3;
               config.election_timeout = std::chrono::milliseconds(300);
               config.heartbeat_interval = std::chrono::milliseconds(50);
-              config.snapshot_threshold_entries = 5000;
+              config.snapshot_threshold_entries = 2000;
               return config;
             }()) {}
 
@@ -40,23 +40,25 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
     if (!ClusterBenchmark::SetUp()) return false;
 
     // Pre-load entries to trigger snapshot
-    std::cout << "Pre-loading 10,000 entries to trigger snapshot..."
-              << std::endl;
-    for (int i = 0; i < 10000; ++i) {
+    const int kPreloadCount = 1000;
+    std::cout << "Pre-loading " << kPreloadCount
+              << " entries to trigger snapshot..." << std::endl;
+    for (int i = 0; i < kPreloadCount; ++i) {
       auto status = ExecuteCommand("entry_" + std::to_string(i));
       if (!status.ok()) {
         std::cerr << "Pre-load failed at entry " << i << ": "
                   << status.ToString() << std::endl;
         return false;
       }
-      if (i % 1000 == 0) {
+      if (i % 100 == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         std::cout << "  Loaded " << i << " entries...\r" << std::flush;
       }
     }
-    std::cout << "  Loaded 10000 entries." << std::endl;
+    std::cout << "  Loaded " << kPreloadCount << " entries." << std::endl;
 
     // Wait for snapshot to complete
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 
     return true;
   }

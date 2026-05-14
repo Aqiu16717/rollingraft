@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <thread>
 
 namespace rollingraft {
@@ -15,19 +16,17 @@ ClusterBenchmark::ClusterBenchmark(const BenchmarkConfig& config,
                                    const BenchmarkClusterConfig& cluster_config)
     : Benchmark(config), cluster_config_(cluster_config) {}
 
-ClusterBenchmark::~ClusterBenchmark() {
-  TearDown();
-}
+ClusterBenchmark::~ClusterBenchmark() { TearDown(); }
 
 bool ClusterBenchmark::SetUp() {
   std::cerr << "[BENCH] SetUp: starting cluster..." << std::endl;
   // Create temp data directories
   data_dirs_.clear();
   for (size_t i = 0; i < cluster_config_.num_nodes; ++i) {
-    std::string dir = "/tmp/raft_benchmark_node_" + std::to_string(i + 1) +
-                      "_" + std::to_string(
-                          std::chrono::steady_clock::now().time_since_epoch() /
-                          std::chrono::milliseconds(1));
+    std::string dir =
+        "/tmp/raft_benchmark_node_" + std::to_string(i + 1) + "_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch() /
+                       std::chrono::milliseconds(1));
     data_dirs_.push_back(dir);
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -128,8 +127,8 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
   std::atomic<bool> success{false};
   std::string error_msg;
 
-  auto status = nodes_[leader_idx]->Propose(
-      command, [&](const ApplyResult& result) {
+  auto status =
+      nodes_[leader_idx]->Propose(command, [&](const ApplyResult& result) {
         success.store(result.success, std::memory_order_release);
         if (!result.success) {
           error_msg = result.error_message;
@@ -138,8 +137,7 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
       });
 
   if (!status.ok()) {
-    std::cerr << "[BENCH] Propose rejected: " << status.ToString()
-              << std::endl;
+    std::cerr << "[BENCH] Propose rejected: " << status.ToString() << std::endl;
     return Status::Error("Propose rejected: " + status.ToString());
   }
 
@@ -217,19 +215,24 @@ Status ClusterBenchmark::RestartNode(size_t index) {
   return nodes_[index]->Start();
 }
 
-RaftNodeConfig ClusterBenchmark::MakeConfig(NodeId id,
-                                            const std::string& addr,
-                                            const std::vector<std::string>&
-                                                all_addrs) {
+RaftNodeConfig ClusterBenchmark::MakeConfig(
+    NodeId id, const std::string& addr,
+    const std::vector<std::string>& all_addrs) {
   RaftNodeConfig config;
   config.node_id = id;
   config.listen_addr = addr;
   config.data_dir = data_dirs_[id - 1];
-  config.election_timeout_ms =
-      static_cast<int>(cluster_config_.election_timeout.count());
+  // Add random jitter to election timeout to prevent split votes
+  // when multiple followers timeout simultaneously (Raft requirement)
+  static thread_local std::mt19937 gen(std::random_device{}());
+  std::uniform_int_distribution<> dis(
+      static_cast<int>(cluster_config_.election_timeout.count() * 0.5),
+      static_cast<int>(cluster_config_.election_timeout.count()));
+  config.election_timeout_ms = dis(gen);
   config.heartbeat_interval_ms =
       static_cast<int>(cluster_config_.heartbeat_interval.count());
-  config.snapshot_threshold_entries = cluster_config_.snapshot_threshold_entries;
+  config.snapshot_threshold_entries =
+      cluster_config_.snapshot_threshold_entries;
 
   for (const auto& peer_addr : all_addrs) {
     if (peer_addr != addr) {

@@ -37,6 +37,12 @@ class LatencyCurveScenario : public ClusterBenchmark {
 
   // Override Run to test at multiple throughput levels
   BenchmarkStats Run() override {
+    if (!SetUp()) {
+      BenchmarkStats stats;
+      stats.failure_count = 1;
+      return stats;
+    }
+
     // Warmup
     std::cout << "Warming up..." << std::endl;
     for (int i = 0; i < 100; ++i) {
@@ -74,10 +80,9 @@ class LatencyCurveScenario : public ClusterBenchmark {
         auto op_end = std::chrono::steady_clock::now();
         last_op_time = op_start;
 
-        auto latency_us =
-            std::chrono::duration_cast<std::chrono::microseconds>(op_end -
-                                                                  op_start)
-                .count();
+        auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                              op_end - op_start)
+                              .count();
         latencies.push_back(static_cast<double>(latency_us));
 
         if (status.ok()) {
@@ -114,7 +119,9 @@ class LatencyCurveScenario : public ClusterBenchmark {
         stats.latency_avg_us = sum / latencies.size();
 
         auto percentile = [&](double p) -> double {
-          size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
+          size_t idx =
+              static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) -
+              1;
           if (idx >= latencies.size()) idx = latencies.size() - 1;
           return latencies[idx];
         };
@@ -133,6 +140,8 @@ class LatencyCurveScenario : public ClusterBenchmark {
       results[target] = stats;
     }
 
+    TearDown();
+
     // Return stats for the highest throughput level as representative
     return results.empty() ? BenchmarkStats{} : results.rbegin()->second;
   }
@@ -144,8 +153,7 @@ class LatencyCurveScenario : public ClusterBenchmark {
   }
 };
 
-REGISTER_SCENARIO(latency_curve, []() {
-  return std::make_unique<LatencyCurveScenario>();
-});
+REGISTER_SCENARIO(latency_curve,
+                  []() { return std::make_unique<LatencyCurveScenario>(); });
 
 }  // namespace rollingraft

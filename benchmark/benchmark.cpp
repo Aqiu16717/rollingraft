@@ -428,9 +428,9 @@ RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions) {
     return std::sqrt(sum_sq / n);
   };
 
-  stddev.operations_per_second =
-      calc_stddev(mean.operations_per_second,
-                  [](const BenchmarkStats& s) { return s.operations_per_second; });
+  stddev.operations_per_second = calc_stddev(
+      mean.operations_per_second,
+      [](const BenchmarkStats& s) { return s.operations_per_second; });
   stddev.latency_p50_us =
       calc_stddev(mean.latency_p50_us,
                   [](const BenchmarkStats& s) { return s.latency_p50_us; });
@@ -511,8 +511,12 @@ void SaveToJson(const std::string& filename,
   file << "    \"throughput_ops_per_sec\": {\n";
   file << "      \"mean\": " << stats.mean.operations_per_second << ",\n";
   file << "      \"stddev\": " << stats.stddev.operations_per_second << ",\n";
-  file << "      \"min\": " << stats.mean.operations_per_second - stats.stddev.operations_per_second << ",\n";
-  file << "      \"max\": " << stats.mean.operations_per_second + stats.stddev.operations_per_second << "\n";
+  file << "      \"min\": "
+       << stats.mean.operations_per_second - stats.stddev.operations_per_second
+       << ",\n";
+  file << "      \"max\": "
+       << stats.mean.operations_per_second + stats.stddev.operations_per_second
+       << "\n";
   file << "    },\n";
 
   // Latency

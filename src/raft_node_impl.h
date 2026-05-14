@@ -137,6 +137,8 @@ class RaftNode::RaftNodeImpl {
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
   void ScheduleAppendEntriesRetry(NodeId peer_id);  // With exponential backoff
+  void ScheduleAppendEntriesRetryLocked(
+      NodeId peer_id);  // Precondition: caller holds election_mtx_ + replication_mtx_
 
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);

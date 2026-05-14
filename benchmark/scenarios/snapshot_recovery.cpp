@@ -90,10 +90,9 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
       auto status = ExecuteCommand("phase1_" + std::to_string(i));
       auto op_end = std::chrono::steady_clock::now();
 
-      auto latency_us =
-          std::chrono::duration_cast<std::chrono::microseconds>(op_end -
-                                                                op_start)
-              .count();
+      auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                            op_end - op_start)
+                            .count();
       latencies.push_back(static_cast<double>(latency_us));
 
       if (status.ok()) {
@@ -117,8 +116,7 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
       std::sort(latencies.begin(), latencies.end());
       auto percentile = [&](double p) -> double {
         size_t idx =
-            static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) -
-            1;
+            static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
         if (idx >= latencies.size()) idx = latencies.size() - 1;
         return latencies[idx];
       };
@@ -156,6 +154,7 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
     // Restart follower
     std::cout << "Restarting follower..." << std::endl;
     auto restart_start = std::chrono::steady_clock::now();
+    (void)restart_start;
     auto restart_status = RestartNode(follower_idx);
     if (!restart_status.ok()) {
       std::cerr << "Failed to restart follower: " << restart_status.ToString()
@@ -180,10 +179,14 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    if (!caught_up) {
+      std::cerr << "Warning: Follower did not catch up within timeout"
+                << std::endl;
+    }
+
     auto catch_up_end = std::chrono::steady_clock::now();
-    auto catch_up_time =
-        std::chrono::duration_cast<std::chrono::milliseconds>(catch_up_end -
-                                                              catch_up_start);
+    auto catch_up_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+        catch_up_end - catch_up_start);
 
     std::cout << "Catch-up time: " << catch_up_time.count() << " ms"
               << std::endl;

@@ -20,6 +20,7 @@ ClusterBenchmark::~ClusterBenchmark() {
 }
 
 bool ClusterBenchmark::SetUp() {
+  std::cerr << "[BENCH] SetUp: starting cluster..." << std::endl;
   // Create temp data directories
   data_dirs_.clear();
   for (size_t i = 0; i < cluster_config_.num_nodes; ++i) {
@@ -56,9 +57,15 @@ bool ClusterBenchmark::SetUp() {
 
   // Wait for leader election
   if (!WaitForLeader(std::chrono::seconds(5))) {
-    std::cerr << "Failed to elect leader within timeout" << std::endl;
+    std::cerr << "[BENCH] Failed to elect leader within timeout" << std::endl;
     return false;
   }
+  std::cerr << "[BENCH] Leader elected: node " << (GetLeaderIndex() + 1)
+            << std::endl;
+
+  // Give cluster time to stabilize heartbeat before benchmark load
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  std::cerr << "[BENCH] SetUp complete." << std::endl;
 
   return true;
 }
@@ -112,6 +119,7 @@ int ClusterBenchmark::GetLeaderIndex() const {
 Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
   int leader_idx = GetLeaderIndex();
   if (leader_idx < 0) {
+    std::cerr << "[BENCH] No leader!" << std::endl;
     return Status::Error("No leader elected");
   }
 
@@ -130,25 +138,35 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
       });
 
   if (!status.ok()) {
+    std::cerr << "[BENCH] Propose rejected: " << status.ToString()
+              << std::endl;
     return Status::Error("Propose rejected: " + status.ToString());
   }
 
   auto wait_start = std::chrono::steady_clock::now();
+  int dots = 0;
   while (!done.load(std::memory_order_acquire)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // If leader changed, proposal may be lost; return error for retry
     if (GetLeaderIndex() != leader_idx) {
+      std::cerr << "[BENCH] Leader changed!" << std::endl;
       return Status::Error("Leader changed during proposal");
+    }
+
+    if (++dots % 100 == 0) {
+      std::cerr << "." << std::flush;
     }
 
     if (std::chrono::steady_clock::now() - wait_start >
         std::chrono::seconds(5)) {
+      std::cerr << "[BENCH] TIMEOUT" << std::endl;
       return Status::Error("Timeout waiting for commit");
     }
   }
 
   if (!success.load(std::memory_order_acquire)) {
+    std::cerr << "[BENCH] Failed: " << error_msg << std::endl;
     return Status::Error("Propose failed: " + error_msg);
   }
   return Status::OK();
@@ -164,7 +182,7 @@ Status ClusterBenchmark::ExecuteCommand(const std::string& command) {
 
     // Wait a bit and retry (leader may have changed)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    WaitForLeader(std::chrono::seconds(2));
+    WaitForLeader(std::chrono::seconds(10));
   }
 
   return Status::Error("Failed to execute command after 3 attempts");
@@ -181,6 +199,7 @@ std::string ClusterBenchmark::GetLeaderAddr() const {
 void ClusterBenchmark::StopNode(size_t index) {
   if (index < nodes_.size() && nodes_[index]) {
     nodes_[index]->Stop();
+    nodes_[index].reset();  // Clear pointer so GetLeaderIndex skips it
   }
 }
 

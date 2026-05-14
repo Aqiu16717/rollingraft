@@ -98,7 +98,7 @@ class FailoverScenario : public ClusterBenchmark {
     std::cout << "Waiting for failover..." << std::flush;
 
     while (std::chrono::steady_clock::now() - failover_start < max_wait) {
-      auto status = ExecuteCommand("load");
+      auto status = ProposeToLeader("load");
       ++ops_during_failover;
 
       if (!status.ok()) {

@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <thread>
 
 namespace rollingraft {
@@ -221,8 +222,13 @@ RaftNodeConfig ClusterBenchmark::MakeConfig(
   config.node_id = id;
   config.listen_addr = addr;
   config.data_dir = data_dirs_[id - 1];
-  config.election_timeout_ms =
-      static_cast<int>(cluster_config_.election_timeout.count());
+  // Add random jitter to election timeout to prevent split votes
+  // when multiple followers timeout simultaneously (Raft requirement)
+  static thread_local std::mt19937 gen(std::random_device{}());
+  std::uniform_int_distribution<> dis(
+      static_cast<int>(cluster_config_.election_timeout.count() * 0.5),
+      static_cast<int>(cluster_config_.election_timeout.count()));
+  config.election_timeout_ms = dis(gen);
   config.heartbeat_interval_ms =
       static_cast<int>(cluster_config_.heartbeat_interval.count());
   config.snapshot_threshold_entries =

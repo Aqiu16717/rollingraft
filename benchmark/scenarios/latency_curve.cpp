@@ -37,6 +37,12 @@ class LatencyCurveScenario : public ClusterBenchmark {
 
   // Override Run to test at multiple throughput levels
   BenchmarkStats Run() override {
+    if (!SetUp()) {
+      BenchmarkStats stats;
+      stats.failure_count = 1;
+      return stats;
+    }
+
     // Warmup
     std::cout << "Warming up..." << std::endl;
     for (int i = 0; i < 100; ++i) {
@@ -133,6 +139,8 @@ class LatencyCurveScenario : public ClusterBenchmark {
 
       results[target] = stats;
     }
+
+    TearDown();
 
     // Return stats for the highest throughput level as representative
     return results.empty() ? BenchmarkStats{} : results.rbegin()->second;

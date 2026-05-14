@@ -500,8 +500,12 @@ class AsioNetworkTransport : public NetworkTransport {
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto it = connections_.find(peer_id);
-    if (it != connections_.end() && it->second->IsConnected()) {
-      return it->second;
+    if (it != connections_.end()) {
+      if (it->second->IsConnected()) {
+        return it->second;
+      }
+      it->second->Close();
+      connections_.erase(it);
     }
 
     // Parse address

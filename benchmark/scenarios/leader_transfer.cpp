@@ -40,9 +40,7 @@ class LeaderTransferScenario : public ClusterBenchmark {
     return leader_idx_ >= 0;
   }
 
-  OperationResult DoOperation() override {
-    return OperationResult{};
-  }
+  OperationResult DoOperation() override { return OperationResult{}; }
 
  public:
   BenchmarkStats Run() override {
@@ -68,8 +66,8 @@ class LeaderTransferScenario : public ClusterBenchmark {
     }
 
     // Stop the leader to simulate transfer
-    std::cout << "\nStopping leader (node " << (leader_idx_ + 1)
-              << ")..." << std::endl;
+    std::cout << "\nStopping leader (node " << (leader_idx_ + 1) << ")..."
+              << std::endl;
     auto transfer_start = std::chrono::steady_clock::now();
     StopNode(leader_idx_);
 
@@ -136,8 +134,7 @@ class LeaderTransferScenario : public ClusterBenchmark {
   int leader_idx_ = -1;
 };
 
-REGISTER_SCENARIO(leader_transfer, []() {
-  return std::make_unique<LeaderTransferScenario>();
-});
+REGISTER_SCENARIO(leader_transfer,
+                  []() { return std::make_unique<LeaderTransferScenario>(); });
 
 }  // namespace rollingraft

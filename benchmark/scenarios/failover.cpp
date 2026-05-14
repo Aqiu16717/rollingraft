@@ -175,8 +175,7 @@ class FailoverScenario : public ClusterBenchmark {
   std::chrono::milliseconds recovery_ms_{0};
 };
 
-REGISTER_SCENARIO(failover, []() {
-  return std::make_unique<FailoverScenario>();
-});
+REGISTER_SCENARIO(failover,
+                  []() { return std::make_unique<FailoverScenario>(); });
 
 }  // namespace rollingraft

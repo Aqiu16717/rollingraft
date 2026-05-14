@@ -17,7 +17,8 @@ void ScenarioRegistry::Register(const std::string& name,
   factories_[name] = std::move(factory);
 }
 
-std::unique_ptr<Benchmark> ScenarioRegistry::Create(const std::string& name) const {
+std::unique_ptr<Benchmark> ScenarioRegistry::Create(
+    const std::string& name) const {
   auto it = factories_.find(name);
   if (it != factories_.end()) {
     return it->second();

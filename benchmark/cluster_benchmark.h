@@ -16,10 +16,10 @@
 #include "benchmark.h"
 
 // Include ephemeral port allocator from tests
+#include "rollingraft/raft_node.h"
+
 #include "tests/integration/ephemeral_port.h"
 #include "tests/mock/mock_state_machine.h"
-
-#include "rollingraft/raft_node.h"
 
 namespace rollingraft {
 

@@ -193,18 +193,18 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     auto self = shared_from_this();
     asio::async_read(
         socket_, asio::buffer(body_buffer_),
-        asio::bind_executor(strand_,
-                            [this, self](std::error_code ec,
-                                         std::size_t /*bytes_transferred*/) {
-                              if (ec) {
-                                LOG_ERROR("Read body error: {}", ec.message());
-                                connected_.store(false, std::memory_order_release);
-                                return;
-                              }
+        asio::bind_executor(
+            strand_, [this, self](std::error_code ec,
+                                  std::size_t /*bytes_transferred*/) {
+              if (ec) {
+                LOG_ERROR("Read body error: {}", ec.message());
+                connected_.store(false, std::memory_order_release);
+                return;
+              }
 
-                              HandleMessage();
-                              DoReadHeader();
-                            }));
+              HandleMessage();
+              DoReadHeader();
+            }));
   }
 
   void HandleMessage() {
@@ -308,7 +308,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 // ========== PeerConnection (async connect + pending send queue) ==========
 class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
  public:
-  enum class State : uint8_t { kDisconnected, kConnecting, kConnected, kFailed };
+  enum class State : uint8_t {
+    kDisconnected,
+    kConnecting,
+    kConnected,
+    kFailed
+  };
 
   static constexpr std::chrono::milliseconds kConnectTimeout{5000};
   static constexpr size_t kMaxPendingSends = 1000;
@@ -336,10 +341,10 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   void StartConnecting() {
     State expected = State::kDisconnected;
     if (!state_.compare_exchange_strong(expected, State::kConnecting,
-                                         std::memory_order_acq_rel)) {
+                                        std::memory_order_acq_rel)) {
       expected = State::kFailed;
       if (!state_.compare_exchange_strong(expected, State::kConnecting,
-                                           std::memory_order_acq_rel)) {
+                                          std::memory_order_acq_rel)) {
         return;
       }
     }
@@ -349,13 +354,13 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
 
     auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_ctx_);
 
-    // Connect timeout: if async_connect doesn't complete in 5s, treat as failure.
-    // CRITICAL: Do NOT cancel this timer from resolver/connect callbacks.
-    // Let it fire naturally; CAS in OnConnect ensures only the first callback wins.
+    // Connect timeout: if async_connect doesn't complete in 5s, treat as
+    // failure. CRITICAL: Do NOT cancel this timer from resolver/connect
+    // callbacks. Let it fire naturally; CAS in OnConnect ensures only the first
+    // callback wins.
     connect_timer_.expires_after(kConnectTimeout);
-    connect_timer_.async_wait(
-        asio::bind_executor(strand_, [self = shared_from_this(),
-                                      conn](std::error_code ec) {
+    connect_timer_.async_wait(asio::bind_executor(
+        strand_, [self = shared_from_this(), conn](std::error_code ec) {
           if (ec) return;  // Cancelled
           self->OnConnect(asio::error::timed_out, conn);
         }));
@@ -373,8 +378,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
               asio::async_connect(
                   conn->Socket(), results,
                   asio::bind_executor(
-                      self->strand_, [self, conn](std::error_code ec,
-                                                   asio::ip::tcp::endpoint /*ep*/) {
+                      self->strand_,
+                      [self, conn](std::error_code ec,
+                                   asio::ip::tcp::endpoint /*ep*/) {
                         self->OnConnect(ec, conn);
                       }));
             }));
@@ -385,17 +391,18 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
                    RpcResponseCallback callback,
                    std::chrono::milliseconds timeout) {
     asio::post(strand_, [self = shared_from_this(),
-                             request_data = std::move(request_data),
-                             correlation_id, callback = std::move(callback),
-                             timeout]() {
+                         request_data = std::move(request_data), correlation_id,
+                         callback = std::move(callback), timeout]() {
       auto state = self->state_.load(std::memory_order_relaxed);
 
       if (state == State::kConnected) {
-        // Lazy disconnect detection: if TcpConnection dropped, transition to Failed
+        // Lazy disconnect detection: if TcpConnection dropped, transition to
+        // Failed
         if (self->conn_ && !self->conn_->IsConnected()) {
           self->state_.store(State::kFailed, std::memory_order_release);
-          self->pending_sends_.push_back({std::move(request_data), correlation_id,
-                                          std::move(callback), timeout});
+          self->pending_sends_.push_back({std::move(request_data),
+                                          correlation_id, std::move(callback),
+                                          timeout});
           self->StartConnecting();
           return;
         }
@@ -404,8 +411,8 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       }
 
       // Buffer for later flush
-      self->pending_sends_.push_back(
-          {std::move(request_data), correlation_id, std::move(callback), timeout});
+      self->pending_sends_.push_back({std::move(request_data), correlation_id,
+                                      std::move(callback), timeout});
 
       // Enforce queue size cap (drop oldest on overflow)
       if (self->pending_sends_.size() >= kMaxPendingSends) {
@@ -426,7 +433,8 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   // Force close + drain callbacks with error (idempotent)
   void Close() {
     asio::post(strand_, [self = shared_from_this()]() {
-      if (self->state_.load(std::memory_order_relaxed) == State::kDisconnected) {
+      if (self->state_.load(std::memory_order_relaxed) ==
+          State::kDisconnected) {
         return;  // Idempotent
       }
       self->connect_timer_.cancel();
@@ -440,9 +448,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     });
   }
 
-  State GetState() const {
-    return state_.load(std::memory_order_acquire);
-  }
+  State GetState() const { return state_.load(std::memory_order_acquire); }
 
  private:
   void OnConnect(std::error_code ec,
@@ -457,15 +463,15 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       // Success path
       LOG_INFO("PeerConnection connected to peer {} at {}", peer_id_, addr_);
 
-      // Cancel connect timer so it doesn't fire later and cause spurious timeout
-      // callbacks.
+      // Cancel connect timer so it doesn't fire later and cause spurious
+      // timeout callbacks.
       connect_timer_.cancel();
 
       State expected = State::kConnecting;
       if (!state_.compare_exchange_strong(expected, State::kConnected,
-                                           std::memory_order_acq_rel)) {
-        // Timeout or another error raced ahead and already transitioned to kFailed.
-        // The socket is connected but we lost the race. Close it.
+                                          std::memory_order_acq_rel)) {
+        // Timeout or another error raced ahead and already transitioned to
+        // kFailed. The socket is connected but we lost the race. Close it.
         if (conn_) conn_->Close();
         return;
       }
@@ -482,7 +488,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     // Error path (includes timeout and operation_aborted from Close())
     State expected = State::kConnecting;
     if (!state_.compare_exchange_strong(expected, State::kFailed,
-                                         std::memory_order_acq_rel)) {
+                                        std::memory_order_acq_rel)) {
       return;  // Already handled by another callback path
     }
 
@@ -510,17 +516,16 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
 
   void StartBackoffReconnect() {
     reconnect_timer_.expires_after(reconnect_delay_);
-    reconnect_timer_.async_wait(
-        asio::bind_executor(strand_, [self = shared_from_this()](
-                                          std::error_code ec) {
+    reconnect_timer_.async_wait(asio::bind_executor(
+        strand_, [self = shared_from_this()](std::error_code ec) {
           if (ec) return;  // Cancelled
           if (self->state_.load(std::memory_order_acquire) == State::kFailed) {
             self->StartConnecting();
           }
         }));
 
-    reconnect_delay_ = std::min(reconnect_delay_ * 2,
-                                std::chrono::milliseconds(5000));
+    reconnect_delay_ =
+        std::min(reconnect_delay_ * 2, std::chrono::milliseconds(5000));
   }
 
   struct PendingSend {
@@ -735,8 +740,8 @@ class AsioNetworkTransport : public NetworkTransport {
     });
   }
 
-  std::shared_ptr<PeerConnection> GetOrCreatePeerConnection(NodeId peer_id,
-                                                             const NodeAddr& addr) {
+  std::shared_ptr<PeerConnection> GetOrCreatePeerConnection(
+      NodeId peer_id, const NodeAddr& addr) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto it = peers_.find(peer_id);

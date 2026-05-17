@@ -27,6 +27,7 @@
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
+#include "rollingraft/runtime_config.h"
 
 namespace rollingraft {
 
@@ -270,6 +271,9 @@ class RaftNode::RaftNodeImpl {
   // ========== Metrics ==========
   std::unique_ptr<MetricsRegistry> metrics_;
   std::unique_ptr<MetricsHttpServer> metrics_server_;
+
+  // ========== Runtime Config ==========
+  std::unique_ptr<RuntimeConfig> runtime_config_;
 
   // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;

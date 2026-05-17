@@ -39,7 +39,6 @@ out/
 # others
 .cache
 .vscode
-docs
 
 # Agent/IDE configuration
 .agents/

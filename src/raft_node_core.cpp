@@ -39,6 +39,22 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
     metrics_ = std::make_unique<MetricsRegistry>();
+    runtime_config_ = std::make_unique<RuntimeConfig>();
+    {
+      RuntimeConfig::Values defaults;
+      defaults.election_timeout_ms = config_.election_timeout_ms;
+      defaults.heartbeat_interval_ms = config_.heartbeat_interval_ms;
+      defaults.max_entries_per_append = config_.max_entries_per_append;
+      defaults.rpc_timeout_ms = config_.rpc_timeout_ms;
+      defaults.snapshot_threshold_entries = config_.snapshot_threshold_entries;
+      defaults.snapshot_threshold_bytes = config_.snapshot_threshold_bytes;
+      defaults.snapshot_check_interval_ms = config_.snapshot_check_interval_ms;
+      defaults.max_retry_attempts = config_.max_retry_attempts;
+      defaults.base_retry_delay_ms = config_.base_retry_delay_ms;
+      defaults.max_retry_delay_ms = config_.max_retry_delay_ms;
+      defaults.log_retention_entries = config_.log_retention_entries;
+      *runtime_config_ = RuntimeConfig(defaults);
+    }
   }
 
   // Configure JSON logging if enabled
@@ -195,7 +211,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       if (status.ok()) {
         return "{\"status\":\"accepted\",\"message\":\"Configuration change proposed\"}";
       }
-      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.Message() + "\"}";
+      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.GetMessage() + "\"}";
     });
 
     metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
@@ -203,7 +219,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       if (status.ok()) {
         return "{\"status\":\"accepted\",\"message\":\"Node removal proposed\"}";
       }
-      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.Message() + "\"}";
+      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.GetMessage() + "\"}";
     });
 
     metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
@@ -215,6 +231,19 @@ Status RaftNode::RaftNodeImpl::Start() {
       (void)target_id;
       // TODO: implement TransferLeadership in RaftNode
       return "{\"status\":\"not_implemented\",\"message\":\"Leadership transfer not yet implemented\"}";
+    });
+
+    metrics_server_->SetConfigProvider([this]() -> std::string {
+      return runtime_config_ ? runtime_config_->ToJson() : "{\"error\":\"runtime_config_not_initialized\"}";
+    });
+
+    metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+      if (!runtime_config_) return "{\"error\":\"runtime_config_not_initialized\"}";
+      auto status = runtime_config_->UpdateFromJson(json);
+      if (status.ok()) {
+        return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
+      }
+      return std::string("{\"error\":\"INVALID_CONFIG\",\"message\":\"") + status.Message() + "\"}";
     });
 
     metrics_server_->Start();

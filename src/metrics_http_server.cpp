@@ -3,6 +3,7 @@
 #include <asio.hpp>
 #include <sstream>
 
+#include "nlohmann/json.hpp"
 #include "rollingraft/logger.h"
 #include "rollingraft/metrics.h"
 
@@ -68,6 +69,12 @@ void MetricsHttpServer::SetTriggerSnapshotHandler(TriggerSnapshotHandler handler
 void MetricsHttpServer::SetTransferLeadershipHandler(TransferLeadershipHandler handler) {
   transfer_leadership_handler_ = std::move(handler);
 }
+void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
+  config_provider_ = std::move(provider);
+}
+void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
+  config_updater_ = std::move(handler);
+}
 
 // Simple URL path extractor
 static std::string ExtractPath(const std::string& request) {
@@ -111,15 +118,26 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
           status_line = "HTTP/1.1 200 OK\r\n";
         } else if (path == "/readyz") {
           if (status_provider_) {
-            std::string s = status_provider_();
-            bool has_leader = s.find("\"leader_id\"") != std::string::npos &&
-                              s.find("\"leader_id\":-1") == std::string::npos;
-            bool is_leader = s.find("\"role\":\"Leader\"") != std::string::npos;
-            if (is_leader || has_leader) {
-              response_body = "{\"status\":\"ready\"}\n";
-            } else {
-              response_body = "{\"status\":\"not_ready\"}\n";
-              status_line = "HTTP/1.1 503 Service Unavailable\r\n";
+            try {
+              auto j = nlohmann::json::parse(status_provider_());
+              bool ready = false;
+              if (j.contains("role") && j["role"] == "Leader") {
+                ready = true;
+              } else if (j.contains("leader_id") &&
+                         !j["leader_id"].is_null() &&
+                         j["leader_id"] != -1) {
+                ready = true;
+              }
+              if (ready) {
+                response_body = "{\"status\":\"ready\"}\n";
+              } else {
+                response_body = "{\"status\":\"not_ready\"}\n";
+                status_line = "HTTP/1.1 503 Service Unavailable\r\n";
+              }
+            } catch (const std::exception& e) {
+              response_body = nlohmann::json{{"status", "error"},
+                                              {"message", e.what()}}.dump() + "\n";
+              status_line = "HTTP/1.1 500 Internal Server Error\r\n";
             }
           } else {
             response_body = "{\"status\":\"unknown\"}\n";
@@ -133,26 +151,21 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
           }
           status_line = "HTTP/1.1 200 OK\r\n";
         } else if (path == "/v1/members" && request.find("POST") == 0 && add_member_handler_) {
-          // Very simple JSON parse: {"node_id":N,"addr":"A"}
           int32_t node_id = -1;
           std::string addr;
-          size_t id_pos = body.find("\"node_id\"");
-          if (id_pos != std::string::npos) {
-            size_t num_start = body.find_first_of("0123456789-", id_pos + 9);
-            if (num_start != std::string::npos) {
-              node_id = std::stoi(body.substr(num_start));
-            }
+          try {
+            auto j = nlohmann::json::parse(body);
+            if (j.contains("node_id")) node_id = j["node_id"];
+            if (j.contains("addr")) addr = j["addr"];
+          } catch (const std::exception& e) {
+            response_body = nlohmann::json{{"error", "BAD_REQUEST"},
+                                            {"message", e.what()}}.dump() + "\n";
+            status_line = "HTTP/1.1 400 Bad Request\r\n";
           }
-          size_t addr_pos = body.find("\"addr\"");
-          if (addr_pos != std::string::npos) {
-            size_t q1 = body.find('"', addr_pos + 6);
-            if (q1 != std::string::npos) {
-              size_t q2 = body.find('"', q1 + 1);
-              if (q2 != std::string::npos) addr = body.substr(q1 + 1, q2 - q1 - 1);
-            }
+          if (status_line == "HTTP/1.1 404 Not Found\r\n") {
+            response_body = add_member_handler_(node_id, addr);
+            status_line = "HTTP/1.1 202 Accepted\r\n";
           }
-          response_body = add_member_handler_(node_id, addr);
-          status_line = "HTTP/1.1 202 Accepted\r\n";
         } else if (path.find("/v1/members/") == 0 && request.find("DELETE") == 0 && remove_member_handler_) {
           int32_t node_id = -1;
           size_t last_slash = path.find_last_of('/');
@@ -166,15 +179,24 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
           status_line = "HTTP/1.1 202 Accepted\r\n";
         } else if (path == "/v1/leadership/transfer" && request.find("POST") == 0 && transfer_leadership_handler_) {
           int32_t target_id = -1;
-          size_t id_pos = body.find("\"target_node_id\"");
-          if (id_pos != std::string::npos) {
-            size_t num_start = body.find_first_of("0123456789-", id_pos + 16);
-            if (num_start != std::string::npos) {
-              target_id = std::stoi(body.substr(num_start));
-            }
+          try {
+            auto j = nlohmann::json::parse(body);
+            if (j.contains("target_node_id")) target_id = j["target_node_id"];
+          } catch (const std::exception& e) {
+            response_body = nlohmann::json{{"error", "BAD_REQUEST"},
+                                            {"message", e.what()}}.dump() + "\n";
+            status_line = "HTTP/1.1 400 Bad Request\r\n";
           }
-          response_body = transfer_leadership_handler_(target_id);
-          status_line = "HTTP/1.1 202 Accepted\r\n";
+          if (status_line == "HTTP/1.1 404 Not Found\r\n") {
+            response_body = transfer_leadership_handler_(target_id);
+            status_line = "HTTP/1.1 202 Accepted\r\n";
+          }
+        } else if (path == "/v1/config" && request.find("GET") == 0 && config_provider_) {
+          response_body = config_provider_();
+          status_line = "HTTP/1.1 200 OK\r\n";
+        } else if (path == "/v1/config" && request.find("PATCH") == 0 && config_updater_) {
+          response_body = config_updater_(body);
+          status_line = "HTTP/1.1 200 OK\r\n";
         } else if (path == "/v1/events") {
           // SSE endpoint placeholder
           response_body = "event: connected\ndata: {}\n\n";

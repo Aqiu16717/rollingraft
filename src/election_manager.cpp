@@ -164,10 +164,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
 void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   CancelElectionTimerLocked();
 
+  // Read dynamic config snapshot (thread-safe via RuntimeConfig)
+  auto cfg = runtime_config_->Get();
+
   // Random timeout [election_timeout, 2 * election_timeout)
   static thread_local std::mt19937 gen(std::random_device{}());
-  std::uniform_int_distribution<> dis(config_.election_timeout_ms,
-                                      2 * config_.election_timeout_ms);
+  std::uniform_int_distribution<> dis(cfg.election_timeout_ms,
+                                      2 * cfg.election_timeout_ms);
 
   uint32_t timeout = dis(gen);
 
@@ -249,9 +252,11 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id,
 
   Term original_term = current_term_;  // Save current term for comparison
 
+  auto cfg = runtime_config_->Get();
+
   network_->SendRpc(
       peer_id, addr, data, req.correlation_id_,
-      std::chrono::milliseconds(config_.rpc_timeout_ms),
+      std::chrono::milliseconds(cfg.rpc_timeout_ms),
       [this, peer_id, original_term](const std::string& resp, bool success,
                                      const std::string& error) {
         if (!success) {

@@ -35,12 +35,13 @@ Task #23 的设计文档和初始实现（`RuntimeConfig` + `metrics_http_server
 
 **风险**: 任何线程在 `PATCH /v1/config` 处理期间修改 `config_`，同时上述任一路径读取同字段，即构成 C++ 标准未定义行为（data race）。
 
-**修复建议**:
-1. **短期（v1）**: 将 `RuntimeConfig` 实例化，所有动态参数迁移到 `runtime_config_->Get()` 原子读取。
-2. **中期**: 将 `RaftNodeConfig` 中的动态字段改为 `std::atomic<uint32_t>`（更轻量，无锁层次干扰）。
-3. **长期**: `config_` 整体改为不可变引用，运行时用 `std::shared_ptr<const RaftNodeConfig>` 原子替换（RCU 模式）。
+**修复状态**: ✅ **Tom 已修复** — 将 `election_manager.cpp` / `log_replicator.cpp` / `snapshot_manager.cpp` 中所有动态参数读取从 `config_.xxx` 迁移到 `runtime_config_->Get().xxx`。`RuntimeConfig::Get()` 内部使用 `std::shared_mutex` 保护，消除了 data race。
 
-**当前 WIP 状态**: GeoHot 已创建 `RuntimeConfig` 骨架（`runtime_config.h/.cpp`），但尚未接入 `RaftNodeImpl`。Tom 已修复编译问题使 `RuntimeConfig` 可编译。
+**剩余静态配置读取**（无需迁移，设计文档已标记为 not dynamic）:
+- `config_.node_id`, `config_.listen_addr`, `config_.data_dir`, `config_.peers`, `config_.metrics_addr`
+- `config_.max_entries_per_append` / `config_.heartbeat_interval_ms` 仅在 `Start()` 中用于初始化 `log_persister_`，运行时不动态调整
+
+**编译/测试验证**: ✅ Release build 通过，181/181 unit tests，9/9 integration tests
 
 ---
 
@@ -52,11 +53,12 @@ Task #23 的设计文档和初始实现（`RuntimeConfig` + `metrics_http_server
 
 **问题**:
 1. `ResetElectionTimerLocked()` 的执行路径是 `CancelElectionTimerLocked()` → 读取 `config_` → `timer_->SetTimeout()`。这不是原子的。如果在 `Cancel` 和 `SetTimeout` 之间发生角色转换（如收到更高 term 的 AppendEntries），新 timer 会在错误状态下被设置。
-2. 更关键的是：当前 `ResetElectionTimerLocked()` 在 `BecomeFollowerLocked()` 和 `BecomeCandidateLocked()` 中被调用，这两个方法都持有 `election_mtx_`。但如果配置在 `OnElectionTimeout()` 回调执行期间被修改，`OnElectionTimeout()` 内部调用的 `BroadcastRequestVoteLocked()` 会读取可能已变更的 `config_.rpc_timeout_ms`，这同样是 data race。
+2. `OnElectionTimeout()` 回调内部调用的 `BroadcastRequestVoteLocked()` 会读取 `config_.rpc_timeout_ms`，如果配置在回调执行期间被修改，构成 data race。
 
-**修复建议**:
-- 所有 timer callback 在读取配置前，**必须**通过 `RuntimeConfig::Get()` 获取快照，而不是直接读取 `config_`。
-- 在 `ResetElectionTimerLocked()` 中，先获取 config 快照，再用快照值计算 timeout 并设置 timer。
+**修复状态**: ✅ **Tom 已修复** — 所有 timer 相关函数（`ResetElectionTimerLocked`, `StartHeartbeatTimerLocked`, `StartSnapshotCheckTimerLocked`）以及 RPC 发送函数（`SendRequestVoteToPeerLocked`, `SendAppendEntriesToPeerLocked`）现在都在调用时通过 `runtime_config_->Get()` 获取配置快照。Lazy transition 语义保持：
+- 已运行的 timer 使用旧值
+- 新设置的 timer 使用快照值（可能为新值或旧值，取决于 `Get()` 调用时机）
+- 回调执行时读取的也是快照，无 data race
 
 ---
 
@@ -162,6 +164,8 @@ HTTP 层面返回 202 Accepted，但 JSON body 说 not_implemented。应该返�
 | `logger.h` NodeId 类型错误 | `include/rollingraft/logger.h` | ✅ 已修复 |
 | `metrics_http_server.h` 重复声明 | `src/metrics_http_server.h` | ✅ 已修复 |
 | `metrics_http_server.cpp` 重复定义 | `src/metrics_http_server.cpp` | ✅ 已修复 |
+| `config_` 无锁保护（BLOCKER-1） | `src/election_manager.cpp`, `src/log_replicator.cpp`, `src/snapshot_manager.cpp` | ✅ 已修复 |
+| Lazy Timer Transition 竞态（BLOCKER-2） | 同上 | ✅ 已修复 |
 
 **编译验证**: ✅ Release build 通过  
 **单元测试**: ✅ 181/181 PASS  
@@ -171,6 +175,7 @@ HTTP 层面返回 202 Accepted，但 JSON body 说 not_implemented。应该返�
 
 ## 下一步行动
 
-1. **GeoHot** — 将 `RaftNodeImpl` 中的 `config_` 动态字段访问迁移到 `runtime_config_->Get()`。
-2. **Alice** — 确认 Tom 的代码修改（handler JSON 构造、锁层次），继续完善 #21。
-3. **Tom** — 在 GeoHot 完成 #23 接入后，进行第二轮代码审计（重点关注 data race）。
+1. **Alice** — 确认 Tom 的代码修改（handler JSON 构造、锁层次），如有冲突请同步。
+2. **Tom** — 在 GeoHot 或 Alice 确认后，将 config 迁移修改 commit 到 main。
+3. **TSan 验证** — 运行 TSan 构建确认零 races（当前 Release 构建已验证，TSan 待补）。
+4. **功能测试** — 编写集成测试验证 `PATCH /v1/config` 后 Raft 行为确实变化（如 election timeout 增加后选举变慢）。

@@ -10,12 +10,13 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
     return;  // Already running
   }
 
+  auto cfg = runtime_config_->Get();
   snapshot_check_timer_ = timer_->SetInterval(
-      std::chrono::milliseconds(config_.snapshot_check_interval_ms),
+      std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
       [this]() { MaybeTriggerAutoSnapshotLocked(); });
 
   LOG_INFO("Node {} started auto-snapshot check (every {}ms)", server_id_,
-           config_.snapshot_check_interval_ms);
+           cfg.snapshot_check_interval_ms);
 }
 
 void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
@@ -51,20 +52,22 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   bool should_trigger = false;
   std::string reason;
 
+  auto cfg = runtime_config_->Get();
+
   // Check entry count threshold
-  if (entries_since_snapshot >= config_.snapshot_threshold_entries) {
+  if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
     should_trigger = true;
     reason = std::to_string(entries_since_snapshot) +
              " entries since last snapshot (threshold: " +
-             std::to_string(config_.snapshot_threshold_entries) + ")";
+             std::to_string(cfg.snapshot_threshold_entries) + ")";
   }
 
   // Check byte size threshold
-  if (!should_trigger && byte_size >= config_.snapshot_threshold_bytes) {
+  if (!should_trigger && byte_size >= cfg.snapshot_threshold_bytes) {
     should_trigger = true;
     reason = std::to_string(byte_size) +
              " bytes since last snapshot (threshold: " +
-             std::to_string(config_.snapshot_threshold_bytes) + ")";
+             std::to_string(cfg.snapshot_threshold_bytes) + ")";
   }
 
   if (!should_trigger) {
@@ -126,9 +129,10 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   // TruncatePrefix I/O can be slow; performing it asynchronously prevents
   // blocking the Raft event loop while holding manager locks.
   if (log_persister_) {
+    auto cfg = runtime_config_->Get();
     uint64_t compact_before = 1;
-    if (snapshot_index + 1 > config_.log_retention_entries) {
-      compact_before = snapshot_index + 1 - config_.log_retention_entries;
+    if (snapshot_index + 1 > cfg.log_retention_entries) {
+      compact_before = snapshot_index + 1 - cfg.log_retention_entries;
     }
     NodeId my_id = server_id_;
     log_persister_->TruncatePrefixAsync(compact_before, [my_id](Status status) {

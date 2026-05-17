@@ -4,8 +4,9 @@ using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
   // PRECONDITION: replication_mtx_ is held by caller
+  auto cfg = runtime_config_->Get();
   heartbeat_timer_ = timer_->SetInterval(
-      std::chrono::milliseconds(config_.heartbeat_interval_ms),
+      std::chrono::milliseconds(cfg.heartbeat_interval_ms),
       [this]() { OnHeartbeatTimeout(); });
 }
 
@@ -70,8 +71,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     effective_last = std::min(last_index, flushed_index_);
   }
   if (next_idx <= effective_last) {
+    auto cfg = runtime_config_->Get();
     Index end =
-        std::min(next_idx + config_.max_entries_per_append, effective_last + 1);
+        std::min(next_idx + cfg.max_entries_per_append, effective_last + 1);
     req.entries_ = log_.GetEntries(next_idx, end);
   }
 
@@ -95,9 +97,11 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
         .Increment();
   }
 
-  network_->SendRpc(
-      peer_id, it_addr->second, data, req.correlation_id_,
-      std::chrono::milliseconds(config_.rpc_timeout_ms),
+  {
+    auto cfg = runtime_config_->Get();
+    network_->SendRpc(
+        peer_id, it_addr->second, data, req.correlation_id_,
+        std::chrono::milliseconds(cfg.rpc_timeout_ms),
       [this, peer_id](const std::string& resp, bool success,
                       const std::string& error) {
         if (!success) {
@@ -121,6 +125,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
         retry_state_.erase(peer_id);
         HandleAppendEntriesResponse(peer_id, response);
       });
+  }
 }
 
 void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
@@ -137,16 +142,18 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   auto& retry = retry_state_[peer_id];
   retry.attempts++;
 
-  if (retry.attempts > static_cast<int>(config_.max_retry_attempts)) {
+  auto cfg = runtime_config_->Get();
+
+  if (retry.attempts > static_cast<int>(cfg.max_retry_attempts)) {
     LOG_WARN("Node {}: max retry attempts ({}) reached for peer {}", server_id_,
-             config_.max_retry_attempts, peer_id);
+             cfg.max_retry_attempts, peer_id);
     retry_state_.erase(peer_id);
     return;
   }
 
   // Exponential backoff: delay = base * 2^attempts, capped at max
-  uint32_t delay = config_.base_retry_delay_ms * (1u << retry.attempts);
-  delay = std::min(delay, config_.max_retry_delay_ms);
+  uint32_t delay = cfg.base_retry_delay_ms * (1u << retry.attempts);
+  delay = std::min(delay, cfg.max_retry_delay_ms);
 
   if (metrics_) {
     metrics_

@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <spdlog/fmt/fmt.h>
@@ -44,6 +45,9 @@ class Logger {
 
   /** Set minimum log level (messages below this are filtered). */
   virtual void SetLogLevel(LogLevel level) = 0;
+
+  /** Optional: enable JSON structured logging with node context. */
+  virtual void ConfigureJsonMode(bool enabled, int32_t node_id = -1) {}
 
   /** Convenience methods for each log level. */
   void Trace(const std::string& message) { Log(LogLevel::TRACE, message); }

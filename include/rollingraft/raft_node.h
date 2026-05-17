@@ -116,6 +116,9 @@ struct RaftNodeConfig {
   // Metrics configuration
   bool metrics_enabled = false;
   std::string metrics_addr;  // e.g., "0.0.0.0:9001", empty = disabled
+
+  // Logging configuration
+  bool json_logging = false;  // Enable JSON structured logging format
 };
 
 /**

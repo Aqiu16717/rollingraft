@@ -1,6 +1,7 @@
 #include <atomic>
 
 #include "asio_timer_service.h"
+#include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
 using namespace rollingraft;
@@ -38,6 +39,31 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
     metrics_ = std::make_unique<MetricsRegistry>();
+  }
+
+  // Initialize runtime config with defaults from RaftNodeConfig
+  {
+    RuntimeConfig::Values defaults;
+    defaults.election_timeout_ms = config.election_timeout_ms;
+    defaults.heartbeat_interval_ms = config.heartbeat_interval_ms;
+    defaults.max_entries_per_append = config.max_entries_per_append;
+    defaults.rpc_timeout_ms = config.rpc_timeout_ms;
+    defaults.snapshot_threshold_entries = config.snapshot_threshold_entries;
+    defaults.snapshot_threshold_bytes = config.snapshot_threshold_bytes;
+    defaults.snapshot_check_interval_ms = config.snapshot_check_interval_ms;
+    defaults.max_retry_attempts = config.max_retry_attempts;
+    defaults.base_retry_delay_ms = config.base_retry_delay_ms;
+    defaults.max_retry_delay_ms = config.max_retry_delay_ms;
+    defaults.log_retention_entries = config.log_retention_entries;
+    runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
+  }
+
+  // Configure JSON logging if enabled
+  if (config.json_logging) {
+    Logger* logger = LoggerFactory::Instance().GetLogger();
+    if (logger) {
+      logger->ConfigureJsonMode(true, server_id_);
+    }
   }
 
   // Initialize cluster config from peers
@@ -140,6 +166,130 @@ Status RaftNode::RaftNodeImpl::Start() {
   if (metrics_ && !config_.metrics_addr.empty()) {
     metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr,
                                                           metrics_.get());
+    metrics_server_->SetStatusProvider([this]() -> std::string {
+      // Lock hierarchy: election_mtx_ -> replication_mtx_ -> membership_mtx_
+      // -> applier_mtx_. All accessed state must be protected.
+      std::lock_guard<std::mutex> lock_e(election_mtx_);
+      std::lock_guard<std::mutex> lock_r(replication_mtx_);
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      std::lock_guard<std::mutex> lock_a(applier_mtx_);
+
+      nlohmann::json j;
+      j["node_id"] = server_id_;
+      j["role"] = RaftNodeRoleToString(role_);
+      j["term"] = current_term_;
+      j["leader_id"] = leader_id_;
+      j["leader_addr"] = leader_addr_;
+      j["commit_index"] = commit_index_;
+      j["last_log_index"] = log_.LastLogIndex();
+      j["running"] = IsRunning();
+
+      nlohmann::json config_json;
+      config_json["version"] = cluster_config_.version;
+      nlohmann::json nodes = nlohmann::json::array();
+      for (NodeId node_id : cluster_config_.nodes) {
+        nlohmann::json node_json;
+        node_json["id"] = node_id;
+        auto it = peer_map_.find(node_id);
+        if (it != peer_map_.end()) {
+          node_json["addr"] = it->second;
+        } else if (node_id == server_id_) {
+          node_json["addr"] = config_.listen_addr;
+        } else {
+          node_json["addr"] = nullptr;
+        }
+        nodes.push_back(node_json);
+      }
+      config_json["nodes"] = nodes;
+      j["cluster_config"] = config_json;
+      j["last_applied"] = last_applied_;
+
+      return j.dump();
+    });
+
+    // Control plane handlers (#19 API implementation)
+    metrics_server_->SetAddMemberHandler(
+        [this](int32_t node_id, const std::string& addr) -> std::string {
+          if (node_id < 0 || addr.empty()) {
+            nlohmann::json j;
+            j["error"] = "BAD_REQUEST";
+            j["message"] = "Invalid node_id or addr";
+            return j.dump();
+          }
+          auto status = AddNode(static_cast<NodeId>(node_id), addr);
+          nlohmann::json j;
+          if (status.ok()) {
+            j["status"] = "accepted";
+            j["message"] = "Configuration change proposed";
+          } else {
+            j["error"] = "NOT_LEADER";
+            j["message"] = status.GetMessage();
+            if (!GetLeaderAddr().empty()) {
+              j["leader_hint"] = GetLeaderAddr();
+            }
+          }
+          return j.dump();
+        });
+
+    metrics_server_->SetRemoveMemberHandler(
+        [this](int32_t node_id) -> std::string {
+          if (node_id < 0) {
+            nlohmann::json j;
+            j["error"] = "BAD_REQUEST";
+            j["message"] = "Invalid node_id";
+            return j.dump();
+          }
+          auto status = RemoveNode(static_cast<NodeId>(node_id));
+          nlohmann::json j;
+          if (status.ok()) {
+            j["status"] = "accepted";
+            j["message"] = "Node removal proposed";
+          } else {
+            j["error"] = "NOT_LEADER";
+            j["message"] = status.GetMessage();
+            if (!GetLeaderAddr().empty()) {
+              j["leader_hint"] = GetLeaderAddr();
+            }
+          }
+          return j.dump();
+        });
+
+    metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
+      // Snapshot is auto-triggered only; manual trigger not yet supported
+      nlohmann::json j;
+      j["status"] = "not_implemented";
+      j["message"] = "Manual snapshot trigger not yet implemented";
+      return j.dump();
+    });
+
+    metrics_server_->SetTransferLeadershipHandler(
+        [this](int32_t target_id) -> std::string {
+          (void)target_id;
+          nlohmann::json j;
+          j["status"] = "not_implemented";
+          j["message"] = "Leadership transfer not yet implemented";
+          return j.dump();
+        });
+
+    metrics_server_->SetConfigProvider([this]() -> std::string {
+      return runtime_config_ ? runtime_config_->ToJson()
+                             : "{\"error\":\"runtime_config_not_initialized\"}";
+    });
+
+    metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+      if (!runtime_config_) {
+        return "{\"error\":\"runtime_config_not_initialized\"}";
+      }
+      auto status = runtime_config_->UpdateFromJson(json);
+      if (status.ok()) {
+        return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
+      }
+      nlohmann::json j;
+      j["error"] = "INVALID_CONFIG";
+      j["message"] = status.GetMessage();
+      return j.dump();
+    });
+
     metrics_server_->Start();
   }
 

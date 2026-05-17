@@ -4,7 +4,10 @@
 
 namespace rollingraft {
 
-RuntimeConfig::RuntimeConfig(const Values& defaults) : values_(defaults), defaults_(defaults) {}
+RuntimeConfig::RuntimeConfig() : values_(Values{}), defaults_(Values{}) {}
+
+RuntimeConfig::RuntimeConfig(const Values& defaults)
+    : values_(defaults), defaults_(defaults) {}
 
 RuntimeConfig::Values RuntimeConfig::Get() const {
   std::shared_lock<std::shared_mutex> lock(mtx_);

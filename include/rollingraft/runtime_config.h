@@ -45,50 +45,40 @@ struct RuntimeConfigValues {
  */
 class RuntimeConfig {
  public:
-  /**
-   * Parameter metadata: min, max, default.
-   */
-  struct ParamMeta {
-    uint32_t min;
-    uint32_t max;
-    uint32_t default_value;
-  };
+  using Values = RuntimeConfigValues;
 
   /** Initialize with default values. */
   RuntimeConfig();
 
   /** Initialize from a config struct. */
-  explicit RuntimeConfig(const RuntimeConfigValues& values);
+  explicit RuntimeConfig(const Values& defaults);
 
   /** Get a snapshot of current values (thread-safe). */
-  RuntimeConfigValues Get() const;
+  Values Get() const;
 
   /**
-   * Update specific parameters atomically.
+   * Update parameters from a JSON string.
    *
    * Validates range and cross-parameter constraints before applying.
    * Either all requested changes apply, or none do.
    *
-   * @param updates Map of parameter name -> new value
+   * @param json_str JSON object with parameter names as keys
    * @return Status::OK() on success, error with details on failure
    */
-  Status Update(
-      const std::unordered_map<std::string, uint32_t>& updates);
+  Status UpdateFromJson(const std::string& json_str);
 
   /** Reset all parameters to defaults. */
   void Reset();
 
-  /** Get metadata for all parameters. */
-  static std::unordered_map<std::string, ParamMeta> GetMetadata();
+  /** Serialize current values to JSON (thread-safe). */
+  std::string ToJson() const;
 
  private:
   mutable std::shared_mutex mtx_;
-  RuntimeConfigValues values_;
-  RuntimeConfigValues defaults_;
+  Values values_;
+  Values defaults_;
 
-  Status ValidateLocked(
-      const std::unordered_map<std::string, uint32_t>& updates) const;
-  static bool IsValidParam(const std::string& name);
+  Status Validate(const Values& v) const;
 };
 
 }  // namespace rollingraft

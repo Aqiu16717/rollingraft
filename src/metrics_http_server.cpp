@@ -86,12 +86,6 @@ void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
 void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
   config_updater_ = std::move(handler);
 }
-void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
-  config_provider_ = std::move(provider);
-}
-void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
-  config_updater_ = std::move(handler);
-}
 
 // Simple URL path extractor
 static std::string ExtractPath(const std::string& request) {

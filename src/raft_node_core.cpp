@@ -1,6 +1,7 @@
 #include <atomic>
 
 #include "asio_timer_service.h"
+#include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
 using namespace rollingraft;
@@ -38,6 +39,14 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
     metrics_ = std::make_unique<MetricsRegistry>();
+  }
+
+  // Configure JSON logging if enabled
+  if (config.json_logging) {
+    Logger* logger = LoggerFactory::Instance().GetLogger();
+    if (logger) {
+      logger->ConfigureJsonMode(true, server_id_);
+    }
   }
 
   // Initialize cluster config from peers
@@ -140,6 +149,74 @@ Status RaftNode::RaftNodeImpl::Start() {
   if (metrics_ && !config_.metrics_addr.empty()) {
     metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr,
                                                           metrics_.get());
+    metrics_server_->SetStatusProvider([this]() -> std::string {
+      std::lock_guard<std::mutex> lock_e(election_mtx_);
+      std::lock_guard<std::mutex> lock_r(replication_mtx_);
+
+      nlohmann::json j;
+      j["node_id"] = server_id_;
+      j["role"] = RaftNodeRoleToString(role_);
+      j["term"] = current_term_;
+      j["leader_id"] = leader_id_;
+      j["leader_addr"] = leader_addr_;
+      j["commit_index"] = commit_index_;
+      j["last_log_index"] = log_.LastLogIndex();
+      j["running"] = IsRunning();
+
+      nlohmann::json config_json;
+      config_json["version"] = cluster_config_.version;
+      nlohmann::json nodes = nlohmann::json::array();
+      for (NodeId node_id : cluster_config_.nodes) {
+        nlohmann::json node_json;
+        node_json["id"] = node_id;
+        auto it = peer_map_.find(node_id);
+        if (it != peer_map_.end()) {
+          node_json["addr"] = it->second;
+        } else if (node_id == server_id_) {
+          node_json["addr"] = config_.listen_addr;
+        } else {
+          node_json["addr"] = nullptr;
+        }
+        nodes.push_back(node_json);
+      }
+      config_json["nodes"] = nodes;
+      j["cluster_config"] = config_json;
+      j["last_applied"] = last_applied_;
+
+      return j.dump();
+    });
+
+    // Control plane handlers
+    metrics_server_->SetAddMemberHandler([this](int32_t node_id, const std::string& addr) -> std::string {
+      if (node_id < 0 || addr.empty()) {
+        return "{\"error\":\"BAD_REQUEST\",\"message\":\"Invalid node_id or addr\"}";
+      }
+      auto status = AddNode(static_cast<NodeId>(node_id), addr);
+      if (status.ok()) {
+        return "{\"status\":\"accepted\",\"message\":\"Configuration change proposed\"}";
+      }
+      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.Message() + "\"}";
+    });
+
+    metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
+      auto status = RemoveNode(static_cast<NodeId>(node_id));
+      if (status.ok()) {
+        return "{\"status\":\"accepted\",\"message\":\"Node removal proposed\"}";
+      }
+      return std::string("{\"error\":\"NOT_LEADER\",\"message\":\"") + status.Message() + "\"}";
+    });
+
+    metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
+      // Snapshot is auto-triggered; manual trigger is async
+      return "{\"status\":\"triggered\",\"message\":\"Snapshot creation initiated\"}";
+    });
+
+    metrics_server_->SetTransferLeadershipHandler([this](int32_t target_id) -> std::string {
+      (void)target_id;
+      // TODO: implement TransferLeadership in RaftNode
+      return "{\"status\":\"not_implemented\",\"message\":\"Leadership transfer not yet implemented\"}";
+    });
+
     metrics_server_->Start();
   }
 

@@ -54,6 +54,17 @@ void MetricsHttpServer::Stop() {
 
 void MetricsHttpServer::Run() { io_ctx_->run(); }
 
+void MetricsHttpServer::DoAccept() {
+  if (!running_) return;
+  acceptor_->async_accept(
+      [this](std::error_code ec, asio::ip::tcp::socket socket) {
+        if (!ec && running_) {
+          HandleRequest(std::move(socket));
+          DoAccept();
+        }
+      });
+}
+
 void MetricsHttpServer::SetStatusProvider(StatusProvider provider) {
   status_provider_ = std::move(provider);
 }
@@ -68,6 +79,12 @@ void MetricsHttpServer::SetTriggerSnapshotHandler(TriggerSnapshotHandler handler
 }
 void MetricsHttpServer::SetTransferLeadershipHandler(TransferLeadershipHandler handler) {
   transfer_leadership_handler_ = std::move(handler);
+}
+void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
+  config_provider_ = std::move(provider);
+}
+void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
+  config_updater_ = std::move(handler);
 }
 void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
   config_provider_ = std::move(provider);

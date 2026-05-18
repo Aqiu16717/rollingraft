@@ -131,6 +131,24 @@ class MetricsEndpointTest : public ::testing::Test {
     return FetchUrl(addr, "/v1/status");
   }
 
+  std::string PostUrl(const std::string& addr, const std::string& path,
+                      const std::string& body = "") {
+    std::string cmd = "curl -s --max-time 2 -X POST";
+    if (!body.empty()) {
+      cmd += " -H 'Content-Type: application/json' -d '" + body + "'";
+    }
+    cmd += " http://" + addr + path;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return "";
+    char buffer[4096];
+    std::string result;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      result += buffer;
+    }
+    pclose(pipe);
+    return result;
+  }
+
   std::vector<std::string> data_dirs_;
   std::vector<std::string> raft_addrs_;
   std::vector<std::string> metrics_addrs_;
@@ -287,4 +305,100 @@ TEST_F(MetricsEndpointTest, StatusReturnsValidJson) {
         << "Node " << (i + 1) << " status missing leader_id";
   }
 }
+
+TEST_F(MetricsEndpointTest, TriggerSnapshotOnLeader) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  int leader_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i].get() == leader) leader_idx = i;
+  }
+  ASSERT_GE(leader_idx, 0);
+
+  std::string output = PostUrl(metrics_addrs_[leader_idx], "/v1/snapshot/trigger");
+  EXPECT_NE(output.find("\"status\""), std::string::npos)
+      << "Trigger snapshot response: " << output;
+}
+
+TEST_F(MetricsEndpointTest, TriggerSnapshotOnFollowerFails) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  int follower_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (!nodes_[i]->IsLeader()) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(follower_idx, 0);
+
+  std::string output = PostUrl(metrics_addrs_[follower_idx], "/v1/snapshot/trigger");
+  EXPECT_NE(output.find("\"error\""), std::string::npos)
+      << "Follower should reject snapshot trigger: " << output;
+}
+
+TEST_F(MetricsEndpointTest, TransferLeadershipFromLeader) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  int leader_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i].get() == leader) leader_idx = i;
+  }
+  ASSERT_GE(leader_idx, 0);
+
+  int follower_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (!nodes_[i]->IsLeader()) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(follower_idx, 0);
+
+  // Extract port from raft address as node_id (ParseNodeId convention)
+  std::string addr = raft_addrs_[follower_idx];
+  size_t colon = addr.find(':');
+  ASSERT_NE(colon, std::string::npos);
+  int target_id = std::stoi(addr.substr(colon + 1));
+
+  std::string body = "{\"target_node_id\":" + std::to_string(target_id) + "}";
+  std::string output =
+      PostUrl(metrics_addrs_[leader_idx], "/v1/leadership/transfer", body);
+  EXPECT_NE(output.find("\"status\""), std::string::npos)
+      << "Transfer leadership response: " << output;
+}
+
+TEST_F(MetricsEndpointTest, TransferLeadershipOnFollowerFails) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  int follower_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (!nodes_[i]->IsLeader()) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(follower_idx, 0);
+
+  std::string body = "{\"target_node_id\":1}";
+  std::string output =
+      PostUrl(metrics_addrs_[follower_idx], "/v1/leadership/transfer", body);
+  EXPECT_NE(output.find("\"error\""), std::string::npos)
+      << "Follower should reject transfer: " << output;
+}
+
 

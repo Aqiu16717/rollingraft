@@ -172,6 +172,9 @@ class Status {
   /** Get the error code as integer. */
   int GetCode() const;
 
+  /** Get the error code name (e.g. "NotLeader"). */
+  std::string CodeName() const;
+
   /** Get the error code as enum. */
   Code GetErrorCode() const;
 

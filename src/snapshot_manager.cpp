@@ -27,66 +27,27 @@ void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
   }
 }
 
-void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
-  // Bridge pattern: acquire election_mtx_ -> replication_mtx_ -> snapshot_mtx_
-  // Auto-snapshot reads role_ (election), log_ stats (replication), and
-  // updates last_snapshot_index_ (snapshot).
-  std::lock_guard<std::mutex> lock_e(election_mtx_);
-  std::lock_guard<std::mutex> lock_r(replication_mtx_);
-  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
-
-  if (role_ != RaftNodeRole::LEADER) {
-    return;  // Only leader triggers auto-snapshot
-  }
-
+// Core snapshot logic. PRECONDITION: election_mtx_, replication_mtx_,
+// snapshot_mtx_ are held by caller.
+void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   auto [last_index, last_term] = log_.GetLastLogInfo();
   (void)last_term;
-
-  // Calculate entries since last snapshot
   Index entries_since_snapshot = last_index - last_snapshot_index_;
-
-  // Get byte size for logging
-  auto [entry_count, byte_size] = log_.GetLogStats();
-  (void)entry_count;
-
-  bool should_trigger = false;
-  std::string reason;
-
-  auto cfg = runtime_config_->Get();
-
-  // Check entry count threshold
-  if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
-    should_trigger = true;
-    reason = std::to_string(entries_since_snapshot) +
-             " entries since last snapshot (threshold: " +
-             std::to_string(cfg.snapshot_threshold_entries) + ")";
-  }
-
-  // Check byte size threshold
-  if (!should_trigger && byte_size >= cfg.snapshot_threshold_bytes) {
-    should_trigger = true;
-    reason = std::to_string(byte_size) +
-             " bytes since last snapshot (threshold: " +
-             std::to_string(cfg.snapshot_threshold_bytes) + ")";
-  }
-
-  if (!should_trigger) {
-    return;
-  }
 
   if (metrics_) {
     metrics_
         ->GetCounter(
             "raft_snapshots_created_total",
-            {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+            {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
         .Increment();
   }
-  LOG_INFO("Node {} triggering auto-snapshot: {}", server_id_, reason);
+  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)",
+           server_id_, trigger, entries_since_snapshot);
 
   // Create snapshot
   auto snapshot = state_machine_->CreateSnapshot();
   if (!snapshot) {
-    LOG_ERROR("Node {} failed to create auto-snapshot", server_id_);
+    LOG_ERROR("Node {} failed to create {}-snapshot", server_id_, trigger);
     return;
   }
 
@@ -115,8 +76,8 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
     auto status =
         persister_->SaveSnapshot(snapshot_data, snapshot_index, snapshot_term);
     if (!status.ok()) {
-      LOG_ERROR("Node {} failed to persist auto-snapshot: {}", server_id_,
-                status.ToString());
+      LOG_ERROR("Node {} failed to persist {}-snapshot: {}", server_id_,
+                trigger, status.ToString());
       return;
     }
   }
@@ -146,7 +107,7 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
     metrics_
         ->GetCounter(
             "raft_log_compactions_total",
-            {{"node_id", std::to_string(server_id_)}, {"trigger", "auto"}})
+            {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
         .Increment();
     metrics_
         ->GetCounter("raft_log_entries_compacted_total",
@@ -155,10 +116,70 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
   }
 
   LOG_INFO(
-      "Node {} auto-snapshot completed at index {} term {} ({} bytes, "
+      "Node {} {}-snapshot completed at index {} term {} ({} bytes, "
       "{} entries truncated)",
-      server_id_, snapshot_index, snapshot_term, snapshot_data.size(),
+      server_id_, trigger, snapshot_index, snapshot_term, snapshot_data.size(),
       entries_since_snapshot);
+}
+
+void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
+  // Bridge pattern: acquire election_mtx_ -> replication_mtx_ -> snapshot_mtx_
+  // Auto-snapshot reads role_ (election), log_ stats (replication), and
+  // updates last_snapshot_index_ (snapshot).
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return;  // Only leader triggers auto-snapshot
+  }
+
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+  (void)last_term;
+
+  // Calculate entries since last snapshot
+  Index entries_since_snapshot = last_index - last_snapshot_index_;
+
+  // Get byte size for logging
+  auto [entry_count, byte_size] = log_.GetLogStats();
+  (void)entry_count;
+
+  bool should_trigger = false;
+
+  auto cfg = runtime_config_->Get();
+
+  // Check entry count threshold
+  if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
+    should_trigger = true;
+  }
+
+  // Check byte size threshold
+  if (!should_trigger && byte_size >= cfg.snapshot_threshold_bytes) {
+    should_trigger = true;
+  }
+
+  if (!should_trigger) {
+    return;
+  }
+
+  DoSnapshotLocked("auto");
+}
+
+Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  DoSnapshotLocked("manual");
+  return Status::OK();
 }
 
 // ========== Election Handling ==========
@@ -376,3 +397,5 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
     SendNextSnapshotChunkLocked(from);
   }
 }
+
+

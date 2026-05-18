@@ -105,6 +105,10 @@ class RaftNode::RaftNodeImpl {
   Status RemoveNode(NodeId id);
   ClusterConfig GetConfig() const;
 
+  // Snapshot & leadership transfer
+  Status TriggerSnapshot();
+  Status TransferLeadershipTo(NodeId target_id);
+
   // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
@@ -128,6 +132,7 @@ class RaftNode::RaftNodeImpl {
 
   // Snapshot related
   void MaybeTriggerAutoSnapshotLocked();
+  void DoSnapshotLocked(const std::string& trigger);
 
   // Election related
   void BroadcastRequestVoteLocked();

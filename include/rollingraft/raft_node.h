@@ -312,6 +312,19 @@ class RaftNode {
    */
   EventBus& GetEventBus();
 
+  /**
+   * Trigger a manual snapshot (only valid for leader).
+   * @return Status::OK() if snapshot was triggered
+   */
+  Status TriggerSnapshot();
+
+  /**
+   * Transfer leadership to another node (simple version: leader steps down).
+   * @param target_id Node ID to transfer leadership to
+   * @return Status::OK() if transfer was initiated
+   */
+  Status TransferLeadershipTo(NodeId target_id);
+
  private:
   class RaftNodeImpl;
   std::unique_ptr<RaftNodeImpl> raft_node_impl_;  // PIMPL idiom

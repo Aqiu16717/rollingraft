@@ -104,3 +104,32 @@ std::string Status::GetMessage() const {
 int Status::GetCode() const { return static_cast<int>(code()); }
 
 Status::Code Status::GetErrorCode() const { return code(); }
+
+std::string Status::CodeName() const {
+  switch (code()) {
+    case Code::kOk:
+      return "OK";
+    case Code::kCorruption:
+      return "Corruption";
+    case Code::kRequestVoteError:
+      return "RequestVoteError";
+    case Code::kAppendEntriesError:
+      return "AppendEntriesError";
+    case Code::kInstallSnapshotError:
+      return "InstallSnapshotError";
+    case Code::kSerializeError:
+      return "SerializeError";
+    case Code::kDeSerializeError:
+      return "DeSerializeError";
+    case Code::kProtocolError:
+      return "ProtocolError";
+    case Code::kRaftNodeStartError:
+      return "RaftNodeStartError";
+    case Code::kGenericError:
+      return "Error";
+    case Code::kNotLeader:
+      return "NotLeader";
+    default:
+      return "Unknown";
+  }
+}

@@ -255,19 +255,37 @@ Status RaftNode::RaftNodeImpl::Start() {
         });
 
     metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
-      // Snapshot is auto-triggered only; manual trigger not yet supported
+      auto status = TriggerSnapshot();
       nlohmann::json j;
-      j["status"] = "not_implemented";
-      j["message"] = "Manual snapshot trigger not yet implemented";
+      if (status.ok()) {
+        j["status"] = "triggered";
+        j["message"] = "Snapshot creation initiated";
+      } else {
+        j["error"] = "NOT_LEADER";
+        j["message"] = status.GetMessage();
+      }
       return j.dump();
     });
 
     metrics_server_->SetTransferLeadershipHandler(
         [this](int32_t target_id) -> std::string {
-          (void)target_id;
           nlohmann::json j;
-          j["status"] = "not_implemented";
-          j["message"] = "Leadership transfer not yet implemented";
+          if (target_id < 0) {
+            j["error"] = "BAD_REQUEST";
+            j["message"] = "Invalid target_node_id";
+            return j.dump();
+          }
+          auto status = TransferLeadershipTo(static_cast<NodeId>(target_id));
+          if (status.ok()) {
+            j["status"] = "initiated";
+            j["message"] = "Leadership transfer initiated";
+          } else {
+            j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+            j["message"] = status.GetMessage();
+            if (!GetLeaderAddr().empty()) {
+              j["leader_hint"] = GetLeaderAddr();
+            }
+          }
           return j.dump();
         });
 
@@ -895,6 +913,44 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     lock_r.unlock();
     BecomeFollowerLocked(current_term_);
   }
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::TransferLeadershipTo(NodeId target_id) {
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  if (target_id == server_id_) {
+    return Status::Error("Cannot transfer leadership to self");
+  }
+
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    if (!cluster_config_.Contains(target_id)) {
+      return Status::Error("Target node not in cluster");
+    }
+  }
+
+  // Send one final AppendEntries to target to ensure its log is up-to-date
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    SendAppendEntriesToPeerLocked(target_id);
+  }
+
+  LOG_INFO("Node {} transferring leadership to {}, stepping down", server_id_,
+           target_id);
+
+  // Step down. BecomeFollowerLocked acquires replication_mtx_ + snapshot_mtx_
+  // internally, so we must not hold them here.
+  BecomeFollowerLocked(current_term_);
 
   return Status::OK();
 }

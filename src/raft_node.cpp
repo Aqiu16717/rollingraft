@@ -80,3 +80,11 @@ Status RaftNode::RemoveNode(NodeId id) {
 ClusterConfig RaftNode::GetConfig() const {
   return raft_node_impl_->GetConfig();
 }
+
+Status RaftNode::TriggerSnapshot() {
+  return raft_node_impl_->TriggerSnapshot();
+}
+
+Status RaftNode::TransferLeadershipTo(NodeId target_id) {
+  return raft_node_impl_->TransferLeadershipTo(target_id);
+}

@@ -6,6 +6,7 @@
 #include "nlohmann/json.hpp"
 #include "rollingraft/logger.h"
 #include "rollingraft/metrics.h"
+#include "sse_connection.h"
 
 namespace rollingraft {
 
@@ -44,6 +45,18 @@ void MetricsHttpServer::Start() {
 
 void MetricsHttpServer::Stop() {
   if (!running_.exchange(false)) return;
+
+  // Close all SSE connections
+  {
+    std::lock_guard<std::mutex> lock(sse_mutex_);
+    for (auto& weak_conn : sse_connections_) {
+      if (auto conn = weak_conn.lock()) {
+        conn->Close();
+      }
+    }
+    sse_connections_.clear();
+  }
+
   if (acceptor_ && acceptor_->is_open()) {
     std::error_code ec;
     acceptor_->close(ec);
@@ -85,6 +98,34 @@ void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
 }
 void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
   config_updater_ = std::move(handler);
+}
+
+void MetricsHttpServer::BroadcastEvent(const std::string& json_event) {
+  if (!io_ctx_ || !running_) return;
+
+  std::string sse_data = "data: " + json_event + "\n\n";
+
+  std::vector<std::shared_ptr<SseConnection>> connections;
+  {
+    std::lock_guard<std::mutex> lock(sse_mutex_);
+    RemoveDeadSseConnections();
+    for (auto& weak_conn : sse_connections_) {
+      if (auto conn = weak_conn.lock()) {
+        connections.push_back(conn);
+      }
+    }
+  }
+
+  for (auto& conn : connections) {
+    conn->EnqueueEvent(sse_data);
+  }
+}
+
+void MetricsHttpServer::RemoveDeadSseConnections() {
+  sse_connections_.erase(
+      std::remove_if(sse_connections_.begin(), sse_connections_.end(),
+                     [](const auto& w) { return w.expired(); }),
+      sse_connections_.end());
 }
 
 // Simple URL path extractor
@@ -209,10 +250,19 @@ void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
           response_body = config_updater_(body);
           status_line = "HTTP/1.1 200 OK\r\n";
         } else if (path == "/v1/events") {
-          // SSE endpoint placeholder
-          response_body = "event: connected\ndata: {}\n\n";
-          status_line = "HTTP/1.1 200 OK\r\n";
-          content_type = "text/event-stream\r\n";
+          // SSE endpoint: move socket to SseConnection and start event stream
+          auto conn = std::make_shared<SseConnection>(
+              std::move(*socket_ptr),
+              asio::io_context::strand(*io_ctx_));
+
+          {
+            std::lock_guard<std::mutex> lock(sse_mutex_);
+            RemoveDeadSseConnections();
+            sse_connections_.push_back(conn);
+          }
+
+          conn->Start();
+          return;  // Do not close connection
         }
 
         std::ostringstream response;

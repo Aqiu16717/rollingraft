@@ -102,8 +102,8 @@ class MetricsEndpointTest : public ::testing::Test {
     ASSERT_NE(GetLeader(timeout_sec), nullptr) << "No leader elected";
   }
 
-  std::string FetchMetrics(const std::string& addr) {
-    std::string cmd = "curl -s --max-time 2 http://" + addr + "/metrics";
+  std::string FetchUrl(const std::string& addr, const std::string& path) {
+    std::string cmd = "curl -s --max-time 2 http://" + addr + path;
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return "";
     char buffer[4096];
@@ -113,6 +113,22 @@ class MetricsEndpointTest : public ::testing::Test {
     }
     pclose(pipe);
     return result;
+  }
+
+  std::string FetchMetrics(const std::string& addr) {
+    return FetchUrl(addr, "/metrics");
+  }
+
+  std::string FetchHealthz(const std::string& addr) {
+    return FetchUrl(addr, "/healthz");
+  }
+
+  std::string FetchReadyz(const std::string& addr) {
+    return FetchUrl(addr, "/readyz");
+  }
+
+  std::string FetchStatus(const std::string& addr) {
+    return FetchUrl(addr, "/v1/status");
   }
 
   std::vector<std::string> data_dirs_;
@@ -190,3 +206,85 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
   EXPECT_NE(output.find("raft_propose_total"), std::string::npos)
       << "Missing propose counter";
 }
+
+TEST_F(MetricsEndpointTest, HealthzReturnsAlive) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  for (int i = 0; i < 3; ++i) {
+    std::string output = FetchHealthz(metrics_addrs_[i]);
+    EXPECT_NE(output.find("\"status\":\"alive\""), std::string::npos)
+        << "Node " << (i + 1) << " healthz unexpected: " << output;
+  }
+}
+
+TEST_F(MetricsEndpointTest, LivezReturnsAlive) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  for (int i = 0; i < 3; ++i) {
+    std::string output = FetchUrl(metrics_addrs_[i], "/livez");
+    EXPECT_NE(output.find("\"status\":\"alive\""), std::string::npos)
+        << "Node " << (i + 1) << " livez unexpected: " << output;
+  }
+}
+
+TEST_F(MetricsEndpointTest, ReadyzLeaderReturnsReady) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  int leader_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i].get() == leader) leader_idx = i;
+  }
+  ASSERT_GE(leader_idx, 0);
+
+  std::string output = FetchReadyz(metrics_addrs_[leader_idx]);
+  EXPECT_NE(output.find("\"status\":\"ready\""), std::string::npos)
+      << "Leader readyz unexpected: " << output;
+}
+
+TEST_F(MetricsEndpointTest, ReadyzFollowerWithLeaderReturnsReady) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Find a follower
+  int follower_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (!nodes_[i]->IsLeader()) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(follower_idx, 0);
+
+  std::string output = FetchReadyz(metrics_addrs_[follower_idx]);
+  EXPECT_NE(output.find("\"status\":\"ready\""), std::string::npos)
+      << "Follower readyz unexpected: " << output;
+}
+
+TEST_F(MetricsEndpointTest, StatusReturnsValidJson) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  for (int i = 0; i < 3; ++i) {
+    std::string output = FetchStatus(metrics_addrs_[i]);
+    EXPECT_NE(output.find("\"node_id\""), std::string::npos)
+        << "Node " << (i + 1) << " status missing node_id";
+    EXPECT_NE(output.find("\"role\""), std::string::npos)
+        << "Node " << (i + 1) << " status missing role";
+    EXPECT_NE(output.find("\"term\""), std::string::npos)
+        << "Node " << (i + 1) << " status missing term";
+    EXPECT_NE(output.find("\"leader_id\""), std::string::npos)
+        << "Node " << (i + 1) << " status missing leader_id";
+  }
+}
+

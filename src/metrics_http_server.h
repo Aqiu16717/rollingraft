@@ -10,6 +10,7 @@
 namespace rollingraft {
 
 class MetricsRegistry;
+class SseConnection;
 
 /**
  * Asio-based HTTP server that serves agent-friendly endpoints:
@@ -50,13 +51,24 @@ class MetricsHttpServer {
   void SetConfigProvider(ConfigProvider provider);
   void SetConfigUpdater(ConfigUpdater handler);
 
+  /**
+   * Broadcast a JSON event to all connected SSE clients.
+   * Thread-safe: can be called from any thread.
+   */
+  void BroadcastEvent(const std::string& json_event);
+
  private:
   void Run();
   void DoAccept();
   void HandleRequest(asio::ip::tcp::socket socket);
+  void RemoveDeadSseConnections();
 
   std::string bind_addr_;
   MetricsRegistry* registry_;
+
+  // SSE connections (managed on io_context thread)
+  std::mutex sse_mutex_;
+  std::vector<std::weak_ptr<SseConnection>> sse_connections_;
 
   StatusProvider status_provider_;
   AddMemberHandler add_member_handler_;

@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "rollingraft/event.h"
 #include "rollingraft/log_persister.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/metrics.h"
@@ -84,6 +85,8 @@ class RaftNode::RaftNodeImpl {
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   std::string GetLeaderAddr() const;
+
+  EventBus& GetEventBus() { return event_bus_; }
 
   void SetRoleChangeCallback(std::function<void(RaftNodeRole, uint64_t)> cb);
   void SetLeaderChangeCallback(std::function<void(NodeId, std::string)> cb);
@@ -274,6 +277,9 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Runtime Config ==========
   std::unique_ptr<RuntimeConfig> runtime_config_;
+
+  // ========== Event Bus ==========
+  EventBus event_bus_;
 
   // ========== Callbacks ==========
   std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;

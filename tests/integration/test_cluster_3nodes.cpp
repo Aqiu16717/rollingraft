@@ -88,9 +88,10 @@ class Cluster3NodesTest : public ::testing::Test {
     config.max_retry_delay_ms = 100;
     config.max_retry_attempts = 10;
 
-    for (const auto& peer_addr : all_addrs) {
-      if (peer_addr != addr) {
-        config.peers.push_back(peer_addr);
+    for (size_t j = 0; j < all_addrs.size(); ++j) {
+      if (all_addrs[j] != addr) {
+        config.peers.push_back(all_addrs[j]);
+        config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
       }
     }
 

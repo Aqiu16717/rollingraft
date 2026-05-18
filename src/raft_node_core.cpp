@@ -21,9 +21,16 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   peer_addrs_ = config.peers;
 
   // Build peer map
-  for (const auto& addr : peer_addrs_) {
-    NodeId peer_id = ParseNodeId(addr);
-    peer_map_[peer_id] = addr;
+  bool has_explicit_peer_ids = !config.peer_node_ids.empty();
+  if (has_explicit_peer_ids && config.peer_node_ids.size() != peer_addrs_.size()) {
+    throw std::invalid_argument("peer_node_ids size must match peers size");
+  }
+  for (size_t i = 0; i < peer_addrs_.size(); ++i) {
+    NodeId peer_id = has_explicit_peer_ids ? config.peer_node_ids[i] : ParseNodeId(peer_addrs_[i]);
+    if (peer_id < 0) {
+      throw std::invalid_argument("Cannot determine peer_id for address: " + peer_addrs_[i]);
+    }
+    peer_map_[peer_id] = peer_addrs_[i];
   }
 
   if (!state_machine_) {
@@ -932,11 +939,8 @@ Status RaftNode::RaftNodeImpl::TransferLeadershipTo(NodeId target_id) {
     return Status::Error("Cannot transfer leadership to self");
   }
 
-  {
-    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
-    if (!cluster_config_.Contains(target_id)) {
-      return Status::Error("Target node not in cluster");
-    }
+  if (peer_map_.find(target_id) == peer_map_.end()) {
+    return Status::Error("Target node not in cluster");
   }
 
   // Send one final AppendEntries to target to ensure its log is up-to-date

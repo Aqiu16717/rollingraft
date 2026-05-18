@@ -81,6 +81,7 @@ struct RaftNodeConfig {
   NodeId node_id;                  // Unique node identifier
   std::string listen_addr;         // Address to listen on, e.g., "0.0.0.0:8001"
   std::vector<std::string> peers;  // Addresses of peer nodes
+  std::vector<NodeId> peer_node_ids;  // Optional: explicit node IDs for peers (must match peers.size() if set)
   std::string data_dir;            // Directory for persistent storage
 
   // Timing parameters

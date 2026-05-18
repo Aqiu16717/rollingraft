@@ -313,6 +313,13 @@ Status RaftNode::RaftNodeImpl::Start() {
   }
 
   LOG_INFO("RaftNode {} started successfully", config_.node_id);
+
+  NodeLifecycleEvent started_event;
+  started_event.node_id = server_id_;
+  started_event.state = NodeLifecycleEvent::State::kStarted;
+  started_event.timestamp = std::chrono::steady_clock::now();
+  event_bus_.Publish(started_event);
+
   return Status::OK();
 }
 
@@ -372,6 +379,13 @@ Status RaftNode::RaftNodeImpl::Stop() {
   }
 
   state_ = NodeState::kStopped;
+
+  NodeLifecycleEvent stopped_event;
+  stopped_event.node_id = server_id_;
+  stopped_event.state = NodeLifecycleEvent::State::kStopped;
+  stopped_event.timestamp = std::chrono::steady_clock::now();
+  event_bus_.Publish(stopped_event);
+
   LOG_INFO("RaftNode {} stopped", config_.node_id);
   return Status::OK();
 }

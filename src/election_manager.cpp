@@ -34,6 +34,17 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
     }
   }
 
+  // Publish event
+  if (old_role != role_) {
+    NodeRoleChangedEvent event;
+    event.node_id = server_id_;
+    event.old_role = old_role;
+    event.new_role = role_;
+    event.term = current_term_;
+    event.timestamp = std::chrono::steady_clock::now();
+    event_bus_.Publish(event);
+  }
+
   // Invoke callback
   if (old_role != role_ && role_change_callback_) {
     role_change_callback_(role_, current_term_);
@@ -65,6 +76,17 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
       LOG_ERROR("Node {} failed to persist state when becoming Candidate: {}",
                 server_id_, persist_status.GetMessage());
     }
+  }
+
+  // Publish event
+  if (old_role != role_) {
+    NodeRoleChangedEvent event;
+    event.node_id = server_id_;
+    event.old_role = old_role;
+    event.new_role = role_;
+    event.term = current_term_;
+    event.timestamp = std::chrono::steady_clock::now();
+    event_bus_.Publish(event);
   }
 
   // Invoke callback
@@ -137,6 +159,25 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
     StartSnapshotCheckTimerLocked();
   }
+
+  // Publish events
+  if (old_role != role_) {
+    NodeRoleChangedEvent role_event;
+    role_event.node_id = server_id_;
+    role_event.old_role = old_role;
+    role_event.new_role = role_;
+    role_event.term = current_term_;
+    role_event.timestamp = std::chrono::steady_clock::now();
+    event_bus_.Publish(role_event);
+  }
+
+  LeaderChangedEvent leader_event;
+  leader_event.node_id = server_id_;
+  leader_event.new_leader_id = server_id_;
+  leader_event.new_leader_addr = config_.listen_addr;
+  leader_event.term = current_term_;
+  leader_event.timestamp = std::chrono::steady_clock::now();
+  event_bus_.Publish(leader_event);
 
   // Invoke callback
   if (old_role != role_ && role_change_callback_) {

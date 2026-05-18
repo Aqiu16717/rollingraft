@@ -75,9 +75,10 @@ class MetricsEndpointTest : public ::testing::Test {
     config.metrics_enabled = true;
     config.metrics_addr = metrics_addr;
 
-    for (const auto& peer_addr : all_addrs) {
-      if (peer_addr != addr) {
-        config.peers.push_back(peer_addr);
+    for (size_t j = 0; j < all_addrs.size(); ++j) {
+      if (all_addrs[j] != addr) {
+        config.peers.push_back(all_addrs[j]);
+        config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
       }
     }
     return config;
@@ -367,13 +368,7 @@ TEST_F(MetricsEndpointTest, TransferLeadershipFromLeader) {
   }
   ASSERT_GE(follower_idx, 0);
 
-  // Extract port from raft address as node_id (ParseNodeId convention)
-  std::string addr = raft_addrs_[follower_idx];
-  size_t colon = addr.find(':');
-  ASSERT_NE(colon, std::string::npos);
-  int target_id = std::stoi(addr.substr(colon + 1));
-
-  std::string body = "{\"target_node_id\":" + std::to_string(target_id) + "}";
+  std::string body = "{\"target_node_id\":" + std::to_string(follower_idx + 1) + "}";
   std::string output =
       PostUrl(metrics_addrs_[leader_idx], "/v1/leadership/transfer", body);
   EXPECT_NE(output.find("\"status\""), std::string::npos)

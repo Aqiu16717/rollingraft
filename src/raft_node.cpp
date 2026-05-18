@@ -41,6 +41,8 @@ NodeAddr RaftNode::GetLeaderAddr() const {
   return raft_node_impl_->GetLeaderAddr();
 }
 
+EventBus& RaftNode::GetEventBus() { return raft_node_impl_->GetEventBus(); }
+
 void RaftNode::SetRoleChangeCallback(
     std::function<void(RaftNodeRole role, Term term)> callback) {
   raft_node_impl_->SetRoleChangeCallback(std::move(callback));

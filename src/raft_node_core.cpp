@@ -290,6 +290,19 @@ Status RaftNode::RaftNodeImpl::Start() {
       return j.dump();
     });
 
+    // Wire EventBus → SSE broadcast
+    event_bus_.SubscribeAll([this](const RaftEvent& event) {
+      if (!metrics_server_) return;
+      nlohmann::json j;
+      j["event"] = event.Name();
+      j["node_id"] = server_id_;
+      j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+      // TODO: serialize event-specific fields based on type
+      metrics_server_->BroadcastEvent(j.dump());
+    });
+
     metrics_server_->Start();
   }
 

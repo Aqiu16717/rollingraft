@@ -36,6 +36,7 @@ namespace rollingraft {
  */
 enum RaftNodeRole { FOLLOWER = 0, CANDIDATE = 1, LEADER = 2, RaftNodeRoleEnd };
 
+class EventBus;
 class NetworkTransport;
 class TimerService;
 class Persister;
@@ -304,6 +305,12 @@ class RaftNode {
    * @return Leader address if known, empty string otherwise
    */
   NodeAddr GetLeaderAddr() const;
+
+  /**
+   * Get the event bus for subscribing to Raft events.
+   * @return Reference to the node's EventBus
+   */
+  EventBus& GetEventBus();
 
  private:
   class RaftNodeImpl;

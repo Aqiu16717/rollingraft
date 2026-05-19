@@ -71,3 +71,4 @@ third_party/*/.patched
 # Runtime data directories
 data/
 tmp/
+logo/

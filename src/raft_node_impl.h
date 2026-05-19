@@ -85,6 +85,7 @@ class RaftNode::RaftNodeImpl {
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   std::string GetLeaderAddr() const;
+  Index GetCommitIndex() const;
 
   EventBus& GetEventBus() { return event_bus_; }
 

@@ -435,6 +435,11 @@ std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
   return leader_addr_;
 }
 
+Index RaftNode::RaftNodeImpl::GetCommitIndex() const {
+  std::lock_guard<std::mutex> lock(replication_mtx_);
+  return commit_index_;
+}
+
 void RaftNode::RaftNodeImpl::SetRoleChangeCallback(
     std::function<void(RaftNodeRole, uint64_t)> cb) {
   role_change_callback_ = std::move(cb);

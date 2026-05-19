@@ -254,6 +254,10 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
       // Append new entries
       for (const auto& entry : req.entries_) {
+        Term existing_term = GetLogTermLocked(entry.index_);
+        if (existing_term != 0 && existing_term == entry.term_) {
+          continue;  // Already have this entry, skip duplicate
+        }
         auto [idx, status] = log_.Append(entry.term_, entry.data_);
         (void)idx;
         if (!status.ok()) {

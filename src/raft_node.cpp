@@ -88,3 +88,7 @@ Status RaftNode::TriggerSnapshot() {
 Status RaftNode::TransferLeadershipTo(NodeId target_id) {
   return raft_node_impl_->TransferLeadershipTo(target_id);
 }
+
+Index RaftNode::GetCommitIndex() const {
+  return raft_node_impl_->GetCommitIndex();
+}

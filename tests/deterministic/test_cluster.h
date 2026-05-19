@@ -4,7 +4,7 @@
 #include <vector>
 #include "rollingraft/raft_node.h"
 #include "rollingraft/types.h"
-#include "tests/mock/mock_state_machine.h"
+#include "mock/mock_state_machine.h"
 namespace rollingraft {
 class SimulatedClock; class SimulatedNetwork;
 class TestCluster {

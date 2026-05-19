@@ -1,11 +1,13 @@
 #include "test_cluster.h"
-#include <fmt/format.h>
+#include <chrono>
+#include <future>
 #include <gtest/gtest.h>
 #include <filesystem>
 #include "simulated_clock.h"
 #include "simulated_network.h"
+#include "simulated_network_transport.h"
 #include "simulated_timer_service.h"
-#include "tests/mock/mock_persister.h"
+#include "mock/mock_persister.h"
 namespace rollingraft {
 TestCluster::TestCluster(const Options& options) : options_(options) {
   clock_ = std::make_unique<SimulatedClock>();
@@ -13,7 +15,7 @@ TestCluster::TestCluster(const Options& options) : options_(options) {
   nodes_.resize(options.num_nodes); state_machines_.resize(options.num_nodes); data_dirs_.resize(options.num_nodes);
   for (size_t i = 0; i < options.num_nodes; ++i) {
     state_machines_[i] = std::make_shared<MockStateMachine>();
-    data_dirs_[i] = fmt::format("{}_{}_{}", options.data_dir_prefix, options.seed, i);
+    data_dirs_[i] = options.data_dir_prefix + "_" + std::to_string(options.seed) + "_" + std::to_string(i);
     std::filesystem::remove_all(data_dirs_[i]); std::filesystem::create_directories(data_dirs_[i]);
   }
 }
@@ -23,11 +25,19 @@ void TestCluster::StopAll() { for (size_t i = 0; i < options_.num_nodes; ++i) St
 void TestCluster::StartNode(NodeId id) {
   if (static_cast<size_t>(id) >= options_.num_nodes || nodes_[id]) return;
   RaftNodeConfig config;
-  config.node_id = id; config.listen_addr = fmt::format("127.0.0.1:{}", 8000 + id); config.data_dir = data_dirs_[id];
+  config.node_id = id; config.listen_addr = "127.0.0.1:" + std::to_string(8000 + id); config.data_dir = data_dirs_[id];
   config.election_timeout_ms = options_.election_timeout_ms; config.heartbeat_interval_ms = options_.heartbeat_interval_ms; config.rpc_timeout_ms = options_.rpc_timeout_ms;
-  for (size_t i = 0; i < options_.num_nodes; ++i) if (static_cast<NodeId>(i) != id) config.peers.push_back(fmt::format("127.0.0.1:{}", 8000 + i));
+  for (size_t i = 0; i < options_.num_nodes; ++i) {
+    if (static_cast<NodeId>(i) != id) {
+      config.peers.push_back("127.0.0.1:" + std::to_string(8000 + i));
+      config.peer_node_ids.push_back(static_cast<NodeId>(i));
+    }
+  }
   config.timer_factory = [this]() { return std::make_unique<SimulatedTimerService>(clock_.get()); };
-  config.persister_factory = [this]() { return std::make_shared<MockPersister>(); };
+  config.persister_factory = []() { return nullptr; };
+  config.network_factory = [this, id]() {
+    return std::make_unique<SimulatedNetworkTransport>(static_cast<NodeId>(id), network_.get(), clock_.get());
+  };
   nodes_[id] = std::make_unique<RaftNode>(config, state_machines_[id]); nodes_[id]->Start();
 }
 void TestCluster::StopNode(NodeId id) { if (static_cast<size_t>(id) >= options_.num_nodes || !nodes_[id]) return; nodes_[id]->Stop(); nodes_[id].reset(); }
@@ -45,10 +55,14 @@ void TestCluster::DelayMessages(uint64_t d) { network_->DelayAll(d); }
 Status TestCluster::ProposeToLeader(const std::string& command) { NodeId lid = GetLeaderId(); if (lid == -1) return Status::Error("NO_LEADER", "No leader"); return ProposeToNode(lid, command); }
 Status TestCluster::ProposeToNode(NodeId id, const std::string& command) {
   if (static_cast<size_t>(id) >= options_.num_nodes || !nodes_[id]) return Status::Error("NODE_DOWN", "Node not running");
-  std::promise<ApplyResult> promise; auto future = promise.get_future();
-  auto status = nodes_[id]->Propose(command, [&promise](const ApplyResult& r) { promise.set_value(r); });
+  auto promise = std::make_shared<std::promise<ApplyResult>>();
+  auto future = promise->get_future();
+  auto status = nodes_[id]->Propose(command, [promise](const ApplyResult& r) { promise->set_value(r); });
   if (!status.ok()) return status;
-  for (int i = 0; i < 500; ++i) { AdvanceTime(10); if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) break; }
+  for (int i = 0; i < 5000; ++i) { AdvanceTime(10); if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) break; }
+  if (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+    return Status::Error("TIMEOUT", "Proposal timed out");
+  }
   return Status::OK();
 }
 void TestCluster::AssertNoLeader() const { ASSERT_EQ(GetLeaderIds().size(), 0); }
@@ -59,7 +73,10 @@ void TestCluster::AssertStateMachineEqual() const { std::vector<std::string> ref
 RaftNodeRole TestCluster::GetRole(NodeId id) const { if (static_cast<size_t>(id) >= options_.num_nodes || !nodes_[id]) return FOLLOWER; return nodes_[id]->GetRole(); }
 NodeId TestCluster::GetLeaderId() const { auto l = GetLeaderIds(); return l.empty() ? -1 : l[0]; }
 std::vector<NodeId> TestCluster::GetLeaderIds() const { std::vector<NodeId> l; for (size_t i = 0; i < options_.num_nodes; ++i) if (nodes_[i] && nodes_[i]->IsLeader()) l.push_back(static_cast<NodeId>(i)); return l; }
-Index TestCluster::GetCommitIndex(NodeId id) const { return 0; }
+Index TestCluster::GetCommitIndex(NodeId id) const {
+  if (static_cast<size_t>(id) >= options_.num_nodes || !nodes_[id]) return 0;
+  return nodes_[id]->GetCommitIndex();
+}
 Index TestCluster::GetLastApplied(NodeId id) const { if (static_cast<size_t>(id) >= options_.num_nodes || !state_machines_[id]) return 0; return state_machines_[id]->GetLastAppliedIndex(); }
 size_t TestCluster::GetRunningNodeCount() const { size_t c = 0; for (const auto& n : nodes_) if (n) ++c; return c; }
 RaftNode* TestCluster::GetNode(NodeId id) const { if (static_cast<size_t>(id) >= options_.num_nodes) return nullptr; return nodes_[id].get(); }

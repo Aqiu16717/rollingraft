@@ -64,6 +64,28 @@ target_link_libraries(unit_tests
     ${GTEST_MAIN_LIBRARIES}
 )
 
+# Deterministic test infrastructure
+add_library(deterministic STATIC
+  deterministic/simulated_clock.cpp
+  deterministic/simulated_network.cpp
+  deterministic/simulated_network_transport.cpp
+  deterministic/simulated_timer_service.cpp
+  deterministic/test_cluster.cpp
+)
+
+target_include_directories(deterministic
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(deterministic
+  PUBLIC
+    rollingraft
+    test_mocks
+)
+
 # Integration tests
 add_executable(integration_tests
   integration/test_cluster_3nodes.cpp
@@ -78,11 +100,32 @@ target_include_directories(integration_tests
 target_link_libraries(integration_tests
   PRIVATE
     test_mocks
+    deterministic
+    ${GTEST_MAIN_LIBRARIES}
+)
+
+# Deterministic tests
+add_executable(deterministic_tests
+  deterministic/test_chaos.cpp
+  deterministic/test_chaos_scenarios.cpp
+)
+
+target_include_directories(deterministic_tests
+  PRIVATE
+    ${GTEST_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(deterministic_tests
+  PRIVATE
+    deterministic
     ${GTEST_MAIN_LIBRARIES}
 )
 
 # Install test binaries
-install(TARGETS unit_tests integration_tests
+install(TARGETS unit_tests integration_tests deterministic_tests
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -99,6 +142,12 @@ gtest_discover_tests(integration_tests
   PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE
 )
 
+gtest_discover_tests(deterministic_tests
+  TEST_PREFIX "deterministic."
+  XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results
+  PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE
+)
+
 # Add test targets
 add_custom_target(run_unit_tests
   COMMAND ${CMAKE_CTEST_COMMAND} -R "unit\\." --output-on-failure
@@ -108,4 +157,9 @@ add_custom_target(run_unit_tests
 add_custom_target(run_integration_tests
   COMMAND ${CMAKE_CTEST_COMMAND} -R "integration\\." --output-on-failure
   DEPENDS integration_tests
+)
+
+add_custom_target(run_deterministic_tests
+  COMMAND ${CMAKE_CTEST_COMMAND} -R "deterministic\\." --output-on-failure
+  DEPENDS deterministic_tests
 )

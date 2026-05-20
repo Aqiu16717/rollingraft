@@ -1,20 +1,38 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include "rollingraft/timer_service.h"
+
 namespace rollingraft {
 class SimulatedClock;
+
 class SimulatedTimerService : public TimerService {
  public:
   explicit SimulatedTimerService(SimulatedClock* clock);
-  TimerId StartTimer(uint64_t delay_ms, std::function<void()> callback) override;
-  void CancelTimer(TimerId id) override;
+
+  void Start() override {}
+  void Stop() override;
+
+  TimerId SetTimeout(std::chrono::milliseconds delay,
+                     std::function<void()> callback) override;
+  TimerId SetInterval(std::chrono::milliseconds interval,
+                      std::function<void()> callback) override;
+  bool CancelTimer(TimerId id) override;
+  bool IsTimerActive(TimerId id) const override;
+
  private:
-  SimulatedClock* clock_;
-  std::atomic<TimerId> next_id_{1};
-  std::unordered_map<TimerId, std::function<void()>> timers_;
-  mutable std::mutex timers_mtx_;
+  struct State {
+    SimulatedClock* clock = nullptr;
+    std::atomic<TimerId> next_id{1};
+    std::unordered_map<TimerId, std::function<void()>> timers;
+    mutable std::mutex timers_mtx;
+  };
+  std::shared_ptr<State> state_;
 };
+
 }  // namespace rollingraft

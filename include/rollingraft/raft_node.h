@@ -308,6 +308,12 @@ class RaftNode {
   NodeAddr GetLeaderAddr() const;
 
   /**
+   * Get the current commit index.
+   * @return Last committed log index
+   */
+  Index GetCommitIndex() const;
+
+  /**
    * Get the event bus for subscribing to Raft events.
    * @return Reference to the node's EventBus
    */

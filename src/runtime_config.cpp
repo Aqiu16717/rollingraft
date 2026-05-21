@@ -37,6 +37,8 @@ Status RuntimeConfig::UpdateFromJson(const std::string& json_str) {
   if (j.contains("base_retry_delay_ms")) proposed.base_retry_delay_ms = j["base_retry_delay_ms"];
   if (j.contains("max_retry_delay_ms")) proposed.max_retry_delay_ms = j["max_retry_delay_ms"];
   if (j.contains("log_retention_entries")) proposed.log_retention_entries = j["log_retention_entries"];
+  if (j.contains("max_snapshot_size_bytes")) proposed.max_snapshot_size_bytes = j["max_snapshot_size_bytes"];
+  if (j.contains("propose_timeout_ms")) proposed.propose_timeout_ms = j["propose_timeout_ms"];
 
   auto status = Validate(proposed);
   if (!status.ok()) return status;
@@ -64,6 +66,8 @@ std::string RuntimeConfig::ToJson() const {
   j["base_retry_delay_ms"] = values_.base_retry_delay_ms;
   j["max_retry_delay_ms"] = values_.max_retry_delay_ms;
   j["log_retention_entries"] = values_.log_retention_entries;
+  j["max_snapshot_size_bytes"] = values_.max_snapshot_size_bytes;
+  j["propose_timeout_ms"] = values_.propose_timeout_ms;
   return j.dump(2);
 }
 
@@ -101,6 +105,17 @@ Status RuntimeConfig::Validate(const Values& v) const {
   }
   if (v.log_retention_entries > 100000) {
     return Status::Error("INVALID_CONFIG", "log_retention_entries must be <= 100000");
+  }
+  if (v.max_snapshot_size_bytes > 0 &&
+      (v.max_snapshot_size_bytes < 1 * 1024 * 1024 ||
+       v.max_snapshot_size_bytes > 10ULL * 1024 * 1024 * 1024)) {
+    return Status::Error(
+        "INVALID_CONFIG",
+        "max_snapshot_size_bytes must be 0 (unlimited) or in [1MB, 10GB]");
+  }
+  if (v.propose_timeout_ms < 100 || v.propose_timeout_ms > 60000) {
+    return Status::Error("INVALID_CONFIG",
+                         "propose_timeout_ms must be in [100, 60000]");
   }
 
   // Cross-parameter checks

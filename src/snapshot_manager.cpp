@@ -56,16 +56,32 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   Index snapshot_index = meta.last_included_index_;
   Term snapshot_term = meta.last_included_term_;
 
-  // Read full snapshot data
+  // Read full snapshot data.
+  // TODO: This loads the entire snapshot into memory. For large state
+  // machines this is a P0 OOM risk. The proper fix is a streaming
+  // Persister interface (BeginSnapshot / AppendChunk / Finalize).
   std::string snapshot_data;
   constexpr size_t kReadChunkSize = 64 * 1024;  // 64KB chunks
   std::vector<uint8_t> buffer(kReadChunkSize);
   uint64_t offset = 0;
 
+  auto cfg = runtime_config_->Get();
+  const size_t kMaxSnapshotSize =
+      cfg.max_snapshot_size_bytes > 0 ? cfg.max_snapshot_size_bytes
+                                      : 100 * 1024 * 1024;  // 100MB default
+
   while (true) {
     size_t bytes_read = snapshot->Read(offset, buffer.data(), kReadChunkSize);
     if (bytes_read == 0) {
       break;
+    }
+    if (snapshot_data.size() + bytes_read > kMaxSnapshotSize) {
+      LOG_ERROR(
+          "Node {} {}-snapshot exceeds max size ({} > {} bytes). "
+          "Increase max_snapshot_size_bytes or implement streaming persister.",
+          server_id_, trigger, snapshot_data.size() + bytes_read,
+          kMaxSnapshotSize);
+      return;
     }
     snapshot_data.append(reinterpret_cast<char*>(buffer.data()), bytes_read);
     offset += bytes_read;

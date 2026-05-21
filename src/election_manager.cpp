@@ -108,8 +108,17 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
 
+  // Use committed cluster configuration for quorum calculation.
+  // peer_addrs_ may contain optimistically added nodes that have not
+  // yet been committed via log, so it must not be used for majority.
+  int majority;
+  {
+    std::shared_lock<std::shared_mutex> lock(membership_mtx_);
+    majority = cluster_config_.GetMajority();
+  }
+
   // Single-node cluster: already has majority, become leader immediately
-  if (vote_count_ > (peer_addrs_.size() + 1) / 2) {
+  if (vote_count_ >= majority) {
     BecomeLeaderLocked();
     return;
   }
@@ -357,11 +366,16 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
           .Increment();
     }
     ++vote_count_;
+    int majority;
+    {
+      std::shared_lock<std::shared_mutex> lock(membership_mtx_);
+      majority = cluster_config_.GetMajority();
+    }
     LOG_INFO("Node {} got vote from {}, total: {}/{}", server_id_, from,
-             vote_count_, peer_addrs_.size() + 1);
+             vote_count_, majority);
 
     // Got majority votes, become Leader
-    if (vote_count_ > (peer_addrs_.size() + 1) / 2) {
+    if (vote_count_ >= majority) {
       BecomeLeaderLocked();
     }
   }

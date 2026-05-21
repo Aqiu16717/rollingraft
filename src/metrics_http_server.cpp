@@ -17,15 +17,20 @@ std::shared_ptr<asio::ssl::context> CreateSslContext(
     const MetricsHttpServer::TlsConfig& config) {
   auto ctx = std::make_shared<asio::ssl::context>(asio::ssl::context::tls_server);
 
-  ctx->use_certificate_chain_file(config.cert_file);
-  ctx->use_private_key_file(config.key_file, asio::ssl::context::pem);
+  try {
+    ctx->use_certificate_chain_file(config.cert_file);
+    ctx->use_private_key_file(config.key_file, asio::ssl::context::pem);
 
-  if (!config.ca_file.empty()) {
-    ctx->load_verify_file(config.ca_file);
-    ctx->set_verify_mode(asio::ssl::verify_peer |
-                         asio::ssl::verify_fail_if_no_peer_cert);
-  } else {
-    ctx->set_verify_mode(asio::ssl::verify_none);
+    if (!config.ca_file.empty()) {
+      ctx->load_verify_file(config.ca_file);
+      ctx->set_verify_mode(asio::ssl::verify_peer |
+                           asio::ssl::verify_fail_if_no_peer_cert);
+    } else {
+      ctx->set_verify_mode(asio::ssl::verify_none);
+    }
+  } catch (const std::exception& e) {
+    LOG_ERROR("Failed to create SSL context: {}", e.what());
+    return nullptr;
   }
 
   return ctx;
@@ -127,6 +132,8 @@ void MetricsHttpServer::DoAccept() {
                   } else {
                     LOG_WARN("TLS handshake failed: {}",
                              handshake_ec.message());
+                    std::error_code close_ec;
+                    ssl_socket->next_layer().close(close_ec);
                   }
                 });
           }

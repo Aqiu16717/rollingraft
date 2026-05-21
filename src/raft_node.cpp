@@ -1,10 +1,13 @@
 #include "asio_timer_service.h"
 #include "json_protocol.h"
 #include "raft_node_impl.h"
+#include "rollingraft/tls_config.h"
 
 // Forward declaration for default network transport
 namespace rollingraft {
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(
+    const TlsConfig& tls_config);
 }  // namespace rollingraft
 
 using namespace rollingraft;
@@ -120,8 +123,15 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
 
   raft_node_impl_ = std::make_unique<RaftNodeImpl>(
       config, sm,
-      config.network_factory ? config.network_factory()
-                             : CreateDefaultNetworkTransport(),
+      config.network_factory
+          ? config.network_factory()
+          : (config.tls_enabled
+                 ? CreateAsioNetworkTransport(
+                       TlsConfig{.enabled = true,
+                                 .cert_file = config.tls_cert_file,
+                                 .key_file = config.tls_key_file,
+                                 .ca_file = config.tls_ca_file})
+                 : CreateDefaultNetworkTransport()),
       config.timer_factory ? config.timer_factory()
                            : TimerService::CreateDefault(),
       config.persister_factory

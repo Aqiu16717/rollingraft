@@ -4,6 +4,7 @@
  */
 
 #include <asio.hpp>
+#include <asio/ssl.hpp>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -18,35 +19,68 @@
 #include <sys/time.h>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 
+#include "rollingraft/asio_ssl_context_factory.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/network_transport.h"
+#include "rollingraft/tls_config.h"
 #include "rollingraft/types.h"
 
 namespace rollingraft {
 
 // Message format: [length: 4 bytes (big-endian)][data: length bytes]
+using SocketVariant =
+    std::variant<asio::ip::tcp::socket,
+                 asio::ssl::stream<asio::ip::tcp::socket>>;
+
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  public:
   TcpConnection(asio::io_context& io_ctx, NodeId peer_id, const NodeAddr& addr)
-      : socket_(io_ctx),
+      : socket_(asio::ip::tcp::socket(io_ctx)),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(peer_id),
+        addr_(addr),
+        connected_(false) {}
+
+  TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx,
+                NodeId peer_id, const NodeAddr& addr)
+      : socket_(asio::ssl::stream<asio::ip::tcp::socket>(io_ctx, ssl_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(peer_id),
         addr_(addr),
         connected_(false) {}
 
   TcpConnection(asio::io_context& io_ctx)
-      : socket_(io_ctx),
+      : socket_(asio::ip::tcp::socket(io_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(-1),
         addr_(""),
         connected_(false) {}
 
-  asio::ip::tcp::socket& Socket() { return socket_; }
+  TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx)
+      : socket_(asio::ssl::stream<asio::ip::tcp::socket>(io_ctx, ssl_ctx)),
+        strand_(asio::make_strand(io_ctx)),
+        peer_id_(-1),
+        addr_(""),
+        connected_(false) {}
+
+  asio::ip::tcp::socket& TcpSocket() {
+    return std::get<0>(socket_);
+  }
+
+  asio::ssl::stream<asio::ip::tcp::socket>& SslSocket() {
+    return std::get<1>(socket_);
+  }
+
+  bool IsSsl() const {
+    return std::holds_alternative<
+        asio::ssl::stream<asio::ip::tcp::socket>>(socket_);
+  }
 
   void Start() {
     LOG_INFO("TcpConnection::Start: peer_id={}, socket_open={}", peer_id_,
-             socket_.is_open());
+             SocketIsOpen());
     connected_.store(true, std::memory_order_release);
     DoReadHeader();
     LOG_INFO("TcpConnection::Start completed: peer_id={}", peer_id_);
@@ -56,10 +90,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     std::unordered_map<uint64_t, PendingCallback> drained;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (socket_.is_open()) {
-        std::error_code ec;
-        socket_.close(ec);
-      }
+      SocketClose();
       connected_.store(false, std::memory_order_release);
       drained = std::move(pending_callbacks_);
       pending_callbacks_.clear();
@@ -71,7 +102,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
   bool IsConnected() const {
-    return connected_.load(std::memory_order_acquire) && socket_.is_open();
+    return connected_.load(std::memory_order_acquire) && SocketIsOpen();
   }
 
   NodeId GetPeerId() const { return peer_id_; }
@@ -124,31 +155,40 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     });
 
     // Send message (serialized through strand)
-    asio::async_write(
-        socket_, asio::buffer(*msg),
-        asio::bind_executor(strand_, [self, msg, correlation_id](
-                                         std::error_code ec, std::size_t) {
-          if (ec) {
-            RpcResponseCallback cb;
-            std::shared_ptr<asio::steady_timer> timer;
-            {
-              std::lock_guard<std::mutex> lock(self->mutex_);
-              auto it = self->pending_callbacks_.find(correlation_id);
-              if (it != self->pending_callbacks_.end()) {
-                cb = std::move(it->second.callback);
-                timer = std::move(it->second.timer);
-                self->pending_callbacks_.erase(it);
-              }
-            }
-            if (timer) timer->cancel();
-            if (cb) {
-              cb("", false, "Send failed: " + ec.message());
-            }
-            self->connected_.store(false, std::memory_order_release);
+    auto write_handler = [self, msg, correlation_id](std::error_code ec,
+                                                     std::size_t) {
+      if (ec) {
+        RpcResponseCallback cb;
+        std::shared_ptr<asio::steady_timer> timer;
+        {
+          std::lock_guard<std::mutex> lock(self->mutex_);
+          auto it = self->pending_callbacks_.find(correlation_id);
+          if (it != self->pending_callbacks_.end()) {
+            cb = std::move(it->second.callback);
+            timer = std::move(it->second.timer);
+            self->pending_callbacks_.erase(it);
           }
-          // On success: do NOT cancel timer -- it covers response wait too
-          // Response will be handled by DoRead -> HandleMessage
-        }));
+        }
+        if (timer) timer->cancel();
+        if (cb) {
+          cb("", false, "Send failed: " + ec.message());
+        }
+        self->connected_.store(false, std::memory_order_release);
+      }
+      // On success: do NOT cancel timer -- it covers response wait too
+      // Response will be handled by DoRead -> HandleMessage
+    };
+
+    if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+      asio::async_write(
+          std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
+          asio::bind_executor(strand_, write_handler));
+    } else {
+      asio::async_write(
+          std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
+          asio::buffer(*msg),
+          asio::bind_executor(strand_, write_handler));
+    }
   }
 
   void SetRequestHandler(RpcRequestHandler handler) {
@@ -159,52 +199,68 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
  private:
   void DoReadHeader() {
     auto self = shared_from_this();
-    asio::async_read(
-        socket_, asio::buffer(header_buffer_),
-        asio::bind_executor(strand_, [this, self](std::error_code ec,
-                                                  std::size_t bytes) {
-          if (!ec) {
-            LOG_INFO("Read header: peer_id={}, bytes={}", peer_id_, bytes);
-          }
-          if (ec) {
-            if (ec != asio::error::eof) {
-              LOG_ERROR("Read header error: {}", ec.message());
-            }
-            connected_.store(false, std::memory_order_release);
-            return;
-          }
+    auto read_handler = [this, self](std::error_code ec, std::size_t bytes) {
+      if (!ec) {
+        LOG_INFO("Read header: peer_id={}, bytes={}", peer_id_, bytes);
+      }
+      if (ec) {
+        if (ec != asio::error::eof) {
+          LOG_ERROR("Read header error: {}", ec.message());
+        }
+        connected_.store(false, std::memory_order_release);
+        return;
+      }
 
-          uint32_t length = (static_cast<uint8_t>(header_buffer_[0]) << 24) |
-                            (static_cast<uint8_t>(header_buffer_[1]) << 16) |
-                            (static_cast<uint8_t>(header_buffer_[2]) << 8) |
-                            static_cast<uint8_t>(header_buffer_[3]);
+      uint32_t length = (static_cast<uint8_t>(header_buffer_[0]) << 24) |
+                        (static_cast<uint8_t>(header_buffer_[1]) << 16) |
+                        (static_cast<uint8_t>(header_buffer_[2]) << 8) |
+                        static_cast<uint8_t>(header_buffer_[3]);
 
-          if (length > 0 && length < 100 * 1024 * 1024) {  // Max 100MB
-            body_buffer_.resize(length);
-            DoReadBody(length);
-          } else {
-            LOG_ERROR("Invalid message length: {}", length);
-            connected_.store(false, std::memory_order_release);
-          }
-        }));
+      if (length > 0 && length < 100 * 1024 * 1024) {  // Max 100MB
+        body_buffer_.resize(length);
+        DoReadBody(length);
+      } else {
+        LOG_ERROR("Invalid message length: {}", length);
+        connected_.store(false, std::memory_order_release);
+      }
+    };
+
+    if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+      asio::async_read(
+          std::get<asio::ip::tcp::socket>(socket_), asio::buffer(header_buffer_),
+          asio::bind_executor(strand_, read_handler));
+    } else {
+      asio::async_read(
+          std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
+          asio::buffer(header_buffer_),
+          asio::bind_executor(strand_, read_handler));
+    }
   }
 
   void DoReadBody(uint32_t /*length*/) {
     auto self = shared_from_this();
-    asio::async_read(
-        socket_, asio::buffer(body_buffer_),
-        asio::bind_executor(
-            strand_, [this, self](std::error_code ec,
-                                  std::size_t /*bytes_transferred*/) {
-              if (ec) {
-                LOG_ERROR("Read body error: {}", ec.message());
-                connected_.store(false, std::memory_order_release);
-                return;
-              }
+    auto read_handler = [this, self](std::error_code ec,
+                                     std::size_t /*bytes_transferred*/) {
+      if (ec) {
+        LOG_ERROR("Read body error: {}", ec.message());
+        connected_.store(false, std::memory_order_release);
+        return;
+      }
 
-              HandleMessage();
-              DoReadHeader();
-            }));
+      HandleMessage();
+      DoReadHeader();
+    };
+
+    if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+      asio::async_read(
+          std::get<asio::ip::tcp::socket>(socket_), asio::buffer(body_buffer_),
+          asio::bind_executor(strand_, read_handler));
+    } else {
+      asio::async_read(
+          std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
+          asio::buffer(body_buffer_),
+          asio::bind_executor(strand_, read_handler));
+    }
   }
 
   void HandleMessage() {
@@ -231,14 +287,22 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       auto msg = std::make_shared<std::string>(header, 4);
       msg->append(response);
 
-      asio::async_write(
-          socket_, asio::buffer(*msg),
-          asio::bind_executor(
-              strand_, [self, msg](std::error_code ec, std::size_t) {
-                if (ec) {
-                  LOG_ERROR("Write response error: {}", ec.message());
-                }
-              }));
+      auto write_handler = [self, msg](std::error_code ec, std::size_t) {
+        if (ec) {
+          LOG_ERROR("Write response error: {}", ec.message());
+        }
+      };
+
+      if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+        asio::async_write(
+            std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
+            asio::bind_executor(strand_, write_handler));
+      } else {
+        asio::async_write(
+            std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
+            asio::buffer(*msg),
+            asio::bind_executor(strand_, write_handler));
+      }
     } else {
       // This is a client connection, handle response by correlation_id
       auto callback = ExtractCallbackLocked(body_buffer_);
@@ -249,7 +313,33 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
  private:
-  asio::ip::tcp::socket socket_;
+  bool SocketIsOpen() const {
+    if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+      return std::get<asio::ip::tcp::socket>(socket_).is_open();
+    }
+    return std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_)
+        .next_layer()
+        .is_open();
+  }
+
+  void SocketClose() {
+    if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+      auto& socket = std::get<asio::ip::tcp::socket>(socket_);
+      if (socket.is_open()) {
+        std::error_code ec;
+        socket.close(ec);
+      }
+    } else {
+      auto& socket =
+          std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_);
+      if (socket.next_layer().is_open()) {
+        std::error_code ec;
+        socket.next_layer().close(ec);
+      }
+    }
+  }
+
+  SocketVariant socket_;
   asio::strand<asio::io_context::executor_type> strand_;
   NodeId peer_id_;
   NodeAddr addr_;
@@ -318,11 +408,13 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   static constexpr std::chrono::milliseconds kConnectTimeout{5000};
   static constexpr size_t kMaxPendingSends = 1000;
 
-  PeerConnection(asio::io_context& io_ctx, NodeId peer_id, NodeAddr addr)
+  PeerConnection(asio::io_context& io_ctx, NodeId peer_id, NodeAddr addr,
+                 asio::ssl::context* ssl_ctx = nullptr)
       : io_ctx_(io_ctx),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(peer_id),
         addr_(std::move(addr)),
+        ssl_ctx_(ssl_ctx),
         reconnect_timer_(io_ctx),
         connect_timer_(io_ctx) {
     // Parse and cache host/port
@@ -349,7 +441,13 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       }
     }
 
-    auto conn = std::make_shared<TcpConnection>(io_ctx_, peer_id_, addr_);
+    std::shared_ptr<TcpConnection> conn;
+    if (ssl_ctx_) {
+      conn = std::make_shared<TcpConnection>(io_ctx_, *ssl_ctx_, peer_id_,
+                                              addr_);
+    } else {
+      conn = std::make_shared<TcpConnection>(io_ctx_, peer_id_, addr_);
+    }
     conn_ = conn;
 
     auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_ctx_);
@@ -376,12 +474,12 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
                 return;
               }
               asio::async_connect(
-                  conn->Socket(), results,
+                  conn->TcpSocket(), results,
                   asio::bind_executor(
                       self->strand_,
                       [self, conn](std::error_code ec,
                                    asio::ip::tcp::endpoint /*ep*/) {
-                        self->OnConnect(ec, conn);
+                        self->OnTcpConnected(ec, conn);
                       }));
             }));
   }
@@ -451,6 +549,33 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   State GetState() const { return state_.load(std::memory_order_acquire); }
 
  private:
+  void OnTcpConnected(std::error_code ec,
+                      std::shared_ptr<TcpConnection> expected_conn) {
+    if (conn_ != expected_conn) {
+      if (expected_conn) expected_conn->Close();
+      return;
+    }
+
+    if (ec) {
+      OnConnectFailure(ec);
+      return;
+    }
+
+    if (ssl_ctx_) {
+      // Perform TLS handshake
+      auto& ssl_socket = conn_->SslSocket();
+      ssl_socket.async_handshake(
+          asio::ssl::stream_base::client,
+          asio::bind_executor(
+              strand_, [self = shared_from_this(), expected_conn](
+                           std::error_code handshake_ec) {
+                self->OnConnect(handshake_ec, expected_conn);
+              }));
+    } else {
+      OnConnect(std::error_code{}, expected_conn);
+    }
+  }
+
   void OnConnect(std::error_code ec,
                  std::shared_ptr<TcpConnection> expected_conn) {
     // Identity check: stale callback from replaced connection
@@ -485,6 +610,10 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       return;
     }
 
+    OnConnectFailure(ec);
+  }
+
+  void OnConnectFailure(std::error_code ec) {
     // Error path (includes timeout and operation_aborted from Close())
     State expected = State::kConnecting;
     if (!state_.compare_exchange_strong(expected, State::kFailed,
@@ -543,6 +672,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   uint16_t port_ = 0;
   std::atomic<State> state_{State::kDisconnected};
 
+  asio::ssl::context* ssl_ctx_ = nullptr;
   std::shared_ptr<TcpConnection> conn_;
   std::deque<PendingSend> pending_sends_;  // accessed only on strand_
 
@@ -554,6 +684,10 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
 class AsioNetworkTransport : public NetworkTransport {
  public:
   AsioNetworkTransport() = default;
+
+  explicit AsioNetworkTransport(const TlsConfig& tls_config)
+      : tls_config_(tls_config) {}
+
   ~AsioNetworkTransport() override { Stop(); }
 
   Status Initialize(const NodeAddr& listen_addr,
@@ -589,6 +723,21 @@ class AsioNetworkTransport : public NetworkTransport {
     } catch (const std::exception& e) {
       return Status::Error("Failed to create acceptor: " +
                            std::string(e.what()));
+    }
+
+    // Initialize TLS contexts if enabled
+    if (tls_config_.enabled) {
+      AsioSslContextFactory factory(tls_config_);
+      auto status = factory.CreateServerContext(server_ssl_context_);
+      if (!status.ok()) {
+        return Status::Error("Failed to create TLS server context: " +
+                             status.GetMessage());
+      }
+      status = factory.CreateClientContext(client_ssl_context_);
+      if (!status.ok()) {
+        return Status::Error("Failed to create TLS client context: " +
+                             status.GetMessage());
+      }
     }
 
     initialized_ = true;
@@ -718,18 +867,46 @@ class AsioNetworkTransport : public NetworkTransport {
 
  private:
   void DoAccept() {
-    auto new_conn = std::make_shared<TcpConnection>(io_context_);
+    std::shared_ptr<TcpConnection> new_conn;
+    if (tls_config_.enabled) {
+      new_conn = std::make_shared<TcpConnection>(io_context_,
+                                                  server_ssl_context_);
+    } else {
+      new_conn = std::make_shared<TcpConnection>(io_context_);
+    }
 
-    acceptor_->async_accept(new_conn->Socket(), [this,
-                                                 new_conn](std::error_code ec) {
+    acceptor_->async_accept(new_conn->TcpSocket(), [this,
+                                                    new_conn](
+                                                       std::error_code ec) {
       if (!ec) {
-        new_conn->SetRequestHandler(request_handler_);
-        new_conn->Start();
-        // Inbound connections are NOT stored in peers_ (which is
-        // for outbound peer connections only). Storing with peer_id=-1
-        // would cause overwriting and use-after-free.
-        LOG_INFO("Accepted inbound connection from {}",
-                 new_conn->Socket().remote_endpoint().address().to_string());
+        if (tls_config_.enabled) {
+          auto& ssl_socket = new_conn->SslSocket();
+          ssl_socket.async_handshake(
+              asio::ssl::stream_base::server,
+              [this, new_conn](std::error_code handshake_ec) {
+                if (!handshake_ec) {
+                  new_conn->SetRequestHandler(request_handler_);
+                  new_conn->Start();
+                  LOG_INFO("Accepted inbound TLS connection");
+                } else {
+                  LOG_ERROR("TLS handshake failed: {}",
+                            handshake_ec.message());
+                }
+                if (running_.load(std::memory_order_relaxed)) {
+                  DoAccept();
+                }
+              });
+          // Don't call DoAccept here; it's in the handshake callback
+          return;
+        } else {
+          new_conn->SetRequestHandler(request_handler_);
+          new_conn->Start();
+          LOG_INFO("Accepted inbound connection from {}",
+                   new_conn->TcpSocket()
+                       .remote_endpoint()
+                       .address()
+                       .to_string());
+        }
       } else if (running_.load(std::memory_order_relaxed)) {
         LOG_ERROR("Accept error: {}", ec.message());
       }
@@ -757,7 +934,10 @@ class AsioNetworkTransport : public NetworkTransport {
       peers_.erase(it);
     }
 
-    auto peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr);
+    asio::ssl::context* ssl_ctx =
+        tls_config_.enabled ? &client_ssl_context_ : nullptr;
+    auto peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr,
+                                                  ssl_ctx);
     peers_[peer_id] = peer;
     peer->StartConnecting();
     return peer;
@@ -780,11 +960,20 @@ class AsioNetworkTransport : public NetworkTransport {
   ConnectionCallback connection_callback_;
 
   std::unordered_map<NodeId, std::shared_ptr<PeerConnection>> peers_;
+
+  TlsConfig tls_config_;
+  asio::ssl::context server_ssl_context_{asio::ssl::context::tls_server};
+  asio::ssl::context client_ssl_context_{asio::ssl::context::tls_client};
 };
 
 // Factory function
 std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport() {
   return std::make_unique<AsioNetworkTransport>();
+}
+
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(
+    const TlsConfig& tls_config) {
+  return std::make_unique<AsioNetworkTransport>(tls_config);
 }
 
 // Default factory function (used by RaftNode)

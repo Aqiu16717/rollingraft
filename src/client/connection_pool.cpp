@@ -57,52 +57,67 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
   std::string port_str = addr.substr(colon_pos + 1);
 
   try {
-    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context_);
+    // Use a temporary io_context to avoid blocking the pool's io_context
+    // worker thread. If CreateConnection is called from within an
+    // io_context_ handler (e.g. a callback), promise/future on the same
+    // io_context would deadlock because the single worker thread is
+    // blocked waiting for itself to run the async completion handlers.
+    asio::io_context temp_io;
+    asio::executor_work_guard<asio::io_context::executor_type> temp_work(
+        temp_io.get_executor());
 
-    // Use promise/future for synchronous wait on async operations
-    auto promise = std::make_shared<std::promise<std::error_code>>();
-    auto future = promise->get_future();
-    auto completed = std::make_shared<std::atomic<bool>>(false);
+    asio::ip::tcp::socket temp_socket(temp_io);
+    std::error_code connect_ec;
+    std::atomic<bool> completed{false};
 
-    auto resolver = std::make_shared<asio::ip::tcp::resolver>(io_context_);
+    auto resolver = std::make_shared<asio::ip::tcp::resolver>(temp_io);
     resolver->async_resolve(
         host, port_str,
-        [socket, resolver, promise, completed](
+        [&temp_socket, resolver, &connect_ec, &completed](
             std::error_code ec,
             asio::ip::tcp::resolver::results_type endpoints) {
           if (ec) {
-            if (!completed->exchange(true)) {
-              promise->set_value(ec);
+            if (!completed.exchange(true)) {
+              connect_ec = ec;
             }
             return;
           }
           asio::async_connect(
-              *socket, endpoints,
-              [promise, completed](std::error_code ec,
-                                   const asio::ip::tcp::endpoint&) {
-                if (!completed->exchange(true)) {
-                  promise->set_value(ec);
+              temp_socket, endpoints,
+              [&connect_ec, &completed](std::error_code ec,
+                                        const asio::ip::tcp::endpoint&) {
+                if (!completed.exchange(true)) {
+                  connect_ec = ec;
                 }
               });
         });
 
-    auto timer = std::make_shared<asio::steady_timer>(io_context_);
-    timer->expires_after(connect_timeout_);
-    timer->async_wait([promise, completed](std::error_code ec) {
-      if (!ec && !completed->exchange(true)) {
-        promise->set_value(asio::error::timed_out);
+    asio::steady_timer timer(temp_io);
+    timer.expires_after(connect_timeout_);
+    timer.async_wait([&connect_ec, &completed](std::error_code ec) {
+      if (!ec && !completed.exchange(true)) {
+        connect_ec = asio::error::timed_out;
       }
     });
 
-    if (future.wait_for(connect_timeout_ + std::chrono::milliseconds(100)) !=
-        std::future_status::ready) {
-      return nullptr;
-    }
+    // Run the temporary io_context with a hard ceiling.
+    temp_io.run_for(connect_timeout_ + std::chrono::milliseconds(100));
 
-    auto connect_ec = future.get();
+    if (!completed.load()) {
+      return nullptr;  // Timeout
+    }
     if (connect_ec) {
       return nullptr;
     }
+
+    // Transfer the connected native socket to the pool's io_context.
+    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context_);
+    auto native_fd = temp_socket.release();
+    socket->assign(asio::ip::tcp::v4(), native_fd);
+
+    // Enable TCP keepalive to detect half-open connections.
+    asio::socket_base::keep_alive keep_alive_option(true);
+    socket->set_option(keep_alive_option);
 
     return socket;
   } catch (...) {

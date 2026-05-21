@@ -33,7 +33,8 @@ class MetricsHttpServer {
   using TlsConfig = MetricsHttpServerTlsConfig;
 
   MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry,
-                    const TlsConfig& tls_config = {});
+                    const TlsConfig& tls_config = {},
+                    const std::string& admin_token = "");
   ~MetricsHttpServer();
 
   void Start();
@@ -49,6 +50,11 @@ class MetricsHttpServer {
 
   void BroadcastEvent(const std::string& json_event);
 
+ public:
+  std::tuple<std::string, std::string, std::string, bool> BuildResponse(
+      const std::string& request);
+  void RemoveDeadSseConnections();
+
  private:
   void Run();
   void DoAccept();
@@ -57,14 +63,11 @@ class MetricsHttpServer {
                                      asio::ssl::stream<asio::ip::tcp::socket>>;
   void HandleConnection(SocketVariant socket);
 
-  std::tuple<std::string, std::string, std::string, bool> BuildResponse(
-      const std::string& request);
-  void RemoveDeadSseConnections();
-
   std::string bind_addr_;
   MetricsRegistry* registry_;
 
   TlsConfig tls_config_;
+  std::string admin_token_;
   std::shared_ptr<asio::ssl::context> ssl_ctx_;
 
   std::mutex sse_mutex_;
@@ -82,6 +85,8 @@ class MetricsHttpServer {
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   std::thread thread_;
   std::atomic<bool> running_{false};
+
+  // Authentication logic tested via public HTTP interface in unit tests
 };
 
 }  // namespace rollingraft

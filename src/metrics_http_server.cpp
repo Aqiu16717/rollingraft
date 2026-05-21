@@ -51,12 +51,44 @@ std::string ExtractBody(const std::string& request) {
   return request.substr(pos + 4);
 }
 
+std::string ExtractAuthToken(const std::string& request) {
+  static constexpr std::string_view kAuthPrefix = "Authorization: Bearer ";
+  size_t pos = request.find(kAuthPrefix);
+  if (pos == std::string::npos) return "";
+  pos += kAuthPrefix.size();
+  size_t end = request.find("\r\n", pos);
+  if (end == std::string::npos) return "";
+  return request.substr(pos, end - pos);
+}
+
+// Timing-safe string comparison to mitigate timing attacks on token validation.
+// Never use operator== for comparing secrets.
+bool TimingSafeEqual(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  volatile unsigned char diff = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+  }
+  return diff == 0;
+}
+
+bool IsAdminEndpoint(const std::string& path, const std::string& method) {
+  if (path == "/v1/members" && method == "POST") return true;
+  if (path.find("/v1/members/") == 0 && method == "DELETE") return true;
+  if (path == "/v1/snapshot/trigger" && method == "POST") return true;
+  if (path == "/v1/leadership/transfer" && method == "POST") return true;
+  if (path == "/v1/config") return true;  // GET and PATCH
+  return false;
+}
+
 }  // namespace
 
 MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr,
                                      MetricsRegistry* registry,
-                                     const TlsConfig& tls_config)
-    : bind_addr_(bind_addr), registry_(registry), tls_config_(tls_config) {
+                                     const TlsConfig& tls_config,
+                                     const std::string& admin_token)
+    : bind_addr_(bind_addr), registry_(registry), tls_config_(tls_config),
+      admin_token_(admin_token) {
   if (tls_config_.enabled) {
     ssl_ctx_ = CreateSslContext(tls_config_);
   }
@@ -202,15 +234,35 @@ void MetricsHttpServer::RemoveDeadSseConnections() {
       sse_connections_.end());
 }
 
+std::string ExtractMethod(const std::string& request) {
+  size_t end = request.find(' ');
+  if (end == std::string::npos) return "";
+  return request.substr(0, end);
+}
+
 std::tuple<std::string, std::string, std::string, bool>
 MetricsHttpServer::BuildResponse(const std::string& request) {
   std::string path = ExtractPath(request);
   std::string body = ExtractBody(request);
+  std::string method = ExtractMethod(request);
 
   std::string response_body;
   std::string status_line = "HTTP/1.1 404 Not Found\r\n";
   std::string content_type = "application/json\r\n";
   bool is_sse = false;
+
+  // Admin endpoint authentication check
+  if (!admin_token_.empty() && IsAdminEndpoint(path, method)) {
+    std::string token = ExtractAuthToken(request);
+    if (!TimingSafeEqual(token, admin_token_)) {
+      response_body = nlohmann::json{{"error", "UNAUTHORIZED"},
+                                      {"message", "Invalid or missing admin token"}}
+                          .dump() +
+                      "\n";
+      status_line = "HTTP/1.1 401 Unauthorized\r\n";
+      return {response_body, status_line, content_type, is_sse};
+    }
+  }
 
   if (path == "/metrics" && registry_) {
     response_body = registry_->FormatPrometheus();

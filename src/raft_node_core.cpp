@@ -178,7 +178,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     tls_config.key_file = config_.tls_key_file;
     tls_config.ca_file = config_.tls_ca_file;
     metrics_server_ = std::make_unique<MetricsHttpServer>(
-        config_.metrics_addr, metrics_.get(), tls_config);
+        config_.metrics_addr, metrics_.get(), tls_config, config_.admin_token);
     metrics_server_->SetStatusProvider([this]() -> std::string {
       // Lock hierarchy: election_mtx_ -> replication_mtx_ -> membership_mtx_
       // -> applier_mtx_. All accessed state must be protected.

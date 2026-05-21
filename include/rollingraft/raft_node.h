@@ -124,8 +124,15 @@ struct RaftNodeConfig {
   std::string tls_key_file;
   std::string tls_ca_file;
 
+  // Admin API authentication token. If non-empty, admin endpoints
+  // (/v1/members, /v1/snapshot/*, /v1/leadership/*, /v1/config PATCH)
+  // require Authorization: Bearer <token>. Metrics/health endpoints remain
+  // public. Empty = no authentication (backward compatible).
+  std::string admin_token;
+
   // Logging configuration
   bool json_logging = false;  // Enable JSON structured logging format
+
 };
 
 /**

@@ -51,6 +51,7 @@ add_executable(unit_tests
   unit/test_metrics.cpp
   unit/test_log_compaction.cpp
   unit/test_event_bus.cpp
+  unit/test_metrics_http_server.cpp
 )
 
 target_include_directories(unit_tests

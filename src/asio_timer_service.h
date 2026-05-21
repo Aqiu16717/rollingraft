@@ -143,6 +143,10 @@ class AsioTimerService : public TimerService {
   std::atomic<bool> running_{false};
   // Tracks whether io_thread has exited run() (for join timeout)
   std::atomic<bool> io_thread_exited_{false};
+
+  // Strand serializes all timer operations (async_wait, cancel, post)
+  // to prevent data race when using external multi-threaded io_context.
+  asio::io_context::strand strand_;
 };
 
 }  // namespace rollingraft

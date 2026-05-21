@@ -10,10 +10,10 @@
 namespace rollingraft {
 
 AsioTimerService::AsioTimerService()
-    : owns_io_context_(true), io_ptr_(&io_context_) {}
+    : owns_io_context_(true), io_ptr_(&io_context_), strand_(io_context_) {}
 
 AsioTimerService::AsioTimerService(asio::io_context& external_io)
-    : owns_io_context_(false), io_ptr_(&external_io) {}
+    : owns_io_context_(false), io_ptr_(&external_io), strand_(external_io) {}
 
 AsioTimerService::~AsioTimerService() {
   if (running_) {
@@ -132,21 +132,22 @@ TimerId AsioTimerService::SetTimeout(std::chrono::milliseconds delay,
     timers_[id] = timer;
   }
 
-  timer->asio_timer->async_wait([this, id, timer](std::error_code ec) {
-    if (!ec) {
-      if (timer->callback) {
-        try {
-          timer->callback();
-        } catch (const std::exception& e) {
-          LOG_ERROR("Timer callback exception: {}", e.what());
-        } catch (...) {
-          LOG_ERROR("Timer callback unknown exception");
+  timer->asio_timer->async_wait(
+      asio::bind_executor(strand_, [this, id, timer](std::error_code ec) {
+        if (!ec) {
+          if (timer->callback) {
+            try {
+              timer->callback();
+            } catch (const std::exception& e) {
+              LOG_ERROR("Timer callback exception: {}", e.what());
+            } catch (...) {
+              LOG_ERROR("Timer callback unknown exception");
+            }
+          }
         }
-      }
-    }
-    std::lock_guard<std::mutex> lock(timers_mutex_);
-    timers_.erase(id);
-  });
+        std::lock_guard<std::mutex> lock(timers_mutex_);
+        timers_.erase(id);
+      }));
 
   return id;
 }
@@ -196,14 +197,15 @@ TimerId AsioTimerService::SetInterval(std::chrono::milliseconds interval,
     if (running_) {
       try {
         timer->asio_timer->expires_after(interval);
-        timer->asio_timer->async_wait(*handler);
+        timer->asio_timer->async_wait(
+            asio::bind_executor(strand_, *handler));
       } catch (const std::exception& e) {
         LOG_ERROR("Failed to reschedule interval timer: {}", e.what());
       }
     }
   };
 
-  timer->asio_timer->async_wait(*handler);
+  timer->asio_timer->async_wait(asio::bind_executor(strand_, *handler));
 
   return id;
 }
@@ -225,10 +227,11 @@ bool AsioTimerService::CancelTimer(TimerId timer_id) {
   }
 
   if (timer && timer->asio_timer && io_ptr_) {
-    // Post cancel to io_context to serialize with handler execution.
+    // Post cancel through strand to serialize with handler execution.
     // asio::steady_timer is not thread-safe; concurrent cancel() and
     // expires_after()/async_wait() from different threads cause data race.
-    asio::post(*io_ptr_, [timer]() {
+    // The strand guarantees sequential execution of all timer ops.
+    asio::post(strand_, [timer]() {
       try {
         timer->asio_timer->cancel();
       } catch (...) {

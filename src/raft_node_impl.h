@@ -217,6 +217,14 @@ class RaftNode::RaftNodeImpl {
   };
   std::unordered_map<NodeId, RetryState> retry_state_;
 
+  // Backpressure: number of in-flight AppendEntries per peer.
+  std::unordered_map<NodeId, size_t> pending_appends_;
+
+  // Membership change safety: true while a CONFIG_CHANGE log entry
+  // has been proposed but not yet committed. Prevents concurrent
+  // membership changes which violate single-node-change safety.
+  bool pending_config_change_ = false;
+
   // ========== Cluster Config ==========
   ClusterConfig cluster_config_;
   // Note: config_mutex_ replaced by membership_mtx_ (std::shared_mutex)

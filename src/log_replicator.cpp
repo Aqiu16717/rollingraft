@@ -89,6 +89,16 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
 
+  // Backpressure: limit in-flight AppendEntries per peer to prevent
+  // memory unbounded growth when a follower is slow or partitioned.
+  constexpr size_t kMaxPendingAppends = 3;
+  if (pending_appends_[peer_id] >= kMaxPendingAppends) {
+    LOG_DEBUG("Node {}: backpressure on peer {}, pending={}", server_id_,
+              peer_id, pending_appends_[peer_id]);
+    return;
+  }
+  pending_appends_[peer_id]++;
+
   if (metrics_) {
     metrics_
         ->GetCounter("raft_appendentries_sent_total",
@@ -104,6 +114,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
         std::chrono::milliseconds(cfg.rpc_timeout_ms),
       [this, peer_id](const std::string& resp, bool success,
                       const std::string& error) {
+        // Always decrement, regardless of success/failure.
+        pending_appends_[peer_id]--;
+
         if (!success) {
           LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
                    error);

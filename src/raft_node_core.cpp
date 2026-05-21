@@ -371,9 +371,13 @@ Status RaftNode::RaftNodeImpl::Stop() {
     metrics_server_.reset();
   }
 
-  // 2. Stop timers (no locks needed — state_ is kStopping, callbacks
-  // check IsRunning() and return early)
-  CancelElectionTimerLocked();
+  // 2. Stop timers. election_mtx_ must be held when mutating
+  // election_timer_ to avoid racing with OnElectionTimeout on the
+  // io_context thread.
+  {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
+    CancelElectionTimerLocked();
+  }
   StopHeartbeatTimerLocked();
   StopSnapshotCheckTimerLocked();
 
@@ -731,7 +735,9 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
   lock_r.unlock();
 
   // Wait for commit and apply with timeout
-  auto wait_status = future.wait_for(std::chrono::seconds(5));
+  auto cfg = runtime_config_->Get();
+  auto wait_status = future.wait_for(
+      std::chrono::milliseconds(cfg.propose_timeout_ms));
 
   lock_r.lock();
   guard.need_relock = false;
@@ -819,8 +825,11 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
     return Status::Error("Node already in cluster");
   }
 
-  // Check if only changing one node at a time
-  // (This is a simplified check - in production, track pending changes)
+  // Single-node-change safety: reject if another change is in flight.
+  if (pending_config_change_) {
+    return Status::Error(
+        "A membership change is already in progress; wait for it to commit");
+  }
 
   // Create config change entry as a special command
   std::string cmd = "CONFIG_CHANGE:ADD:" + std::to_string(id) + ":" + addr;
@@ -844,7 +853,11 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
     }
   }
 
-  // Add to peer map immediately (optimistic)
+  // Mark pending so no other membership change can be proposed.
+  pending_config_change_ = true;
+
+  // Add to peer map immediately (optimistic) so the leader starts
+  // replicating to the new node right away.
   peer_map_[id] = addr;
   next_index_[id] = log_.GetLastLogInfo().first + 1;
   match_index_[id] = 0;
@@ -877,6 +890,12 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     return Status::Error("Node not in cluster");
   }
 
+  // Single-node-change safety: reject if another change is in flight.
+  if (pending_config_change_) {
+    return Status::Error(
+        "A membership change is already in progress; wait for it to commit");
+  }
+
   // Prevent removing ourselves while leader
   // (We should step down first)
   if (id == server_id_) {
@@ -904,6 +923,9 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
       }
     }
   }
+
+  // Mark pending so no other membership change can be proposed.
+  pending_config_change_ = true;
 
   // Remove from peer map immediately (optimistic)
   peer_map_.erase(id);

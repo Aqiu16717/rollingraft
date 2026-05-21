@@ -1,32 +1,26 @@
 #pragma once
 
 #include <asio.hpp>
+#include <asio/ssl.hpp>
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
 #include <thread>
+#include <variant>
 
 namespace rollingraft {
 
 class MetricsRegistry;
 class SseConnection;
 
-/**
- * Asio-based HTTP server that serves agent-friendly endpoints:
- * - GET /metrics         — Prometheus text format
- * - GET /healthz         — Liveness probe
- * - GET /livez           — Liveness probe (K8s convention)
- * - GET /readyz          — Readiness probe
- * - GET /v1/status       — JSON node status
- * - POST /v1/members     — Add member
- * - DELETE /v1/members/{id} — Remove member
- * - POST /v1/snapshot/trigger — Trigger snapshot
- * - POST /v1/leadership/transfer — Transfer leadership
- * - PATCH /v1/config     — Hot reload config
- * - GET /v1/config       — Get current config
- * - GET /v1/events       — SSE event stream (placeholder)
- */
+struct MetricsHttpServerTlsConfig {
+  bool enabled = false;
+  std::string cert_file;
+  std::string key_file;
+  std::string ca_file;
+};
+
 class MetricsHttpServer {
  public:
   using StatusProvider = std::function<std::string()>;
@@ -36,8 +30,10 @@ class MetricsHttpServer {
   using TransferLeadershipHandler = std::function<std::string(int32_t target_node_id)>;
   using ConfigProvider = std::function<std::string()>;
   using ConfigUpdater = std::function<std::string(const std::string& json)>;
+  using TlsConfig = MetricsHttpServerTlsConfig;
 
-  MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry);
+  MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry,
+                    const TlsConfig& tls_config = {});
   ~MetricsHttpServer();
 
   void Start();
@@ -51,22 +47,26 @@ class MetricsHttpServer {
   void SetConfigProvider(ConfigProvider provider);
   void SetConfigUpdater(ConfigUpdater handler);
 
-  /**
-   * Broadcast a JSON event to all connected SSE clients.
-   * Thread-safe: can be called from any thread.
-   */
   void BroadcastEvent(const std::string& json_event);
 
  private:
   void Run();
   void DoAccept();
-  void HandleRequest(asio::ip::tcp::socket socket);
+
+  using SocketVariant = std::variant<asio::ip::tcp::socket,
+                                     asio::ssl::stream<asio::ip::tcp::socket>>;
+  void HandleConnection(SocketVariant socket);
+
+  std::tuple<std::string, std::string, std::string, bool> BuildResponse(
+      const std::string& request);
   void RemoveDeadSseConnections();
 
   std::string bind_addr_;
   MetricsRegistry* registry_;
 
-  // SSE connections (managed on io_context thread)
+  TlsConfig tls_config_;
+  std::shared_ptr<asio::ssl::context> ssl_ctx_;
+
   std::mutex sse_mutex_;
   std::vector<std::weak_ptr<SseConnection>> sse_connections_;
 

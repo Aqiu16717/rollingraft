@@ -106,6 +106,9 @@ if(TARGET leveldb)
   )
 endif()
 
+# OpenSSL
+find_package(OpenSSL REQUIRED)
+
 # Link dependencies
 target_link_libraries(rollingraft
   PUBLIC
@@ -114,6 +117,7 @@ target_link_libraries(rollingraft
     rollingraft::spdlog
   PRIVATE
     leveldb::leveldb
+    OpenSSL::SSL
 )
 
 # Testing

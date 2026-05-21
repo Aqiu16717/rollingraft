@@ -6,6 +6,7 @@
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
+#include "test_port.h"
 
 using namespace rollingraft;
 
@@ -15,7 +16,7 @@ using namespace rollingraft;
 
 class MembershipChangeTest : public ::testing::Test {
  protected:
-  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); ports_ = GetTestPorts(10); }
 
   void TearDown() override {
     if (node_) {
@@ -28,13 +29,14 @@ class MembershipChangeTest : public ::testing::Test {
     // So node ID should match the port (8001, 8002, etc.)
     RaftNodeConfig config;
     config.node_id = 8000 + id;  // Node ID = port number
-    config.listen_addr = "127.0.0.1:" + std::to_string(8000 + id);
+    config.listen_addr = "127.0.0.1:" + std::to_string(ports_[id]);
     config.election_timeout_ms = 300;
     config.heartbeat_interval_ms = 100;
     config.data_dir = "/tmp/raft_test_node_" + std::to_string(id);
 
     for (NodeId peer_id : peers) {
-      config.peers.push_back("127.0.0.1:" + std::to_string(8000 + peer_id));
+      config.peers.push_back("127.0.0.1:" + std::to_string(ports_[peer_id]));
+      config.peer_node_ids.push_back(8000 + peer_id);
     }
 
     return config;
@@ -42,6 +44,7 @@ class MembershipChangeTest : public ::testing::Test {
 
   std::shared_ptr<MockStateMachine> sm_;
   std::unique_ptr<RaftNode> node_;
+  std::vector<uint16_t> ports_;
 };
 
 TEST_F(MembershipChangeTest, GetConfig_InitiallyContainsSelfAndPeers) {

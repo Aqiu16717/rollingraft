@@ -6,6 +6,7 @@
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
+#include "test_port.h"
 
 using namespace rollingraft;
 
@@ -18,7 +19,10 @@ using namespace rollingraft;
 
 class RaftElectionTest : public ::testing::Test {
  protected:
-  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); }
+  void SetUp() override {
+    sm_ = std::make_shared<MockStateMachine>();
+    ports_ = GetTestPorts(10);
+  }
 
   void TearDown() override {
     if (node_) {
@@ -29,13 +33,14 @@ class RaftElectionTest : public ::testing::Test {
   RaftNodeConfig MakeConfig(NodeId id, const std::vector<NodeId>& peers) {
     RaftNodeConfig config;
     config.node_id = id;
-    config.listen_addr = "127.0.0.1:" + std::to_string(8000 + id);
+    config.listen_addr = "127.0.0.1:" + std::to_string(ports_[id]);
     config.election_timeout_ms = 300;
     config.heartbeat_interval_ms = 100;
     config.data_dir = "/tmp/raft_test_node_" + std::to_string(id);
 
     for (NodeId peer_id : peers) {
-      config.peers.push_back("127.0.0.1:" + std::to_string(8000 + peer_id));
+      config.peers.push_back("127.0.0.1:" + std::to_string(ports_[peer_id]));
+      config.peer_node_ids.push_back(peer_id);
     }
 
     return config;
@@ -43,6 +48,7 @@ class RaftElectionTest : public ::testing::Test {
 
   std::shared_ptr<MockStateMachine> sm_;
   std::unique_ptr<RaftNode> node_;
+  std::vector<uint16_t> ports_;
 };
 
 TEST_F(RaftElectionTest, InitialState_IsFollower) {

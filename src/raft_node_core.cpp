@@ -75,8 +75,9 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
 
   // Initialize cluster config from peers
   cluster_config_.nodes.push_back(server_id_);
-  for (const auto& addr : peer_addrs_) {
-    NodeId peer_id = ParseNodeId(addr);
+  for (size_t i = 0; i < peer_addrs_.size(); ++i) {
+    NodeId peer_id = has_explicit_peer_ids ? config.peer_node_ids[i]
+                                           : ParseNodeId(peer_addrs_[i]);
     if (peer_id >= 0) {
       cluster_config_.nodes.push_back(peer_id);
     }
@@ -171,8 +172,13 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // 4. Start metrics HTTP server
   if (metrics_ && !config_.metrics_addr.empty()) {
-    metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr,
-                                                          metrics_.get());
+    MetricsHttpServer::TlsConfig tls_config;
+    tls_config.enabled = config_.tls_enabled;
+    tls_config.cert_file = config_.tls_cert_file;
+    tls_config.key_file = config_.tls_key_file;
+    tls_config.ca_file = config_.tls_ca_file;
+    metrics_server_ = std::make_unique<MetricsHttpServer>(
+        config_.metrics_addr, metrics_.get(), tls_config);
     metrics_server_->SetStatusProvider([this]() -> std::string {
       // Lock hierarchy: election_mtx_ -> replication_mtx_ -> membership_mtx_
       // -> applier_mtx_. All accessed state must be protected.

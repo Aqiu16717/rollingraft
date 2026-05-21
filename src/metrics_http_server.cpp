@@ -2,6 +2,7 @@
 
 #include <asio.hpp>
 #include <sstream>
+#include <type_traits>
 
 #include "nlohmann/json.hpp"
 #include "rollingraft/logger.h"
@@ -10,9 +11,51 @@
 
 namespace rollingraft {
 
+namespace {
+
+std::shared_ptr<asio::ssl::context> CreateSslContext(
+    const MetricsHttpServer::TlsConfig& config) {
+  auto ctx = std::make_shared<asio::ssl::context>(asio::ssl::context::tls_server);
+
+  ctx->use_certificate_chain_file(config.cert_file);
+  ctx->use_private_key_file(config.key_file, asio::ssl::context::pem);
+
+  if (!config.ca_file.empty()) {
+    ctx->load_verify_file(config.ca_file);
+    ctx->set_verify_mode(asio::ssl::verify_peer |
+                         asio::ssl::verify_fail_if_no_peer_cert);
+  } else {
+    ctx->set_verify_mode(asio::ssl::verify_none);
+  }
+
+  return ctx;
+}
+
+std::string ExtractPath(const std::string& request) {
+  size_t start = request.find(' ');
+  if (start == std::string::npos) return "";
+  ++start;
+  size_t end = request.find(' ', start);
+  if (end == std::string::npos) return "";
+  return request.substr(start, end - start);
+}
+
+std::string ExtractBody(const std::string& request) {
+  size_t pos = request.find("\r\n\r\n");
+  if (pos == std::string::npos) return "";
+  return request.substr(pos + 4);
+}
+
+}  // namespace
+
 MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr,
-                                     MetricsRegistry* registry)
-    : bind_addr_(bind_addr), registry_(registry) {}
+                                     MetricsRegistry* registry,
+                                     const TlsConfig& tls_config)
+    : bind_addr_(bind_addr), registry_(registry), tls_config_(tls_config) {
+  if (tls_config_.enabled) {
+    ssl_ctx_ = CreateSslContext(tls_config_);
+  }
+}
 
 MetricsHttpServer::~MetricsHttpServer() { Stop(); }
 
@@ -46,7 +89,6 @@ void MetricsHttpServer::Start() {
 void MetricsHttpServer::Stop() {
   if (!running_.exchange(false)) return;
 
-  // Close all SSE connections
   {
     std::lock_guard<std::mutex> lock(sse_mutex_);
     for (auto& weak_conn : sse_connections_) {
@@ -69,13 +111,36 @@ void MetricsHttpServer::Run() { io_ctx_->run(); }
 
 void MetricsHttpServer::DoAccept() {
   if (!running_) return;
-  acceptor_->async_accept(
-      [this](std::error_code ec, asio::ip::tcp::socket socket) {
-        if (!ec && running_) {
-          HandleRequest(std::move(socket));
-          DoAccept();
-        }
-      });
+
+  if (tls_config_.enabled && ssl_ctx_) {
+    acceptor_->async_accept(
+        [this](std::error_code ec, asio::ip::tcp::socket socket) {
+          if (!ec && running_) {
+            auto ssl_socket =
+                std::make_shared<asio::ssl::stream<asio::ip::tcp::socket>>(
+                    std::move(socket), *ssl_ctx_);
+            ssl_socket->async_handshake(
+                asio::ssl::stream_base::server,
+                [this, ssl_socket](std::error_code handshake_ec) {
+                  if (!handshake_ec) {
+                    HandleConnection(std::move(*ssl_socket));
+                  } else {
+                    LOG_WARN("TLS handshake failed: {}",
+                             handshake_ec.message());
+                  }
+                });
+          }
+          if (running_) DoAccept();
+        });
+  } else {
+    acceptor_->async_accept(
+        [this](std::error_code ec, asio::ip::tcp::socket socket) {
+          if (!ec && running_) {
+            HandleConnection(std::move(socket));
+          }
+          if (running_) DoAccept();
+        });
+  }
 }
 
 void MetricsHttpServer::SetStatusProvider(StatusProvider provider) {
@@ -87,10 +152,12 @@ void MetricsHttpServer::SetAddMemberHandler(AddMemberHandler handler) {
 void MetricsHttpServer::SetRemoveMemberHandler(RemoveMemberHandler handler) {
   remove_member_handler_ = std::move(handler);
 }
-void MetricsHttpServer::SetTriggerSnapshotHandler(TriggerSnapshotHandler handler) {
+void MetricsHttpServer::SetTriggerSnapshotHandler(
+    TriggerSnapshotHandler handler) {
   trigger_snapshot_handler_ = std::move(handler);
 }
-void MetricsHttpServer::SetTransferLeadershipHandler(TransferLeadershipHandler handler) {
+void MetricsHttpServer::SetTransferLeadershipHandler(
+    TransferLeadershipHandler handler) {
   transfer_leadership_handler_ = std::move(handler);
 }
 void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
@@ -128,159 +195,183 @@ void MetricsHttpServer::RemoveDeadSseConnections() {
       sse_connections_.end());
 }
 
-// Simple URL path extractor
-static std::string ExtractPath(const std::string& request) {
-  size_t start = request.find(' ');
-  if (start == std::string::npos) return "";
-  ++start;
-  size_t end = request.find(' ', start);
-  if (end == std::string::npos) return "";
-  return request.substr(start, end - start);
-}
+std::tuple<std::string, std::string, std::string, bool>
+MetricsHttpServer::BuildResponse(const std::string& request) {
+  std::string path = ExtractPath(request);
+  std::string body = ExtractBody(request);
 
-// Simple body extractor (after \r\n\r\n)
-static std::string ExtractBody(const std::string& request) {
-  size_t pos = request.find("\r\n\r\n");
-  if (pos == std::string::npos) return "";
-  return request.substr(pos + 4);
-}
+  std::string response_body;
+  std::string status_line = "HTTP/1.1 404 Not Found\r\n";
+  std::string content_type = "application/json\r\n";
+  bool is_sse = false;
 
-void MetricsHttpServer::HandleRequest(asio::ip::tcp::socket socket) {
-  auto buffer = std::make_shared<std::array<char, 4096>>();
-  auto socket_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(socket));
-  socket_ptr->async_read_some(
-      asio::buffer(*buffer),
-      [this, buffer, socket_ptr](std::error_code ec, std::size_t bytes) mutable {
-        if (ec) return;
-
-        std::string request(buffer->data(), bytes);
-        std::string path = ExtractPath(request);
-        std::string body = ExtractBody(request);
-
-        std::string response_body;
-        std::string status_line = "HTTP/1.1 404 Not Found\r\n";
-        std::string content_type = "application/json\r\n";
-
-        if (path == "/metrics" && registry_) {
-          response_body = registry_->FormatPrometheus();
-          status_line = "HTTP/1.1 200 OK\r\n";
-          content_type = "text/plain; version=0.0.4\r\n";
-        } else if (path == "/healthz" || path == "/livez") {
-          response_body = "{\"status\":\"alive\"}\n";
-          status_line = "HTTP/1.1 200 OK\r\n";
-        } else if (path == "/readyz") {
-          if (status_provider_) {
-            try {
-              auto j = nlohmann::json::parse(status_provider_());
-              bool ready = false;
-              if (j.contains("role") && j["role"] == "Leader") {
-                ready = true;
-              } else if (j.contains("leader_id") &&
-                         !j["leader_id"].is_null() &&
-                         j["leader_id"] != -1) {
-                ready = true;
-              }
-              if (ready) {
-                response_body = "{\"status\":\"ready\"}\n";
-              } else {
-                response_body = "{\"status\":\"not_ready\"}\n";
-                status_line = "HTTP/1.1 503 Service Unavailable\r\n";
-              }
-            } catch (const std::exception& e) {
-              response_body = nlohmann::json{{"status", "error"},
-                                              {"message", e.what()}}.dump() + "\n";
-              status_line = "HTTP/1.1 500 Internal Server Error\r\n";
-            }
-          } else {
-            response_body = "{\"status\":\"unknown\"}\n";
-            status_line = "HTTP/1.1 200 OK\r\n";
-          }
-        } else if (path == "/v1/status") {
-          if (status_provider_) {
-            response_body = status_provider_();
-          } else {
-            response_body = "{\"error\":\"status_provider_not_set\"}\n";
-          }
-          status_line = "HTTP/1.1 200 OK\r\n";
-        } else if (path == "/v1/members" && request.find("POST") == 0 && add_member_handler_) {
-          int32_t node_id = -1;
-          std::string addr;
-          try {
-            auto j = nlohmann::json::parse(body);
-            if (j.contains("node_id")) node_id = j["node_id"];
-            if (j.contains("addr")) addr = j["addr"];
-          } catch (const std::exception& e) {
-            response_body = nlohmann::json{{"error", "BAD_REQUEST"},
-                                            {"message", e.what()}}.dump() + "\n";
-            status_line = "HTTP/1.1 400 Bad Request\r\n";
-          }
-          if (status_line == "HTTP/1.1 404 Not Found\r\n") {
-            response_body = add_member_handler_(node_id, addr);
-            status_line = "HTTP/1.1 202 Accepted\r\n";
-          }
-        } else if (path.find("/v1/members/") == 0 && request.find("DELETE") == 0 && remove_member_handler_) {
-          int32_t node_id = -1;
-          size_t last_slash = path.find_last_of('/');
-          if (last_slash != std::string::npos && last_slash + 1 < path.size()) {
-            node_id = std::stoi(path.substr(last_slash + 1));
-          }
-          response_body = remove_member_handler_(node_id);
-          status_line = "HTTP/1.1 202 Accepted\r\n";
-        } else if (path == "/v1/snapshot/trigger" && request.find("POST") == 0 && trigger_snapshot_handler_) {
-          response_body = trigger_snapshot_handler_();
-          status_line = "HTTP/1.1 202 Accepted\r\n";
-        } else if (path == "/v1/leadership/transfer" && request.find("POST") == 0 && transfer_leadership_handler_) {
-          int32_t target_id = -1;
-          try {
-            auto j = nlohmann::json::parse(body);
-            if (j.contains("target_node_id")) target_id = j["target_node_id"];
-          } catch (const std::exception& e) {
-            response_body = nlohmann::json{{"error", "BAD_REQUEST"},
-                                            {"message", e.what()}}.dump() + "\n";
-            status_line = "HTTP/1.1 400 Bad Request\r\n";
-          }
-          if (status_line == "HTTP/1.1 404 Not Found\r\n") {
-            response_body = transfer_leadership_handler_(target_id);
-            status_line = "HTTP/1.1 202 Accepted\r\n";
-          }
-        } else if (path == "/v1/config" && request.find("GET") == 0 && config_provider_) {
-          response_body = config_provider_();
-          status_line = "HTTP/1.1 200 OK\r\n";
-        } else if (path == "/v1/config" && request.find("PATCH") == 0 && config_updater_) {
-          response_body = config_updater_(body);
-          status_line = "HTTP/1.1 200 OK\r\n";
-        } else if (path == "/v1/events") {
-          // SSE endpoint: move socket to SseConnection and start event stream
-          auto conn = std::make_shared<SseConnection>(
-              std::move(*socket_ptr),
-              asio::io_context::strand(*io_ctx_));
-
-          {
-            std::lock_guard<std::mutex> lock(sse_mutex_);
-            RemoveDeadSseConnections();
-            sse_connections_.push_back(conn);
-          }
-
-          conn->Start();
-          return;  // Do not close connection
+  if (path == "/metrics" && registry_) {
+    response_body = registry_->FormatPrometheus();
+    status_line = "HTTP/1.1 200 OK\r\n";
+    content_type = "text/plain; version=0.0.4\r\n";
+  } else if (path == "/healthz" || path == "/livez") {
+    response_body = "{\"status\":\"alive\"}\n";
+    status_line = "HTTP/1.1 200 OK\r\n";
+  } else if (path == "/readyz") {
+    if (status_provider_) {
+      try {
+        auto j = nlohmann::json::parse(status_provider_());
+        bool ready = false;
+        if (j.contains("role") && j["role"] == "Leader") {
+          ready = true;
+        } else if (j.contains("leader_id") && !j["leader_id"].is_null() &&
+                   j["leader_id"] != -1) {
+          ready = true;
         }
+        if (ready) {
+          response_body = "{\"status\":\"ready\"}\n";
+        } else {
+          response_body = "{\"status\":\"not_ready\"}\n";
+          status_line = "HTTP/1.1 503 Service Unavailable\r\n";
+        }
+      } catch (const std::exception& e) {
+        response_body = nlohmann::json{{"status", "error"},
+                                        {"message", e.what()}}
+                            .dump() +
+                        "\n";
+        status_line = "HTTP/1.1 500 Internal Server Error\r\n";
+      }
+    } else {
+      response_body = "{\"status\":\"unknown\"}\n";
+      status_line = "HTTP/1.1 200 OK\r\n";
+    }
+  } else if (path == "/v1/status") {
+    if (status_provider_) {
+      response_body = status_provider_();
+    } else {
+      response_body = "{\"error\":\"status_provider_not_set\"}\n";
+    }
+    status_line = "HTTP/1.1 200 OK\r\n";
+  } else if (path == "/v1/members" && request.find("POST") == 0 &&
+             add_member_handler_) {
+    int32_t node_id = -1;
+    std::string addr;
+    try {
+      auto j = nlohmann::json::parse(body);
+      if (j.contains("node_id")) node_id = j["node_id"];
+      if (j.contains("addr")) addr = j["addr"];
+    } catch (const std::exception& e) {
+      response_body = nlohmann::json{{"error", "BAD_REQUEST"},
+                                      {"message", e.what()}}
+                          .dump() +
+                      "\n";
+      status_line = "HTTP/1.1 400 Bad Request\r\n";
+    }
+    if (status_line == "HTTP/1.1 404 Not Found\r\n") {
+      response_body = add_member_handler_(node_id, addr);
+      status_line = "HTTP/1.1 202 Accepted\r\n";
+    }
+  } else if (path.find("/v1/members/") == 0 && request.find("DELETE") == 0 &&
+             remove_member_handler_) {
+    int32_t node_id = -1;
+    size_t last_slash = path.find_last_of('/');
+    if (last_slash != std::string::npos && last_slash + 1 < path.size()) {
+      node_id = std::stoi(path.substr(last_slash + 1));
+    }
+    response_body = remove_member_handler_(node_id);
+    status_line = "HTTP/1.1 202 Accepted\r\n";
+  } else if (path == "/v1/snapshot/trigger" && request.find("POST") == 0 &&
+             trigger_snapshot_handler_) {
+    response_body = trigger_snapshot_handler_();
+    status_line = "HTTP/1.1 202 Accepted\r\n";
+  } else if (path == "/v1/leadership/transfer" &&
+             request.find("POST") == 0 && transfer_leadership_handler_) {
+    int32_t target_id = -1;
+    try {
+      auto j = nlohmann::json::parse(body);
+      if (j.contains("target_node_id")) target_id = j["target_node_id"];
+    } catch (const std::exception& e) {
+      response_body = nlohmann::json{{"error", "BAD_REQUEST"},
+                                      {"message", e.what()}}
+                          .dump() +
+                      "\n";
+      status_line = "HTTP/1.1 400 Bad Request\r\n";
+    }
+    if (status_line == "HTTP/1.1 404 Not Found\r\n") {
+      response_body = transfer_leadership_handler_(target_id);
+      status_line = "HTTP/1.1 202 Accepted\r\n";
+    }
+  } else if (path == "/v1/config" && request.find("GET") == 0 &&
+             config_provider_) {
+    response_body = config_provider_();
+    status_line = "HTTP/1.1 200 OK\r\n";
+  } else if (path == "/v1/config" && request.find("PATCH") == 0 &&
+             config_updater_) {
+    response_body = config_updater_(body);
+    status_line = "HTTP/1.1 200 OK\r\n";
+  } else if (path == "/v1/events") {
+    is_sse = true;
+  }
 
-        std::ostringstream response;
-        response << status_line;
-        response << "Content-Type: " << content_type;
-        response << "Content-Length: " << response_body.size() << "\r\n";
-        response << "Connection: close\r\n";
-        response << "\r\n";
-        response << response_body;
+  return {response_body, status_line, content_type, is_sse};
+}
 
-        auto resp_str = std::make_shared<std::string>(response.str());
-        asio::async_write(*socket_ptr, asio::buffer(*resp_str),
-                          [resp_str, socket_ptr](std::error_code, std::size_t) {
-                            std::error_code close_ec;
-                            socket_ptr->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
-                            socket_ptr->close(close_ec);
-                          });
-      });
+void MetricsHttpServer::HandleConnection(SocketVariant socket) {
+  auto buffer = std::make_shared<std::array<char, 4096>>();
+  std::visit(
+      [this, buffer](auto&& socket_ref) mutable {
+        using SocketType = std::decay_t<decltype(socket_ref)>;
+        auto socket_ptr = std::make_shared<SocketType>(std::move(socket_ref));
+
+        socket_ptr->async_read_some(
+            asio::buffer(*buffer),
+            [this, buffer, socket_ptr](std::error_code ec,
+                                       std::size_t bytes) mutable {
+              if (ec) return;
+
+              std::string request(buffer->data(), bytes);
+              auto [response_body, status_line, content_type, is_sse] =
+                  BuildResponse(request);
+
+              if (is_sse) {
+                auto conn = std::make_shared<SseConnection>(
+                    std::move(*socket_ptr),
+                    asio::io_context::strand(*io_ctx_));
+                {
+                  std::lock_guard<std::mutex> lock(sse_mutex_);
+                  RemoveDeadSseConnections();
+                  sse_connections_.push_back(conn);
+                }
+                conn->Start();
+                return;
+              }
+
+              std::ostringstream response;
+              response << status_line;
+              response << "Content-Type: " << content_type;
+              response << "Content-Length: " << response_body.size()
+                       << "\r\n";
+              response << "Connection: close\r\n";
+              response << "\r\n";
+              response << response_body;
+
+              auto resp_str = std::make_shared<std::string>(response.str());
+              asio::async_write(
+                  *socket_ptr, asio::buffer(*resp_str),
+                  [resp_str, socket_ptr](std::error_code,
+                                         std::size_t) {
+                    std::error_code close_ec;
+                    if constexpr (std::is_same_v<
+                                      SocketType,
+                                      asio::ssl::stream<
+                                          asio::ip::tcp::socket>>) {
+                      socket_ptr->next_layer().shutdown(
+                          asio::ip::tcp::socket::shutdown_both, close_ec);
+                      socket_ptr->next_layer().close(close_ec);
+                    } else {
+                      socket_ptr->shutdown(
+                          asio::ip::tcp::socket::shutdown_both, close_ec);
+                      socket_ptr->close(close_ec);
+                    }
+                  });
+            });
+      },
+      std::move(socket));
 }
 
 }  // namespace rollingraft

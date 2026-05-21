@@ -32,6 +32,7 @@ target_link_libraries(test_mocks
 
 # Unit tests
 add_executable(unit_tests
+  unit/test_asio_ssl_context_factory.cpp
   unit/test_log_persister.cpp
   unit/test_leveldb_persister.cpp
   unit/test_raft_election.cpp
@@ -57,6 +58,9 @@ target_include_directories(unit_tests
     ${GTEST_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/src
 )
+if(OpenSSL_FOUND)
+  target_include_directories(unit_tests PRIVATE ${OPENSSL_INCLUDE_DIR})
+endif()
 
 target_link_libraries(unit_tests
   PRIVATE

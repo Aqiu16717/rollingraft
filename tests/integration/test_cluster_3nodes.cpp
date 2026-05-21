@@ -240,10 +240,6 @@ TEST_F(Cluster3NodesTest, LogReplicatedToAllNodes) {
 }
 
 TEST_F(Cluster3NodesTest, RecoversAfterLeaderCrash) {
-  // FIXME: This test requires proper membership change support
-  // When a node crashes, the remaining 2 nodes should form a majority (2/2),
-  // but currently the raft implementation doesn't handle this correctly.
-  GTEST_SKIP() << "Requires membership change support for 2-node majority";
 
   StartCluster();
   WaitForLeader();

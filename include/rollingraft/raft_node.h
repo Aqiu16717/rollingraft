@@ -118,6 +118,11 @@ struct RaftNodeConfig {
   // Metrics configuration
   bool metrics_enabled = false;
   std::string metrics_addr;  // e.g., "0.0.0.0:9001", empty = disabled
+  // TLS configuration for control plane (metrics HTTP server)
+  bool tls_enabled = false;
+  std::string tls_cert_file;
+  std::string tls_key_file;
+  std::string tls_ca_file;
 
   // Logging configuration
   bool json_logging = false;  // Enable JSON structured logging format

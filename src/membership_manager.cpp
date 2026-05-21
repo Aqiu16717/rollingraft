@@ -3,6 +3,14 @@
 using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
+  // Guard: any exit path must clear pending_config_change_.
+  struct PendingGuard {
+    bool* flag;
+    ~PendingGuard() {
+      if (flag) *flag = false;
+    }
+  } guard{&pending_config_change_};
+
   // Parse config change command
   // Format: CONFIG_CHANGE:ADD:node_id:addr  or  CONFIG_CHANGE:REMOVE:node_id
 

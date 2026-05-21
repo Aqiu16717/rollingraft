@@ -22,7 +22,7 @@ using namespace rollingraft;
 
 class RaftLogReplicationTest : public ::testing::Test {
  protected:
-  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); ports_ = GetTestPorts(10); }
+  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); ports_ = GetTestPorts(11); }
 
   void TearDown() override {
     if (node_) {

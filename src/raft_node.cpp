@@ -9,21 +9,127 @@ std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
 
 using namespace rollingraft;
 
+namespace {
+
+/**
+ * Validate host:port address format.
+ * @param addr Address string to validate
+ * @param field_name Field name for error messages
+ * @return Status::OK() if valid, error otherwise
+ */
+Status ValidateAddr(const std::string& addr, const char* field_name) {
+  if (addr.empty()) {
+    return Status::Error("CONFIG_INVALID", std::string(field_name) + " cannot be empty");
+  }
+
+  size_t colon_pos = addr.rfind(':');
+  if (colon_pos == std::string::npos || colon_pos == 0 || colon_pos == addr.size() - 1) {
+    return Status::Error("CONFIG_INVALID",
+                         std::string(field_name) + " must be in host:port format: " + addr);
+  }
+
+  std::string port_str = addr.substr(colon_pos + 1);
+  try {
+    size_t idx = 0;
+    int port = std::stoi(port_str, &idx);
+    if (idx != port_str.size() || port <= 0 || port > 65535) {
+      return Status::Error("CONFIG_INVALID",
+                           std::string(field_name) + " has invalid port: " + port_str);
+    }
+  } catch (const std::exception&) {
+    return Status::Error("CONFIG_INVALID",
+                         std::string(field_name) + " has invalid port: " + port_str);
+  }
+
+  return Status::OK();
+}
+
+}  // namespace
+
+// ========== RaftNodeConfig Validation ==========
+
+Status RaftNodeConfig::Validate() const {
+  // Required fields
+  if (node_id < 0) {
+    return Status::Error("CONFIG_INVALID", "node_id must be non-negative");
+  }
+
+  auto status = ValidateAddr(listen_addr, "listen_addr");
+  if (!status.ok()) return status;
+
+  if (data_dir.empty()) {
+    return Status::Error("CONFIG_INVALID", "data_dir cannot be empty");
+  }
+
+  // Timing parameters
+  if (election_timeout_ms == 0) {
+    return Status::Error("CONFIG_INVALID", "election_timeout_ms must be > 0");
+  }
+  if (heartbeat_interval_ms == 0) {
+    return Status::Error("CONFIG_INVALID", "heartbeat_interval_ms must be > 0");
+  }
+  if (election_timeout_ms <= heartbeat_interval_ms) {
+    return Status::Error("CONFIG_INVALID",
+                         "election_timeout_ms (" + std::to_string(election_timeout_ms) +
+                             ") must be > heartbeat_interval_ms (" +
+                             std::to_string(heartbeat_interval_ms) + ")");
+  }
+
+  // Peer consistency
+  if (!peer_node_ids.empty() && peer_node_ids.size() != peers.size()) {
+    return Status::Error("CONFIG_INVALID",
+                         "peer_node_ids.size() (" + std::to_string(peer_node_ids.size()) +
+                             ") must match peers.size() (" + std::to_string(peers.size()) + ")");
+  }
+
+  // Metrics address
+  if (metrics_enabled && !metrics_addr.empty()) {
+    status = ValidateAddr(metrics_addr, "metrics_addr");
+    if (!status.ok()) return status;
+  }
+
+  // TLS consistency
+  if (tls_enabled) {
+    if (tls_cert_file.empty()) {
+      return Status::Error("CONFIG_INVALID", "tls_cert_file cannot be empty when tls_enabled=true");
+    }
+    if (tls_key_file.empty()) {
+      return Status::Error("CONFIG_INVALID", "tls_key_file cannot be empty when tls_enabled=true");
+    }
+  }
+
+  // Positive values
+  if (rpc_timeout_ms == 0) {
+    return Status::Error("CONFIG_INVALID", "rpc_timeout_ms must be > 0");
+  }
+  if (max_entries_per_append == 0) {
+    return Status::Error("CONFIG_INVALID", "max_entries_per_append must be > 0");
+  }
+
+  return Status::OK();
+}
+
 // ========== RaftNode Public Interface ==========
 
 RaftNode::RaftNode(const RaftNodeConfig& config,
-                   std::shared_ptr<StateMachine> sm)
-    : raft_node_impl_(std::make_unique<RaftNodeImpl>(
-          config, sm,
-          config.network_factory ? config.network_factory()
-                                 : CreateDefaultNetworkTransport(),
-          config.timer_factory ? config.timer_factory()
-                               : TimerService::CreateDefault(),
-          config.persister_factory
-              ? std::shared_ptr<Persister>(config.persister_factory())
-              : nullptr,
-          config.protocol_factory ? config.protocol_factory()
-                                  : std::make_unique<JsonProtocol>())) {}
+                   std::shared_ptr<StateMachine> sm) {
+  auto status = config.Validate();
+  if (!status.ok()) {
+    throw std::invalid_argument("RaftNodeConfig validation failed: " + status.ToString());
+  }
+
+  raft_node_impl_ = std::make_unique<RaftNodeImpl>(
+      config, sm,
+      config.network_factory ? config.network_factory()
+                             : CreateDefaultNetworkTransport(),
+      config.timer_factory ? config.timer_factory()
+                           : TimerService::CreateDefault(),
+      config.persister_factory
+          ? std::shared_ptr<Persister>(config.persister_factory())
+          : nullptr,
+      config.protocol_factory ? config.protocol_factory()
+                              : std::make_unique<JsonProtocol>());
+}
 
 RaftNode::~RaftNode() = default;
 

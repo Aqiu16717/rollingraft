@@ -75,12 +75,17 @@ class RuntimeConfig {
   /** Serialize current values to JSON (thread-safe). */
   std::string ToJson() const;
 
+  /**
+   * Validate runtime configuration values.
+   * @param v Values to validate
+   * @return Status::OK() if valid, error with details otherwise
+   */
+  Status Validate(const Values& v) const;
+
  private:
   mutable std::shared_mutex mtx_;
   Values values_;
   Values defaults_;
-
-  Status Validate(const Values& v) const;
 };
 
 }  // namespace rollingraft

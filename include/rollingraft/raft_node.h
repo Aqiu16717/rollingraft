@@ -138,6 +138,19 @@ struct RaftNodeConfig {
   // Logging configuration
   bool json_logging = false;  // Enable JSON structured logging format
 
+  /**
+   * Validate configuration parameters.
+   *
+   * Performs fail-fast checks on all fields including:
+   * - Required fields (listen_addr, data_dir) are non-empty
+   * - Address format is host:port with valid port range (1-65535)
+   * - Election timeout > heartbeat interval
+   * - Peer node IDs match peer addresses count (if provided)
+   * - TLS consistency (cert/key files exist when TLS enabled)
+   *
+   * @return Status::OK() if valid, error with details otherwise
+   */
+  Status Validate() const;
 };
 
 /**

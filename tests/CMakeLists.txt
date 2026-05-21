@@ -52,6 +52,7 @@ add_executable(unit_tests
   unit/test_log_compaction.cpp
   unit/test_event_bus.cpp
   unit/test_metrics_http_server.cpp
+  unit/test_raft_node_config.cpp
 )
 
 target_include_directories(unit_tests

@@ -62,6 +62,8 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     defaults.base_retry_delay_ms = config.base_retry_delay_ms;
     defaults.max_retry_delay_ms = config.max_retry_delay_ms;
     defaults.log_retention_entries = config.log_retention_entries;
+    defaults.propose_timeout_ms = config.propose_timeout_ms;
+    defaults.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
     runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
   }
 

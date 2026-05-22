@@ -118,105 +118,117 @@ static inline void Sha256CompressRound(uint32_t& a, uint32_t& b, uint32_t& c,
 
 // Compute SHA-256 hash
 // output must be 32 bytes
-static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
-  // Initial hash values
+struct Sha256Context {
   uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+  uint8_t buffer[64] = {};
+  size_t buffer_len = 0;
+  uint64_t total_len = 0;
+};
 
-  // Process data in 64-byte chunks
-  const size_t chunk_size = 64;
-  size_t i = 0;
-
-  while (i + chunk_size <= len) {
-    uint32_t w[64];
-    for (size_t j = 0; j < 16; ++j) {
-      w[j] = (static_cast<uint8_t>(data[i + j * 4]) << 24) |
-             (static_cast<uint8_t>(data[i + j * 4 + 1]) << 16) |
-             (static_cast<uint8_t>(data[i + j * 4 + 2]) << 8) |
-             static_cast<uint8_t>(data[i + j * 4 + 3]);
-    }
-
-    for (size_t j = 16; j < 64; ++j) {
-      uint32_t s0 =
-          Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
-      uint32_t s1 =
-          Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
-      w[j] = w[j - 16] + s0 + w[j - 7] + s1;
-    }
-
-    uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
-    uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
-
-    for (size_t j = 0; j < 64; ++j) {
-      Sha256CompressRound(a, b, c, d, e, f, g, hh, kSha256K[j], w[j]);
-    }
-
-    h[0] += a;
-    h[1] += b;
-    h[2] += c;
-    h[3] += d;
-    h[4] += e;
-    h[5] += f;
-    h[6] += g;
-    h[7] += hh;
-
-    i += chunk_size;
+static void Sha256ProcessChunk(Sha256Context& ctx, const uint8_t* chunk) {
+  uint32_t w[64];
+  for (size_t j = 0; j < 16; ++j) {
+    w[j] = (static_cast<uint32_t>(chunk[j * 4]) << 24) |
+           (static_cast<uint32_t>(chunk[j * 4 + 1]) << 16) |
+           (static_cast<uint32_t>(chunk[j * 4 + 2]) << 8) |
+           static_cast<uint32_t>(chunk[j * 4 + 3]);
   }
 
-  // Handle final chunk with padding (simplified - assumes len < 2^55)
-  uint8_t final_chunk[64] = {0};
-  size_t remaining = len - i;
-  std::memcpy(final_chunk, data + i, remaining);
-  final_chunk[remaining] = 0x80;
+  for (size_t j = 16; j < 64; ++j) {
+    uint32_t s0 =
+        Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
+    uint32_t s1 =
+        Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
+    w[j] = w[j - 16] + s0 + w[j - 7] + s1;
+  }
+
+  uint32_t a = ctx.h[0], b = ctx.h[1], c = ctx.h[2], d = ctx.h[3];
+  uint32_t e = ctx.h[4], f = ctx.h[5], g = ctx.h[6], hh = ctx.h[7];
+
+  for (size_t j = 0; j < 64; ++j) {
+    Sha256CompressRound(a, b, c, d, e, f, g, hh, kSha256K[j], w[j]);
+  }
+
+  ctx.h[0] += a;
+  ctx.h[1] += b;
+  ctx.h[2] += c;
+  ctx.h[3] += d;
+  ctx.h[4] += e;
+  ctx.h[5] += f;
+  ctx.h[6] += g;
+  ctx.h[7] += hh;
+}
+
+static void Sha256Init(Sha256Context& ctx) {
+  ctx = Sha256Context{};
+}
+
+static void Sha256Update(Sha256Context& ctx, const char* data, size_t len) {
+  ctx.total_len += len;
+  size_t i = 0;
+
+  // If there's data in the buffer, fill it first
+  if (ctx.buffer_len > 0) {
+    size_t to_copy = std::min(len, 64 - ctx.buffer_len);
+    std::memcpy(ctx.buffer + ctx.buffer_len, data, to_copy);
+    ctx.buffer_len += to_copy;
+    i += to_copy;
+
+    if (ctx.buffer_len == 64) {
+      Sha256ProcessChunk(ctx, ctx.buffer);
+      ctx.buffer_len = 0;
+    }
+  }
+
+  // Process full 64-byte chunks
+  while (i + 64 <= len) {
+    Sha256ProcessChunk(ctx, reinterpret_cast<const uint8_t*>(data + i));
+    i += 64;
+  }
+
+  // Copy remaining bytes to buffer
+  if (i < len) {
+    size_t remaining = len - i;
+    std::memcpy(ctx.buffer + ctx.buffer_len, data + i, remaining);
+    ctx.buffer_len += remaining;
+  }
+}
+
+static void Sha256Final(Sha256Context& ctx, uint8_t* output) {
+  // Padding
+  uint8_t final_chunk[128] = {};
+  std::memcpy(final_chunk, ctx.buffer, ctx.buffer_len);
+  final_chunk[ctx.buffer_len] = 0x80;
+
+  size_t final_len = ctx.buffer_len + 1;
+  if (final_len > 56) {
+    // Need two chunks
+    Sha256ProcessChunk(ctx, final_chunk);
+    std::memset(final_chunk, 0, 64);
+  }
 
   // Write length in bits as big-endian 64-bit integer
-  uint64_t total_bits = len * 8;
+  uint64_t total_bits = ctx.total_len * 8;
   for (size_t j = 0; j < 8; ++j) {
     final_chunk[63 - j] = static_cast<uint8_t>(total_bits >> (j * 8));
   }
-
-  // Process final chunk(s)
-  for (size_t chunk = 0; chunk < 64; chunk += 64) {
-    uint32_t w[64];
-    for (size_t j = 0; j < 16; ++j) {
-      w[j] = (final_chunk[chunk + j * 4] << 24) |
-             (final_chunk[chunk + j * 4 + 1] << 16) |
-             (final_chunk[chunk + j * 4 + 2] << 8) |
-             final_chunk[chunk + j * 4 + 3];
-    }
-
-    for (size_t j = 16; j < 64; ++j) {
-      uint32_t s0 =
-          Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
-      uint32_t s1 =
-          Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
-      w[j] = w[j - 16] + s0 + w[j - 7] + s1;
-    }
-
-    uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
-    uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
-
-    for (size_t j = 0; j < 64; ++j) {
-      Sha256CompressRound(a, b, c, d, e, f, g, hh, kSha256K[j], w[j]);
-    }
-
-    h[0] += a;
-    h[1] += b;
-    h[2] += c;
-    h[3] += d;
-    h[4] += e;
-    h[5] += f;
-    h[6] += g;
-    h[7] += hh;
-  }
+  Sha256ProcessChunk(ctx, final_chunk);
 
   // Write output as big-endian
   for (size_t i = 0; i < 8; ++i) {
-    output[i * 4] = static_cast<uint8_t>(h[i] >> 24);
-    output[i * 4 + 1] = static_cast<uint8_t>(h[i] >> 16);
-    output[i * 4 + 2] = static_cast<uint8_t>(h[i] >> 8);
-    output[i * 4 + 3] = static_cast<uint8_t>(h[i]);
+    output[i * 4] = static_cast<uint8_t>(ctx.h[i] >> 24);
+    output[i * 4 + 1] = static_cast<uint8_t>(ctx.h[i] >> 16);
+    output[i * 4 + 2] = static_cast<uint8_t>(ctx.h[i] >> 8);
+    output[i * 4 + 3] = static_cast<uint8_t>(ctx.h[i]);
   }
+}
+
+static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
+  Sha256Context ctx;
+  Sha256Init(ctx);
+  Sha256Update(ctx, data, len);
+  Sha256Final(ctx, output);
 }
 
 // Key prefixes for different data types
@@ -225,6 +237,7 @@ constexpr char kLogPrefix[] = "log:";
 constexpr char kSnapshotKey[] = "snapshot";
 constexpr char kSnapshotMetaKey[] = "snapshot_meta";
 constexpr char kSnapshotHashKey[] = "snapshot_hash";  // SHA-256 checksum
+constexpr char kSnapshotChunkPrefix[] = "snapshot_chunk:";
 
 class LevelDBPersister : public Persister {
  public:
@@ -546,16 +559,160 @@ class LevelDBPersister : public Persister {
     return Status::OK();
   }
 
+  Status SaveSnapshotStream(
+      const std::function<bool(std::string& chunk)>& chunk_provider,
+      uint64_t last_index, uint64_t last_term) override {
+    std::unique_lock lock(mutex_);
+    if (!db_) {
+      return Status::Error("Persister not open");
+    }
+
+    // Delete old-format snapshot if exists
+    DeleteOldSnapshotFormat();
+
+    // Write chunks and compute incremental SHA-256
+    Sha256Context sha_ctx;
+    Sha256Init(sha_ctx);
+
+    uint32_t chunk_index = 0;
+    std::string chunk;
+    while (chunk_provider(chunk)) {
+      if (!chunk.empty()) {
+        std::string key =
+            std::string(kSnapshotChunkPrefix) + std::to_string(chunk_index);
+        leveldb::Status s = db_->Put(leveldb::WriteOptions(), key, chunk);
+        if (!s.ok()) {
+          return Status::Error("Failed to save snapshot chunk: " +
+                               s.ToString());
+        }
+        Sha256Update(sha_ctx, chunk.data(), chunk.size());
+        ++chunk_index;
+      }
+    }
+
+    uint8_t hash[32];
+    Sha256Final(sha_ctx, hash);
+
+    // Save metadata
+    char meta[16];
+    std::memcpy(meta, &last_index, sizeof(last_index));
+    std::memcpy(meta + 8, &last_term, sizeof(last_term));
+
+    leveldb::WriteBatch batch;
+    batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
+    batch.Put(kSnapshotHashKey,
+              leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
+
+    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    if (!s.ok()) {
+      return Status::Error("Failed to save snapshot metadata: " +
+                           s.ToString());
+    }
+
+    snapshot_last_index_ = last_index;
+    snapshot_last_term_ = last_term;
+
+    LOG_INFO(
+        "Snapshot saved (streaming, {} chunks), index={}, term={}",
+        chunk_index, last_index, last_term);
+
+    return Status::OK();
+  }
+
+  Status LoadSnapshotStream(
+      const std::function<void(const std::string& chunk)>& chunk_consumer,
+      uint64_t& last_index, uint64_t& last_term) override {
+    std::shared_lock lock(mutex_);
+    if (!db_) {
+      return Status::Error("Persister not open");
+    }
+
+    // Check if old-format snapshot exists
+    std::string old_value;
+    leveldb::Status s =
+        db_->Get(leveldb::ReadOptions(), kSnapshotKey, &old_value);
+    if (s.ok()) {
+      // Old format: use base LoadSnapshot and pass to consumer
+      auto status = LoadSnapshot(old_value, last_index, last_term);
+      if (status.ok() && !old_value.empty()) {
+        chunk_consumer(old_value);
+      }
+      return status;
+    }
+
+    // New format: load metadata
+    std::string meta;
+    s = db_->Get(leveldb::ReadOptions(), kSnapshotMetaKey, &meta);
+    if (s.IsNotFound()) {
+      return Status::Error("No snapshot available");
+    }
+    if (!s.ok() || meta.size() != 16) {
+      return Status::Error("Failed to load snapshot metadata");
+    }
+
+    std::memcpy(&last_index, meta.data(), sizeof(last_index));
+    std::memcpy(&last_term, meta.data() + 8, sizeof(last_term));
+
+    // Load and verify SHA-256 hash
+    std::string stored_hash;
+    s = db_->Get(leveldb::ReadOptions(), kSnapshotHashKey, &stored_hash);
+
+    // Load chunks
+    Sha256Context sha_ctx;
+    Sha256Init(sha_ctx);
+    uint32_t chunk_index = 0;
+    std::string chunk;
+
+    while (true) {
+      std::string key =
+          std::string(kSnapshotChunkPrefix) + std::to_string(chunk_index);
+      s = db_->Get(leveldb::ReadOptions(), key, &chunk);
+      if (s.IsNotFound()) {
+        break;
+      }
+      if (!s.ok()) {
+        return Status::Error("Failed to load snapshot chunk: " + s.ToString());
+      }
+      Sha256Update(sha_ctx, chunk.data(), chunk.size());
+      chunk_consumer(chunk);
+      ++chunk_index;
+    }
+
+    uint8_t computed_hash[32];
+    Sha256Final(sha_ctx, computed_hash);
+
+    if (stored_hash.size() == 32) {
+      if (std::memcmp(stored_hash.data(), computed_hash, 32) != 0) {
+        LOG_ERROR("Snapshot SHA-256 mismatch! Data may be corrupted.");
+        return Status::Error(
+            "Snapshot integrity check failed: SHA-256 mismatch");
+      }
+      LOG_DEBUG("Snapshot SHA-256 verified successfully");
+    } else {
+      LOG_WARN("No SHA-256 hash found for snapshot, skipping integrity check");
+    }
+
+    return Status::OK();
+  }
+
   bool HasSnapshot() const override {
     std::shared_lock lock(mutex_);
     if (!db_) return false;
 
     std::string value;
     leveldb::Status s = db_->Get(leveldb::ReadOptions(), kSnapshotKey, &value);
+    if (s.ok()) return true;
+
+    s = db_->Get(leveldb::ReadOptions(), kSnapshotMetaKey, &value);
     return s.ok();
   }
 
  private:
+  void DeleteOldSnapshotFormat() {
+    // Delete old-format snapshot key if it exists
+    db_->Delete(leveldb::WriteOptions(), kSnapshotKey);
+  }
+
   void LoadStateFromDB() {
     std::string value;
     leveldb::Status s = db_->Get(leveldb::ReadOptions(), kStateKey, &value);

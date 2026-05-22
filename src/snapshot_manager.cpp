@@ -56,41 +56,47 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   Index snapshot_index = meta.last_included_index_;
   Term snapshot_term = meta.last_included_term_;
 
-  // Read full snapshot data.
-  // TODO: This loads the entire snapshot into memory. For large state
-  // machines this is a P0 OOM risk. The proper fix is a streaming
-  // Persister interface (BeginSnapshot / AppendChunk / Finalize).
-  std::string snapshot_data;
+  // Stream snapshot data to persister to avoid OOM.
   constexpr size_t kReadChunkSize = 64 * 1024;  // 64KB chunks
   std::vector<uint8_t> buffer(kReadChunkSize);
-  uint64_t offset = 0;
 
   auto cfg = runtime_config_->Get();
   const size_t kMaxSnapshotSize =
       cfg.max_snapshot_size_bytes > 0 ? cfg.max_snapshot_size_bytes
                                       : 100 * 1024 * 1024;  // 100MB default
 
+  // Pre-scan to check total size (memory-free)
+  uint64_t check_offset = 0;
+  size_t total_size = 0;
   while (true) {
-    size_t bytes_read = snapshot->Read(offset, buffer.data(), kReadChunkSize);
-    if (bytes_read == 0) {
-      break;
-    }
-    if (snapshot_data.size() + bytes_read > kMaxSnapshotSize) {
+    size_t bytes_read =
+        snapshot->Read(check_offset, buffer.data(), kReadChunkSize);
+    if (bytes_read == 0) break;
+    total_size += bytes_read;
+    if (total_size > kMaxSnapshotSize) {
       LOG_ERROR(
           "Node {} {}-snapshot exceeds max size ({} > {} bytes). "
           "Increase max_snapshot_size_bytes or implement streaming persister.",
-          server_id_, trigger, snapshot_data.size() + bytes_read,
-          kMaxSnapshotSize);
+          server_id_, trigger, total_size, kMaxSnapshotSize);
       return;
     }
-    snapshot_data.append(reinterpret_cast<char*>(buffer.data()), bytes_read);
-    offset += bytes_read;
+    check_offset += bytes_read;
   }
 
-  // Persist snapshot
-  if (persister_ && !snapshot_data.empty()) {
-    auto status =
-        persister_->SaveSnapshot(snapshot_data, snapshot_index, snapshot_term);
+  // Persist snapshot using streaming interface
+  if (persister_ && total_size > 0) {
+    uint64_t stream_offset = 0;
+    auto chunk_provider = [&](std::string& chunk) -> bool {
+      size_t bytes_read =
+          snapshot->Read(stream_offset, buffer.data(), kReadChunkSize);
+      if (bytes_read == 0) return false;
+      chunk.assign(reinterpret_cast<char*>(buffer.data()), bytes_read);
+      stream_offset += bytes_read;
+      return true;
+    };
+
+    auto status = persister_->SaveSnapshotStream(chunk_provider, snapshot_index,
+                                                  snapshot_term);
     if (!status.ok()) {
       LOG_ERROR("Node {} failed to persist {}-snapshot: {}", server_id_,
                 trigger, status.ToString());
@@ -134,7 +140,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   LOG_INFO(
       "Node {} {}-snapshot completed at index {} term {} ({} bytes, "
       "{} entries truncated)",
-      server_id_, trigger, snapshot_index, snapshot_term, snapshot_data.size(),
+      server_id_, trigger, snapshot_index, snapshot_term, total_size,
       entries_since_snapshot);
 }
 

@@ -188,6 +188,56 @@ class Persister {
    */
   virtual bool HasSnapshot() const { return false; }
 
+  // ==================== Streaming Snapshot Operations ====================
+
+  /**
+   * Save snapshot using streaming chunks.
+   *
+   * This is the preferred method for large snapshots to avoid loading
+   * the entire snapshot into memory at once.
+   *
+   * @param chunk_provider Callback that fills chunk and returns true if more
+   *                       data is available. The callback should clear chunk
+   *                       when done (return false with empty chunk).
+   * @param last_index Last log index included in snapshot
+   * @param last_term Last log term included in snapshot
+   * @return Status::OK() on success
+   */
+  virtual Status SaveSnapshotStream(
+      const std::function<bool(std::string& chunk)>& chunk_provider,
+      uint64_t last_index, uint64_t last_term) {
+    // Default: collect all chunks and call SaveSnapshot
+    std::string data;
+    std::string chunk;
+    while (chunk_provider(chunk)) {
+      data += chunk;
+    }
+    return SaveSnapshot(data, last_index, last_term);
+  }
+
+  /**
+   * Load snapshot using streaming chunks.
+   *
+   * This is the preferred method for large snapshots to avoid loading
+   * the entire snapshot into memory at once.
+   *
+   * @param chunk_consumer Callback that receives each chunk
+   * @param last_index Output for last included index
+   * @param last_term Output for last included term
+   * @return Status::OK() on success
+   */
+  virtual Status LoadSnapshotStream(
+      const std::function<void(const std::string& chunk)>& chunk_consumer,
+      uint64_t& last_index, uint64_t& last_term) {
+    // Default: call LoadSnapshot and pass entire data
+    std::string data;
+    auto status = LoadSnapshot(data, last_index, last_term);
+    if (status.ok() && !data.empty()) {
+      chunk_consumer(data);
+    }
+    return status;
+  }
+
   /**
    * Configure whether writes should fsync to disk.
    *

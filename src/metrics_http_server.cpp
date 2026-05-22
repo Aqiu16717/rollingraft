@@ -141,7 +141,28 @@ void MetricsHttpServer::Stop() {
     acceptor_->close(ec);
   }
   if (io_ctx_) io_ctx_->stop();
-  if (thread_.joinable()) thread_.join();
+
+  // Wait for server thread to exit with timeout to avoid indefinite hang.
+  if (thread_.joinable()) {
+    bool exited = false;
+    for (int i = 0; i < 200; ++i) {
+      // io_ctx_->stopped() is not sufficient; check if run() returned.
+      // We approximate by polling thread joinability with a short timeout.
+      // A cleaner way would be a conditional variable, but for shutdown
+      // a 2s ceiling is acceptable.
+      if (!thread_.joinable()) {
+        exited = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (exited) {
+      thread_.join();
+    } else {
+      LOG_WARN("MetricsHttpServer thread did not exit in 2s, detaching");
+      thread_.detach();
+    }
+  }
 }
 
 void MetricsHttpServer::Run() { io_ctx_->run(); }

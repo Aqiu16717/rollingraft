@@ -108,6 +108,11 @@ Status RaftNodeConfig::Validate() const {
   if (max_entries_per_append == 0) {
     return Status::Error("CONFIG_INVALID", "max_entries_per_append must be > 0");
   }
+  // Shutdown timeout must be 0 (infinite) or >= 100ms
+  if (shutdown_timeout_ms > 0 && shutdown_timeout_ms < 100) {
+    return Status::Error("CONFIG_INVALID",
+                         "shutdown_timeout_ms must be 0 or >= 100");
+  }
 
   return Status::OK();
 }

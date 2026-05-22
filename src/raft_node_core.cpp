@@ -356,17 +356,7 @@ Status RaftNode::RaftNodeImpl::Start() {
   return Status::OK();
 }
 
-Status RaftNode::RaftNodeImpl::Stop() {
-  NodeState expected = NodeState::kRunning;
-  if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
-    if (state_ == NodeState::kStopped) {
-      return Status::OK();  // Already stopped
-    }
-    return Status::Error("Node not running");
-  }
-
-  LOG_INFO("Stopping RaftNode {}...", config_.node_id);
-
+void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
   // 1. Stop metrics server
   if (metrics_server_) {
     metrics_server_->Stop();
@@ -424,6 +414,87 @@ Status RaftNode::RaftNodeImpl::Stop() {
   event_bus_.Publish(stopped_event);
 
   LOG_INFO("RaftNode {} stopped", config_.node_id);
+}
+
+void RaftNode::RaftNodeImpl::ForceShutdown() {
+  LOG_WARN("Force shutdown RaftNode {}...", config_.node_id);
+
+  // Force-set state to stopped. Any in-flight callbacks or threads
+  // will see kStopped on their next IsRunning() check.
+  state_ = NodeState::kStopped;
+
+  // Best-effort cleanup: release resources without blocking.
+  metrics_server_.reset();
+  {
+    std::lock_guard<std::mutex> lock_e(election_mtx_);
+    CancelElectionTimerLocked();
+  }
+  StopHeartbeatTimerLocked();
+  StopSnapshotCheckTimerLocked();
+
+  // Note: We intentionally do NOT call timer_->Stop() or network_->Stop()
+  // here because they may be the source of the hang. The underlying
+  // io_context threads will be detached by their own timeout logic.
+
+  if (log_persister_) {
+    log_persister_->Stop();
+  }
+
+  // Clear pending proposals without invoking callbacks (force shutdown).
+  {
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    pending_proposals_.clear();
+  }
+
+  NodeLifecycleEvent stopped_event;
+  stopped_event.node_id = server_id_;
+  stopped_event.state = NodeLifecycleEvent::State::kStopped;
+  stopped_event.timestamp = std::chrono::steady_clock::now();
+  event_bus_.Publish(stopped_event);
+
+  LOG_WARN("RaftNode {} force-stopped", config_.node_id);
+}
+
+Status RaftNode::RaftNodeImpl::Stop() {
+  NodeState expected = NodeState::kRunning;
+  if (!state_.compare_exchange_strong(expected, NodeState::kStopping)) {
+    if (state_ == NodeState::kStopped) {
+      return Status::OK();  // Already stopped
+    }
+    return Status::Error("Node not running");
+  }
+
+  LOG_INFO("Stopping RaftNode {}...", config_.node_id);
+
+  if (config_.shutdown_timeout_ms == 0) {
+    // No timeout — block indefinitely (legacy behavior)
+    DoGracefulShutdown();
+    return Status::OK();
+  }
+
+  // Run graceful shutdown in a separate thread with timeout.
+  std::atomic<bool> done{false};
+  std::thread shutdown_thread([this, &done]() {
+    DoGracefulShutdown();
+    done.store(true, std::memory_order_release);
+  });
+
+  auto deadline = std::chrono::steady_clock::now() +
+                  std::chrono::milliseconds(config_.shutdown_timeout_ms);
+
+  while (!done.load(std::memory_order_acquire)) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      LOG_ERROR(
+          "RaftNode {} graceful shutdown timed out after {}ms, forcing stop",
+          config_.node_id, config_.shutdown_timeout_ms);
+      shutdown_thread.detach();
+      ForceShutdown();
+      return Status::Error("Shutdown timeout");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  shutdown_thread.join();
   return Status::OK();
 }
 

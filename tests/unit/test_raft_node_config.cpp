@@ -208,6 +208,28 @@ TEST_F(RaftNodeConfigValidateTest, ZeroMaxEntriesPerAppend) {
   EXPECT_FALSE(status.ok());
 }
 
+TEST_F(RaftNodeConfigValidateTest, ShutdownTimeoutTooSmall) {
+  auto config = MakeValidConfig();
+  config.shutdown_timeout_ms = 50;  // < 100
+  auto status = config.Validate();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("shutdown_timeout_ms"), std::string::npos);
+}
+
+TEST_F(RaftNodeConfigValidateTest, ShutdownTimeoutZeroMeansInfinite) {
+  auto config = MakeValidConfig();
+  config.shutdown_timeout_ms = 0;
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, ShutdownTimeoutValid) {
+  auto config = MakeValidConfig();
+  config.shutdown_timeout_ms = 100;
+  EXPECT_TRUE(config.Validate().ok());
+  config.shutdown_timeout_ms = 30000;
+  EXPECT_TRUE(config.Validate().ok());
+}
+
 TEST_F(RaftNodeConfigValidateTest, RaftNodeConstructorThrowsOnInvalidConfig) {
   auto config = MakeValidConfig();
   config.listen_addr = "";

@@ -47,7 +47,8 @@ class Logger {
   virtual void SetLogLevel(LogLevel level) = 0;
 
   /** Optional: enable JSON structured logging with node context. */
-  virtual void ConfigureJsonMode(bool enabled, int32_t node_id = -1) {}
+  virtual void ConfigureJsonMode([[maybe_unused]] bool enabled,
+                                 [[maybe_unused]] int32_t node_id = -1) {}
 
   /** Convenience methods for each log level. */
   void Trace(const std::string& message) { Log(LogLevel::TRACE, message); }

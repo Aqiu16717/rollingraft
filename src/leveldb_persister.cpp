@@ -590,6 +590,12 @@ class LevelDBPersister : public Persister {
       }
     }
 
+    // If no data was written, skip metadata (empty snapshot)
+    if (chunk_index == 0) {
+      LOG_INFO("Snapshot save skipped: empty data");
+      return Status::OK();
+    }
+
     uint8_t hash[32];
     Sha256Final(sha_ctx, hash);
 

@@ -81,6 +81,11 @@ class RaftNode::RaftNodeImpl {
   Status Start();
   Status Stop();
 
+ private:
+  void DoGracefulShutdown();
+  void ForceShutdown();
+
+ public:
   bool IsLeader() const;
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;

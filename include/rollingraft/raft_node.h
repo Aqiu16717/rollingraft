@@ -114,6 +114,9 @@ struct RaftNodeConfig {
   // Max snapshot size in bytes. 0 = unlimited. Default 100MB.
   uint32_t max_snapshot_size_bytes = 100 * 1024 * 1024;
 
+  // Graceful shutdown timeout (ms). 0 = wait indefinitely. Default 30s.
+  uint32_t shutdown_timeout_ms = 30000;
+
   // Factory functions for dependency injection (testing)
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;

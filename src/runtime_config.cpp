@@ -107,11 +107,10 @@ Status RuntimeConfig::Validate(const Values& v) const {
     return Status::Error("INVALID_CONFIG", "log_retention_entries must be <= 100000");
   }
   if (v.max_snapshot_size_bytes > 0 &&
-      (v.max_snapshot_size_bytes < 1 * 1024 * 1024 ||
-       v.max_snapshot_size_bytes > 10ULL * 1024 * 1024 * 1024)) {
+      v.max_snapshot_size_bytes < 1 * 1024 * 1024) {
     return Status::Error(
         "INVALID_CONFIG",
-        "max_snapshot_size_bytes must be 0 (unlimited) or in [1MB, 10GB]");
+        "max_snapshot_size_bytes must be 0 (unlimited) or >= 1MB");
   }
   if (v.propose_timeout_ms < 100 || v.propose_timeout_ms > 60000) {
     return Status::Error("INVALID_CONFIG",

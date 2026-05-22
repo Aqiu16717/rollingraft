@@ -76,7 +76,7 @@ Status SimulatedNetworkTransport::Stop() {
 }
 
 void SimulatedNetworkTransport::SendRpc(
-    NodeId to, const NodeAddr& addr, const std::string& request_data,
+    NodeId to, [[maybe_unused]] const NodeAddr& addr, const std::string& request_data,
     uint64_t correlation_id, std::chrono::milliseconds timeout,
     RpcResponseCallback callback) {
   if (!state_) return;

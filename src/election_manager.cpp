@@ -111,7 +111,7 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   // Use committed cluster configuration for quorum calculation.
   // peer_addrs_ may contain optimistically added nodes that have not
   // yet been committed via log, so it must not be used for majority.
-  int majority;
+  uint32_t majority;
   {
     std::shared_lock<std::shared_mutex> lock(membership_mtx_);
     majority = cluster_config_.GetMajority();
@@ -366,7 +366,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
           .Increment();
     }
     ++vote_count_;
-    int majority;
+    uint32_t majority;
     {
       std::shared_lock<std::shared_mutex> lock(membership_mtx_);
       majority = cluster_config_.GetMajority();

@@ -68,7 +68,9 @@ struct ClusterConfig {
    * Get the majority size for the current cluster.
    * @return Number of nodes needed for quorum (nodes/2 + 1)
    */
-  int GetMajority() const { return static_cast<int>(nodes.size()) / 2 + 1; }
+  uint32_t GetMajority() const {
+    return static_cast<uint32_t>(nodes.size()) / 2 + 1;
+  }
 };
 
 /**

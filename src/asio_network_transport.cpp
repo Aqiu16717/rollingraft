@@ -891,6 +891,7 @@ class AsioNetworkTransport : public NetworkTransport {
                 } else {
                   LOG_ERROR("TLS handshake failed: {}",
                             handshake_ec.message());
+                  new_conn->Close();
                 }
                 if (running_.load(std::memory_order_relaxed)) {
                   DoAccept();

@@ -166,3 +166,40 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_HashVerification) {
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(loaded, data);
 }
+
+TEST_F(LevelDBPersisterStreamingTest,
+       SaveSnapshotStream_FewerChunksThanBefore) {
+  // First save with 4 chunks
+  std::string data1(256, 'A');
+  size_t offset1 = 0;
+  auto chunk_provider1 = [&](std::string& chunk) -> bool {
+    if (offset1 >= data1.size()) return false;
+    chunk = data1.substr(offset1, 64);
+    offset1 += chunk.size();
+    return true;
+  };
+  auto status = persister_->SaveSnapshotStream(chunk_provider1, 10, 1);
+  ASSERT_TRUE(status.ok());
+
+  // Now save with only 2 chunks
+  std::string data2(128, 'B');
+  size_t offset2 = 0;
+  auto chunk_provider2 = [&](std::string& chunk) -> bool {
+    if (offset2 >= data2.size()) return false;
+    chunk = data2.substr(offset2, 64);
+    offset2 += chunk.size();
+    return true;
+  };
+  status = persister_->SaveSnapshotStream(chunk_provider2, 20, 2);
+  ASSERT_TRUE(status.ok());
+
+  // Load should only get 2 chunks (new data), not 4
+  std::string loaded;
+  uint64_t idx = 0, term = 0;
+  auto chunk_consumer = [&](const std::string& chunk) { loaded += chunk; };
+  status = persister_->LoadSnapshotStream(chunk_consumer, idx, term);
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(loaded, data2);
+  EXPECT_EQ(idx, 20);
+  EXPECT_EQ(term, 2);
+}

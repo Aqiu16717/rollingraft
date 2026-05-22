@@ -567,8 +567,8 @@ class LevelDBPersister : public Persister {
       return Status::Error("Persister not open");
     }
 
-    // Delete old-format snapshot if exists
-    DeleteOldSnapshotFormat();
+    // Delete any existing snapshot data (old format or new format chunks)
+    DeleteSnapshotData();
 
     // Write chunks and compute incremental SHA-256
     Sha256Context sha_ctx;
@@ -599,10 +599,11 @@ class LevelDBPersister : public Persister {
     uint8_t hash[32];
     Sha256Final(sha_ctx, hash);
 
-    // Save metadata
-    char meta[16];
+    // Save metadata (20 bytes: last_index + last_term + chunk_count)
+    char meta[20];
     std::memcpy(meta, &last_index, sizeof(last_index));
     std::memcpy(meta + 8, &last_term, sizeof(last_term));
+    std::memcpy(meta + 16, &chunk_index, sizeof(chunk_index));
 
     leveldb::WriteBatch batch;
     batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
@@ -652,12 +653,17 @@ class LevelDBPersister : public Persister {
     if (s.IsNotFound()) {
       return Status::Error("No snapshot available");
     }
-    if (!s.ok() || meta.size() != 16) {
+    if (!s.ok() || (meta.size() != 16 && meta.size() != 20)) {
       return Status::Error("Failed to load snapshot metadata");
     }
 
     std::memcpy(&last_index, meta.data(), sizeof(last_index));
     std::memcpy(&last_term, meta.data() + 8, sizeof(last_term));
+
+    uint32_t chunk_count = 0;
+    if (meta.size() == 20) {
+      std::memcpy(&chunk_count, meta.data() + 16, sizeof(chunk_count));
+    }
 
     // Load and verify SHA-256 hash
     std::string stored_hash;
@@ -670,6 +676,10 @@ class LevelDBPersister : public Persister {
     std::string chunk;
 
     while (true) {
+      // If metadata includes chunk_count, stop after reading all chunks
+      if (meta.size() == 20 && chunk_index >= chunk_count) {
+        break;
+      }
       std::string key =
           std::string(kSnapshotChunkPrefix) + std::to_string(chunk_index);
       s = db_->Get(leveldb::ReadOptions(), key, &chunk);
@@ -714,9 +724,21 @@ class LevelDBPersister : public Persister {
   }
 
  private:
-  void DeleteOldSnapshotFormat() {
+  void DeleteSnapshotData() {
     // Delete old-format snapshot key if it exists
     db_->Delete(leveldb::WriteOptions(), kSnapshotKey);
+    // Delete new-format metadata and hash
+    db_->Delete(leveldb::WriteOptions(), kSnapshotMetaKey);
+    db_->Delete(leveldb::WriteOptions(), kSnapshotHashKey);
+    // Delete all chunk keys
+    std::unique_ptr<leveldb::Iterator> it(
+        db_->NewIterator(leveldb::ReadOptions()));
+    std::string prefix(kSnapshotChunkPrefix);
+    for (it->Seek(prefix); it->Valid() &&
+                          it->key().starts_with(prefix);
+         it->Next()) {
+      db_->Delete(leveldb::WriteOptions(), it->key());
+    }
   }
 
   void LoadStateFromDB() {

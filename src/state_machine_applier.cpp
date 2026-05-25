@@ -146,10 +146,10 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
   read_req.acks.insert(from);
 
   // Check if we have majority
-  int majority = (peer_addrs_.size() + 1) / 2 + 1;
-  if (static_cast<int>(read_req.acks.size()) >= majority) {
+  uint32_t majority = cluster_config_.GetMajority();
+  if (read_req.acks.size() >= majority) {
     LOG_INFO("ReadIndex {} received majority acks ({}/{})", read_id,
-             read_req.acks.size(), peer_addrs_.size() + 1);
+             read_req.acks.size(), cluster_config_.nodes.size());
 
     // Check if read_index is already applied
     if (last_applied_ >= read_req.read_index) {
@@ -178,8 +178,8 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
 
   for (auto& [read_id, read_req] : pending_reads_) {
     // Check if we have majority acks and log is applied
-    int majority = (peer_addrs_.size() + 1) / 2 + 1;
-    if (static_cast<int>(read_req.acks.size()) >= majority &&
+    uint32_t majority = cluster_config_.GetMajority();
+    if (read_req.acks.size() >= majority &&
         last_applied_ >= read_req.read_index) {
       completed_reads.push_back(read_id);
     }

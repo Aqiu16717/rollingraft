@@ -72,3 +72,4 @@ third_party/*/.patched
 data/
 tmp/
 logo/
+Testing/

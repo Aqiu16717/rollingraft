@@ -266,7 +266,7 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
       if (match >= index) ++count;
     }
 
-    if (static_cast<size_t>(count) > (peer_addrs_.size() + 1) / 2) {
+    if (static_cast<uint32_t>(count) >= cluster_config_.GetMajority()) {
       commit_index_ = index;
       if (metrics_) {
         metrics_

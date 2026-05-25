@@ -121,6 +121,32 @@ Status RaftNode::RaftNodeImpl::Start() {
                voted_for_);
     }
 
+    // Restore snapshot if exists
+    uint64_t snapshot_index = 0;
+    uint64_t snapshot_term = 0;
+    if (persister_->HasSnapshot()) {
+      std::string snapshot_data;
+      auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index,
+                                             snapshot_term);
+      if (status.ok() && !snapshot_data.empty()) {
+        std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(),
+                                            snapshot_data.end());
+        if (state_machine_->Restore(snapshot_bytes)) {
+          last_snapshot_index_ = snapshot_index;
+          log_.SetStartIndex(snapshot_index + 1);
+          LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index,
+                   snapshot_term);
+        } else {
+          LOG_ERROR("Failed to restore snapshot from persister");
+          // Continue without snapshot — log entries may be able to rebuild
+          // state, but this is a degraded path.
+        }
+      } else {
+        LOG_WARN("Snapshot exists but could not be loaded: {}",
+                 status.GetMessage());
+      }
+    }
+
     // Initialize and start LogPersister
     LogPersistenceConfig log_config;
     log_config.batch_size = config_.max_entries_per_append;
@@ -139,10 +165,20 @@ Status RaftNode::RaftNodeImpl::Start() {
     log_persister_ = std::make_unique<LogPersister>(persister_, log_config);
     log_persister_->Start();
 
-    // Restore log entries from disk
+    // Restore log entries from disk.
+    // Use the log's current first index (which may have been set by snapshot
+    // restore above) to avoid loading entries already covered by snapshot.
     auto restored_entries = log_persister_->Restore(log_.GetFirstIndex());
-    for (const auto& entry : restored_entries) {
-      log_.AppendLogEntry(entry);
+    if (!restored_entries.empty()) {
+      // Ensure log_.start_index_ matches the first restored entry's index.
+      // This handles the case where TruncatePrefix deleted entries but
+      // start_index_ was not persisted.
+      if (restored_entries[0].index_ != log_.GetFirstIndex()) {
+        log_.SetStartIndex(restored_entries[0].index_);
+      }
+      for (const auto& entry : restored_entries) {
+        log_.AppendLogEntry(entry);
+      }
     }
 
     // All restored entries are already durably persisted

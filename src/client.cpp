@@ -258,11 +258,10 @@ ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
 
 ClientResult Client::Impl::TryExecuteOnServer(
     const std::string& server, const ClientRequest& req,
-    std::chrono::milliseconds /*timeout*/) {
-  // Use RpcCall (synchronous)
-  // TODO: Pass timeout to RpcCall once it supports configurable timeout
+    std::chrono::milliseconds timeout) {
+  // Use RpcCall (synchronous) with configurable timeout
   ClientResponse resp;
-  auto status = RpcCall(server, req, resp);
+  auto status = RpcCall(server, req, resp, timeout);
 
   if (!status.ok()) {
     return ClientResult(status);

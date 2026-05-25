@@ -6,7 +6,11 @@ namespace rollingraft {
 
 class AsioSslContextFactoryTest : public ::testing::Test {
  protected:
+#ifdef TEST_CERTS_DIR
+  std::string certs_dir_ = TEST_CERTS_DIR;
+#else
   std::string certs_dir_ = "../../tests/certs/";
+#endif
 };
 
 TEST_F(AsioSslContextFactoryTest, CreateServerContext_Success) {

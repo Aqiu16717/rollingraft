@@ -120,11 +120,19 @@ void MetricsHttpServer::Start() {
 
   LOG_INFO("Agent HTTP server listening on {}", bind_addr_);
   DoAccept();
+
+  heartbeat_timer_ = std::make_unique<asio::steady_timer>(*io_ctx_);
+  ScheduleHeartbeat();
+
   thread_ = std::thread([this]() { Run(); });
 }
 
 void MetricsHttpServer::Stop() {
   if (!running_.exchange(false)) return;
+
+  if (heartbeat_timer_) {
+    heartbeat_timer_->cancel();
+  }
 
   {
     std::lock_guard<std::mutex> lock(sse_mutex_);
@@ -253,6 +261,40 @@ void MetricsHttpServer::RemoveDeadSseConnections() {
       std::remove_if(sse_connections_.begin(), sse_connections_.end(),
                      [](const auto& w) { return w.expired(); }),
       sse_connections_.end());
+}
+
+void MetricsHttpServer::ScheduleHeartbeat() {
+  if (!heartbeat_timer_ || !running_) return;
+  heartbeat_timer_->expires_after(kHeartbeatInterval);
+  heartbeat_timer_->async_wait([this](std::error_code ec) {
+    if (ec == asio::error::operation_aborted) return;
+    OnHeartbeat(ec);
+  });
+}
+
+void MetricsHttpServer::OnHeartbeat(std::error_code ec) {
+  if (ec || !running_) return;
+
+  // SSE comment line (starts with ':') — browsers ignore it but keep
+  // connection alive. Prevents proxy/load-balancer timeouts.
+  std::string heartbeat = ":heartbeat\n\n";
+
+  std::vector<std::shared_ptr<SseConnection>> connections;
+  {
+    std::lock_guard<std::mutex> lock(sse_mutex_);
+    RemoveDeadSseConnections();
+    for (auto& weak_conn : sse_connections_) {
+      if (auto conn = weak_conn.lock()) {
+        connections.push_back(conn);
+      }
+    }
+  }
+
+  for (auto& conn : connections) {
+    conn->EnqueueEvent(heartbeat);
+  }
+
+  ScheduleHeartbeat();
 }
 
 std::string ExtractMethod(const std::string& request) {
@@ -391,6 +433,42 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
   return {response_body, status_line, content_type, is_sse};
 }
 
+bool MetricsHttpServer::CheckRateLimit(const std::string& client_ip) {
+  std::lock_guard<std::mutex> lock(rate_limit_mtx_);
+  auto now = std::chrono::steady_clock::now();
+  auto& timestamps = rate_limit_[client_ip];
+
+  // Remove timestamps outside the window
+  while (!timestamps.empty() &&
+         timestamps.front() + kRateLimitWindow < now) {
+    timestamps.pop_front();
+  }
+
+  if (timestamps.size() >= kMaxRequestsPerSecond) {
+    return false;
+  }
+
+  timestamps.push_back(now);
+  return true;
+}
+
+void MetricsHttpServer::CleanupRateLimit() {
+  std::lock_guard<std::mutex> lock(rate_limit_mtx_);
+  auto now = std::chrono::steady_clock::now();
+  for (auto it = rate_limit_.begin(); it != rate_limit_.end();) {
+    auto& timestamps = it->second;
+    while (!timestamps.empty() &&
+           timestamps.front() + kRateLimitWindow < now) {
+      timestamps.pop_front();
+    }
+    if (timestamps.empty()) {
+      it = rate_limit_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 void MetricsHttpServer::HandleConnection(SocketVariant socket) {
   auto buffer = std::make_shared<std::array<char, 4096>>();
   std::visit(
@@ -403,6 +481,43 @@ void MetricsHttpServer::HandleConnection(SocketVariant socket) {
             [this, buffer, socket_ptr](std::error_code ec,
                                        std::size_t bytes) mutable {
               if (ec) return;
+
+              // Get client IP for rate limiting
+              std::string client_ip;
+              try {
+                if constexpr (std::is_same_v<
+                                  SocketType,
+                                  asio::ssl::stream<
+                                      asio::ip::tcp::socket>>) {
+                  client_ip = socket_ptr->next_layer()
+                                  .remote_endpoint()
+                                  .address()
+                                  .to_string();
+                } else {
+                  client_ip =
+                      socket_ptr->remote_endpoint().address().to_string();
+                }
+              } catch (...) {
+                client_ip = "unknown";
+              }
+
+              // Check rate limit
+              if (!CheckRateLimit(client_ip)) {
+                std::string response =
+                    "HTTP/1.1 429 Too Many Requests\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: 47\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{\"error\":\"RATE_LIMITED\",\"message\":"
+                    "\"Too many requests\"}\n";
+                auto resp_str = std::make_shared<std::string>(response);
+                asio::async_write(
+                    *socket_ptr, asio::buffer(*resp_str),
+                    [resp_str, socket_ptr](std::error_code,
+                                           std::size_t) {});
+                return;
+              }
 
               std::string request(buffer->data(), bytes);
               auto [response_body, status_line, content_type, is_sse] =

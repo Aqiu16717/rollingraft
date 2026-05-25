@@ -138,6 +138,10 @@ install(TARGETS unit_tests integration_tests deterministic_tests
 
 # Register tests
 include(GoogleTest)
+target_compile_definitions(unit_tests
+  PRIVATE TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+)
+
 gtest_discover_tests(unit_tests
   TEST_PREFIX "unit."
   XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results

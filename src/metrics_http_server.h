@@ -3,10 +3,14 @@
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 #include <atomic>
+#include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <variant>
 
 namespace rollingraft {
@@ -55,6 +59,14 @@ class MetricsHttpServer {
       const std::string& request);
   void RemoveDeadSseConnections();
 
+  // Simple per-IP rate limiter: sliding window of 10 requests per second
+  bool CheckRateLimit(const std::string& client_ip);
+  void CleanupRateLimit();
+
+ private:
+  void ScheduleHeartbeat();
+  void OnHeartbeat(std::error_code ec);
+
  private:
   void Run();
   void DoAccept();
@@ -62,6 +74,10 @@ class MetricsHttpServer {
   using SocketVariant = std::variant<asio::ip::tcp::socket,
                                      asio::ssl::stream<asio::ip::tcp::socket>>;
   void HandleConnection(SocketVariant socket);
+
+  // Simple per-IP rate limiter: sliding window of 10 requests per second
+  bool CheckRateLimit(const std::string& client_ip);
+  void CleanupRateLimit();
 
   std::string bind_addr_;
   MetricsRegistry* registry_;
@@ -85,6 +101,15 @@ class MetricsHttpServer {
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   std::thread thread_;
   std::atomic<bool> running_{false};
+
+  std::unique_ptr<asio::steady_timer> heartbeat_timer_;
+  static constexpr std::chrono::seconds kHeartbeatInterval{15};
+
+  // Rate limiting: per-IP request timestamps (sliding window)
+  mutable std::mutex rate_limit_mtx_;
+  std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> rate_limit_;
+  static constexpr size_t kMaxRequestsPerSecond = 10;
+  static constexpr std::chrono::seconds kRateLimitWindow{1};
 
   // Authentication logic tested via public HTTP interface in unit tests
 };

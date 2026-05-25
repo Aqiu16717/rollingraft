@@ -64,7 +64,8 @@ static bool DeserializeClientResponse(const std::string& data,
 }
 
 Status RpcCall(const std::string& addr, const ClientRequest& req,
-               ClientResponse& resp) {
+               ClientResponse& resp,
+               std::chrono::milliseconds timeout) {
   try {
     // Parse address
     auto colon_pos = addr.find(':');
@@ -89,7 +90,7 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
     asio::steady_timer timer(io_context);
     bool connect_done = false;
 
-    timer.expires_after(std::chrono::seconds(5));
+    timer.expires_after(timeout);
     timer.async_wait([&](std::error_code ec) {
       if (!ec && !connect_done) {
         socket.close();
@@ -104,8 +105,11 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
           timer.cancel();
         });
 
-    io_context.run();
+    io_context.run_for(timeout);
 
+    if (!connect_done) {
+      return Status::Error("Timeout connecting to " + addr);
+    }
     if (connect_ec) {
       return Status::Error("Failed to connect to " + addr + ": " +
                            connect_ec.message());

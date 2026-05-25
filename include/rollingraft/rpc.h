@@ -267,6 +267,7 @@ struct ConfigChangeResponse : public RaftResponse {
  * @return Status of the network operation
  */
 Status RpcCall(const std::string& addr, const ClientRequest& req,
-               ClientResponse& resp);
+               ClientResponse& resp,
+               std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 }  // namespace rollingraft

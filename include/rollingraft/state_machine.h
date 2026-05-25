@@ -148,6 +148,18 @@ class StateMachine {
    * @param cb Callback to invoke when index is reached
    */
   virtual void WaitIndex(uint64_t index, std::function<void()> cb) = 0;
+
+  /**
+   * Execute a read-only query against the state machine.
+   *
+   * Called after ReadIndex confirms the node is still leader and
+   * the target log index has been applied. The query must not
+   * modify state machine state.
+   *
+   * @param data Raw query data
+   * @return Result including response data
+   */
+  virtual ApplyResult Query(std::span<const uint8_t> data) = 0;
 };
 
 }  // namespace rollingraft

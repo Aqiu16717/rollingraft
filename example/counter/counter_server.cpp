@@ -111,6 +111,15 @@ class CounterMachine : public rollingraft::StateMachine {
     }
   }
 
+  rollingraft::ApplyResult Query([[maybe_unused]] std::span<const uint8_t> data) override {
+    std::lock_guard<std::mutex> lock(mtx_);
+    rollingraft::ApplyResult result;
+    result.success = true;
+    result.response = std::to_string(value_);
+    result.applied_index = last_applied_index_.load();
+    return result;
+  }
+
   int64_t GetValue() const {
     std::lock_guard<std::mutex> lock(mtx_);
     return value_;

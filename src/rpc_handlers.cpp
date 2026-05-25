@@ -443,11 +443,57 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     return;
   }
 
-  // For read-only requests, query state machine directly (may be stale)
+  // For read-only requests, use ReadIndex for linearizable reads.
+  // Release locks before calling ReadIndex to avoid deadlock (ReadIndex
+  // acquires election_mtx_ -> replication_mtx_ -> membership_mtx_ -> applier_mtx_).
   if (req.read_only) {
-    // TODO: Implement linearizable read using ReadIndex
-    resp.success = false;
-    resp.error = "Read not yet implemented";
+    lock_r.unlock();
+    lock_e.unlock();
+
+    std::promise<void> read_promise;
+    auto future = read_promise.get_future();
+
+    auto status = ReadIndex([&read_promise]() {
+      read_promise.set_value();
+    });
+
+    if (!status.ok()) {
+      lock_e.lock();
+      lock_r.lock();
+      resp.success = false;
+      resp.error = status.GetMessage();
+      if (status.IsNotLeader()) {
+        resp.leader_id = leader_id_;
+        resp.leader_addr = leader_addr_;
+      }
+      return;
+    }
+
+    // Wait for ReadIndex with timeout (use rpc_timeout_ms)
+    auto wait_status = future.wait_for(
+        std::chrono::milliseconds(config_.rpc_timeout_ms));
+
+    lock_e.lock();
+    lock_r.lock();
+
+    if (wait_status != std::future_status::ready) {
+      resp.success = false;
+      resp.error = "ReadIndex timeout";
+      return;
+    }
+
+    // ReadIndex completed: commit_index has been applied, safe to query.
+    auto query_result = state_machine_->Query(
+        std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(req.command.data()),
+            req.command.size()));
+
+    resp.success = query_result.success;
+    resp.response = query_result.response;
+    resp.error = query_result.error_message;
+    resp.last_applied_index = query_result.applied_index;
+    resp.leader_id = server_id_;
+    resp.leader_addr = config_.listen_addr;
     return;
   }
 

@@ -29,6 +29,8 @@ class MockStateMachine : public StateMachine {
 
   void WaitIndex(uint64_t index, std::function<void()> cb) override;
 
+  ApplyResult Query(std::span<const uint8_t> data) override;
+
   // Test control interface
 
   /**

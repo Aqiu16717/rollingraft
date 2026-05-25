@@ -18,6 +18,10 @@ class TestableMetricsHttpServer : public MetricsHttpServer {
   auto TestBuildResponse(const std::string& request) {
     return BuildResponse(request);
   }
+
+  bool TestCheckRateLimit(const std::string& client_ip) {
+    return CheckRateLimit(client_ip);
+  }
 };
 
 class MetricsHttpServerAuthTest : public ::testing::Test {
@@ -125,6 +129,49 @@ TEST_F(MetricsHttpServerAuthTest, PublicEndpointsIgnoreToken) {
   auto [body4, status4, ct4, sse4] =
       server.TestBuildResponse(MakeRequest("GET", "/v1/events"));
   EXPECT_TRUE(sse4) << "Expected SSE endpoint to be identified";
+}
+
+TEST_F(MetricsHttpServerAuthTest, RateLimitAllowsWithinThreshold) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server(
+      "127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+
+  // 9 requests within 1s window should be allowed
+  for (int i = 0; i < 9; ++i) {
+    EXPECT_TRUE(server.TestCheckRateLimit("192.168.1.1"))
+        << "Request " << i << " should be allowed";
+  }
+}
+
+TEST_F(MetricsHttpServerAuthTest, RateLimitBlocksOverThreshold) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server(
+      "127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+
+  // 10 requests within 1s window should be allowed
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_TRUE(server.TestCheckRateLimit("192.168.1.1"))
+        << "Request " << i << " should be allowed";
+  }
+
+  // 11th request should be blocked
+  EXPECT_FALSE(server.TestCheckRateLimit("192.168.1.1"))
+      << "11th request should be blocked";
+}
+
+TEST_F(MetricsHttpServerAuthTest, RateLimitIsPerIp) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server(
+      "127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+
+  // Fill up one IP
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_TRUE(server.TestCheckRateLimit("192.168.1.1"));
+  }
+  EXPECT_FALSE(server.TestCheckRateLimit("192.168.1.1"));
+
+  // Different IP should still be allowed
+  EXPECT_TRUE(server.TestCheckRateLimit("192.168.1.2"));
 }
 
 TEST_F(MetricsHttpServerAuthTest, AllAdminEndpointsProtected) {

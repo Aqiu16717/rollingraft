@@ -85,6 +85,18 @@ void MockStateMachine::WaitIndex(uint64_t index, std::function<void()> cb) {
   }
 }
 
+ApplyResult MockStateMachine::Query(std::span<const uint8_t> data) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::string cmd(data.begin(), data.end());
+
+  ApplyResult result;
+  result.success = true;
+  result.response = cmd;  // Echo back the query
+  result.applied_index = last_applied_index_;
+  return result;
+}
+
 std::vector<std::string> MockStateMachine::GetAppliedCommands() const {
   std::lock_guard<std::mutex> lock(mutex_);
   std::vector<std::string> result;

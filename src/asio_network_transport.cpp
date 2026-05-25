@@ -66,6 +66,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         connected_(false) {}
 
   asio::ip::tcp::socket& TcpSocket() {
+    if (IsSsl()) {
+      return SslSocket().next_layer();
+    }
     return std::get<0>(socket_);
   }
 

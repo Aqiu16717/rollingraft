@@ -98,6 +98,32 @@ class Cluster3NodesTest : public ::testing::Test {
     return config;
   }
 
+  RaftNodeConfig MakeTlsConfig(NodeId id, const std::string& addr,
+                               const std::vector<std::string>& all_addrs) {
+    auto config = MakeConfig(id, addr, all_addrs);
+    config.tls_enabled = true;
+    config.tls_cert_file = "../../tests/certs/server.crt";
+    config.tls_key_file = "../../tests/certs/server.key";
+    config.tls_ca_file = "../../tests/certs/ca.crt";
+    return config;
+  }
+
+  void StartTlsCluster() {
+    auto ports = AllocateEphemeralPorts(3);
+    addrs_ = FormatAddrs(ports);
+
+    for (int i = 0; i < 3; ++i) {
+      auto config = MakeTlsConfig(i + 1, addrs_[i], addrs_);
+      auto sm = std::make_shared<MockStateMachine>();
+      state_machines_.push_back(sm);
+
+      nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+      auto start_status = nodes_[i]->Start();
+      EXPECT_TRUE(start_status.ok()) << "Failed to start TLS node " << (i + 1)
+                                     << ": " << start_status.ToString();
+    }
+  }
+
   RaftNode* GetLeader(int timeout_sec = 15) {
     auto start = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(
@@ -345,4 +371,98 @@ TEST_F(Cluster3NodesTest, NoSplitBrain) {
   }
 
   EXPECT_EQ(leader_count, 1) << "Split brain detected: multiple leaders";
+}
+
+// ========== TLS Cluster Tests ==========
+
+TEST_F(Cluster3NodesTest, TlsLeaderElection) {
+  StartTlsCluster();
+  WaitForLeader();
+
+  // Verify exactly one leader
+  EXPECT_EQ(CountLeaders(), 1);
+
+  // Verify leader can be found
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+  EXPECT_TRUE(leader->IsLeader());
+}
+
+TEST_F(Cluster3NodesTest, TlsLogReplication) {
+  StartTlsCluster();
+  WaitForLeader();
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Propose a command
+  std::atomic<bool> done{false};
+  auto status = leader->Propose("tls_test_command", [&done](const ApplyResult& result) {
+    EXPECT_TRUE(result.success);
+    done.store(true);
+  });
+  EXPECT_TRUE(status.ok());
+
+  // Wait for apply
+  auto start = std::chrono::steady_clock::now();
+  while (!done.load()) {
+    if (std::chrono::steady_clock::now() - start > std::chrono::seconds(10)) {
+      FAIL() << "Timeout waiting for TLS command to apply";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  // Wait a bit for replication to complete
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  // Verify replication to all nodes
+  for (auto& sm : state_machines_) {
+    auto cmds = sm->GetAppliedCommands();
+    bool found = false;
+    for (const auto& cmd : cmds) {
+      if (cmd == "tls_test_command") {
+        found = true;
+        break;
+      }
+    }
+    EXPECT_TRUE(found) << "Command not replicated to all TLS nodes";
+  }
+}
+
+TEST_F(Cluster3NodesTest, TlsRecoversAfterLeaderCrash) {
+  StartTlsCluster();
+  WaitForLeader();
+
+  auto* old_leader = GetLeader();
+  ASSERT_NE(old_leader, nullptr);
+
+  // Find leader index
+  size_t leader_idx = 0;
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    if (nodes_[i].get() == old_leader) {
+      leader_idx = i;
+      break;
+    }
+  }
+
+  // Crash the leader
+  auto crash_status = nodes_[leader_idx]->Stop();
+  EXPECT_TRUE(crash_status.ok());
+
+  // Wait for new leader election
+  RaftNode* new_leader = nullptr;
+  auto start = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - start < std::chrono::seconds(15)) {
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+      if (i != leader_idx && nodes_[i]->IsLeader()) {
+        new_leader = nodes_[i].get();
+        break;
+      }
+    }
+    if (new_leader) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  ASSERT_NE(new_leader, nullptr) << "No new TLS leader elected after crash";
+  EXPECT_TRUE(new_leader->IsLeader());
 }

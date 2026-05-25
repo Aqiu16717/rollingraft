@@ -75,10 +75,6 @@ class MetricsHttpServer {
                                      asio::ssl::stream<asio::ip::tcp::socket>>;
   void HandleConnection(SocketVariant socket);
 
-  // Simple per-IP rate limiter: sliding window of 10 requests per second
-  bool CheckRateLimit(const std::string& client_ip);
-  void CleanupRateLimit();
-
   std::string bind_addr_;
   MetricsRegistry* registry_;
 

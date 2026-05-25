@@ -102,9 +102,15 @@ class Cluster3NodesTest : public ::testing::Test {
                                const std::vector<std::string>& all_addrs) {
     auto config = MakeConfig(id, addr, all_addrs);
     config.tls_enabled = true;
+#ifdef TEST_CERTS_DIR
+    config.tls_cert_file = TEST_CERTS_DIR "server.crt";
+    config.tls_key_file = TEST_CERTS_DIR "server.key";
+    config.tls_ca_file = TEST_CERTS_DIR "ca.crt";
+#else
     config.tls_cert_file = "../../tests/certs/server.crt";
     config.tls_key_file = "../../tests/certs/server.key";
     config.tls_ca_file = "../../tests/certs/ca.crt";
+#endif
     return config;
   }
 

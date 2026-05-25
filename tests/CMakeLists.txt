@@ -147,6 +147,10 @@ gtest_discover_tests(unit_tests
   XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results
 )
 
+target_compile_definitions(integration_tests
+  PRIVATE TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+)
+
 gtest_discover_tests(integration_tests
   TEST_PREFIX "integration."
   XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_results

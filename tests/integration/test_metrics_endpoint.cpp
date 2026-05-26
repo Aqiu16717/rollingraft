@@ -396,4 +396,69 @@ TEST_F(MetricsEndpointTest, TransferLeadershipOnFollowerFails) {
       << "Follower should reject transfer: " << output;
 }
 
+TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Propose a command
+  std::atomic<bool> propose_done{false};
+  leader->Propose("latency_test_cmd",
+                  [&propose_done](const ApplyResult& result) {
+                    propose_done = result.success;
+                  });
+
+  // Issue a ReadIndex
+  std::atomic<bool> read_done{false};
+  leader->ReadIndex([&read_done]() { read_done = true; });
+
+  auto start = std::chrono::steady_clock::now();
+  while ((!propose_done || !read_done) &&
+         std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::steady_clock::now() - start)
+                 .count() < 5) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  int leader_idx = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i]->IsLeader()) leader_idx = i;
+  }
+  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
+
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_bucket"),
+            std::string::npos)
+      << "Missing proposal latency histogram";
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_sum"),
+            std::string::npos);
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_count"),
+            std::string::npos);
+
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_bucket"),
+            std::string::npos)
+      << "Missing readindex latency histogram";
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_sum"),
+            std::string::npos);
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_count"),
+            std::string::npos);
+}
+
+TEST_F(MetricsEndpointTest, MetricsShowTransportPeerState) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  int leader_idx = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i]->IsLeader()) leader_idx = i;
+  }
+  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
+
+  EXPECT_NE(output.find("transport_peer_state"), std::string::npos)
+      << "Missing transport_peer_state gauge";
+  EXPECT_NE(output.find("raft_transport_peer_connected"), std::string::npos)
+      << "Missing raft_transport_peer_connected gauge";
+}

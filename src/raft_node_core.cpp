@@ -220,6 +220,11 @@ Status RaftNode::RaftNodeImpl::Start() {
                                 {"status", connected ? "connected" : "disconnected"}})
               .Increment();
         });
+    network_->SetPeerStateCallback([this](NodeId peer_id, int state) {
+      metrics_->GetGauge("transport_peer_state",
+                         {{"peer_id", std::to_string(peer_id)}})
+          .Set(static_cast<double>(state));
+    });
   }
 
   // 3. Start timer service
@@ -928,6 +933,17 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 
   if (wait_status == std::future_status::timeout) {
     if (metrics_) {
+      auto it = pending_proposals_.find(index);
+      if (it != pending_proposals_.end()) {
+        auto latency = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - it->second.propose_time).count();
+        metrics_->GetHistogram(
+             "raft_proposal_latency_seconds",
+             std::vector<double>{0.001, 0.005, 0.01, 0.025, 0.05, 0.1,
+                                 0.25, 0.5, 1.0, 2.5, 5.0, 10.0},
+             {{"node_id", std::to_string(server_id_)}})
+            .Observe(latency);
+      }
       metrics_
           ->GetCounter(
               "raft_propose_total",

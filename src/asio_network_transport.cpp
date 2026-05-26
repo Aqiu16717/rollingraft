@@ -398,6 +398,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 };
 
+// Forward declaration
+class AsioNetworkTransport;
+
 // ========== PeerConnection (async connect + pending send queue) ==========
 class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
  public:
@@ -412,12 +415,14 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   static constexpr size_t kMaxPendingSends = 1000;
 
   PeerConnection(asio::io_context& io_ctx, NodeId peer_id, NodeAddr addr,
-                 asio::ssl::context* ssl_ctx = nullptr)
+                 asio::ssl::context* ssl_ctx = nullptr,
+                 AsioNetworkTransport* transport = nullptr)
       : io_ctx_(io_ctx),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(peer_id),
         addr_(std::move(addr)),
         ssl_ctx_(ssl_ctx),
+        transport_(transport),
         reconnect_timer_(io_ctx),
         connect_timer_(io_ctx) {
     // Parse and cache host/port
@@ -443,6 +448,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
         return;
       }
     }
+    NotifyStateChange(State::kConnecting);
 
     std::shared_ptr<TcpConnection> conn;
     if (ssl_ctx_) {
@@ -538,6 +544,8 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
           State::kDisconnected) {
         return;  // Idempotent
       }
+      bool was_connected =
+          self->state_.load(std::memory_order_relaxed) == State::kConnected;
       self->connect_timer_.cancel();
       self->reconnect_timer_.cancel();
       if (self->conn_) {
@@ -546,6 +554,10 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       }
       self->DrainPendingSendsWithError("Transport stopped");
       self->state_.store(State::kDisconnected, std::memory_order_release);
+      self->NotifyStateChange(State::kDisconnected);
+      if (was_connected) {
+        self->NotifyConnectionChange(false);
+      }
     });
   }
 
@@ -624,6 +636,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       return;  // Already handled by another callback path
     }
 
+    NotifyStateChange(State::kFailed);
+    NotifyConnectionChange(false);
+
     if (conn_) conn_->Close();  // Ensure socket closed, inflight ops cancelled
     LOG_WARN("Failed to connect to {}: {}", addr_, ec.message());
     DrainPendingSendsWithError("Connection failed: " + ec.message());
@@ -667,6 +682,10 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     std::chrono::milliseconds timeout;
   };
 
+  // Defined after AsioNetworkTransport (see end of file)
+  void NotifyStateChange(State state);
+  void NotifyConnectionChange(bool connected);
+
   asio::io_context& io_ctx_;
   asio::strand<asio::io_context::executor_type> strand_;
   NodeId peer_id_;
@@ -676,6 +695,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   std::atomic<State> state_{State::kDisconnected};
 
   asio::ssl::context* ssl_ctx_ = nullptr;
+  AsioNetworkTransport* transport_ = nullptr;
   std::shared_ptr<TcpConnection> conn_;
   std::deque<PendingSend> pending_sends_;  // accessed only on strand_
 
@@ -750,6 +770,27 @@ class AsioNetworkTransport : public NetworkTransport {
   void SetConnectionCallback(ConnectionCallback callback) override {
     std::lock_guard<std::mutex> lock(mutex_);
     connection_callback_ = callback;
+  }
+
+  void SetPeerStateCallback(
+      std::function<void(NodeId, int)> callback) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peer_state_callback_ = std::move(callback);
+  }
+
+  void OnPeerStateChanged(NodeId peer_id, int state) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (peer_state_callback_) {
+      peer_state_callback_(peer_id, state);
+    }
+  }
+
+  void OnPeerConnectionChanged(NodeId peer_id, const NodeAddr& addr,
+                               bool connected) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (connection_callback_) {
+      connection_callback_(peer_id, addr, connected);
+    }
   }
 
   Status Start() override {
@@ -941,7 +982,7 @@ class AsioNetworkTransport : public NetworkTransport {
     asio::ssl::context* ssl_ctx =
         tls_config_.enabled ? &client_ssl_context_ : nullptr;
     auto peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr,
-                                                  ssl_ctx);
+                                                  ssl_ctx, this);
     peers_[peer_id] = peer;
     peer->StartConnecting();
     return peer;
@@ -962,6 +1003,7 @@ class AsioNetworkTransport : public NetworkTransport {
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   RpcRequestHandler request_handler_;
   ConnectionCallback connection_callback_;
+  std::function<void(NodeId, int)> peer_state_callback_;
 
   std::unordered_map<NodeId, std::shared_ptr<PeerConnection>> peers_;
 
@@ -985,5 +1027,19 @@ std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport() {
   return std::make_unique<AsioNetworkTransport>();
 }
 
+
+// PeerConnection notification methods (defined here because they need
+// AsioNetworkTransport's complete type)
+void PeerConnection::NotifyStateChange(State state) {
+  if (transport_) {
+    transport_->OnPeerStateChanged(peer_id_, static_cast<int>(state));
+  }
+}
+
+void PeerConnection::NotifyConnectionChange(bool connected) {
+  if (transport_) {
+    transport_->OnPeerConnectionChanged(peer_id_, addr_, connected);
+  }
+}
 
 }  // namespace rollingraft

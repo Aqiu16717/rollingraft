@@ -2,6 +2,11 @@
 
 using namespace rollingraft;
 
+namespace {
+const std::vector<double> kLatencyBuckets = {
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0};
+}  // namespace
+
 void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
   while (last_applied_ < commit_index_) {
     ++last_applied_;
@@ -22,6 +27,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
       // Still need to callback for proposals
       auto it = pending_proposals_.find(last_applied_);
       if (it != pending_proposals_.end()) {
+        if (metrics_) {
+          auto latency = std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - it->second.propose_time).count();
+          metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
+                                 {{"node_id", std::to_string(server_id_)}})
+              .Observe(latency);
+        }
         ApplyResult result;
         result.success = true;
         result.applied_index = last_applied_;
@@ -41,6 +53,13 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
     // Callback to waiting users
     auto it = pending_proposals_.find(last_applied_);
     if (it != pending_proposals_.end()) {
+      if (metrics_) {
+        auto latency = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - it->second.propose_time).count();
+        metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
+                               {{"node_id", std::to_string(server_id_)}})
+            .Observe(latency);
+      }
       it->second.callback(result);
       pending_proposals_.erase(it);
     }
@@ -155,6 +174,13 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
     if (last_applied_ >= read_req.read_index) {
       // Can complete immediately
       auto callback = std::move(read_req.callback);
+      if (metrics_) {
+        auto latency = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - read_req.start_time).count();
+        metrics_->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
+                               {{"node_id", std::to_string(server_id_)}})
+            .Observe(latency);
+      }
       pending_reads_.erase(it);
       // RAII guard ensures lock is reacquired even if callback throws
       struct LockReacquireGuard {
@@ -190,6 +216,13 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
     auto it = pending_reads_.find(read_id);
     if (it != pending_reads_.end()) {
       auto callback = std::move(it->second.callback);
+      if (metrics_) {
+        auto latency = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - it->second.start_time).count();
+        metrics_->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
+                               {{"node_id", std::to_string(server_id_)}})
+            .Observe(latency);
+      }
       pending_reads_.erase(it);
 
       if (metrics_) {

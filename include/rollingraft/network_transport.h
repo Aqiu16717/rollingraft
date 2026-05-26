@@ -84,6 +84,19 @@ class NetworkTransport {
   virtual void SetConnectionCallback(ConnectionCallback callback) = 0;
 
   /**
+   * Set peer state callback (optional).
+   *
+   * Called when peer connection state changes.  State values:
+   *   0 = disconnected, 1 = connecting, 2 = connected, 3 = failed
+   *
+   * @param callback Function to call on peer state changes
+   */
+  virtual void SetPeerStateCallback(
+      std::function<void(NodeId, int)> callback) {
+    (void)callback;  // Default no-op
+  }
+
+  /**
    * Start the transport layer.
    *
    * Begins listening for incoming connections and enables sending.

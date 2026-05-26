@@ -1,6 +1,24 @@
 #include "raft_node_impl.h"
 
+#include <nlohmann/json.hpp>
+
 using namespace rollingraft;
+
+// Helper: serialize node list to JSON string
+static std::string NodesToJson(const std::vector<NodeId>& nodes) {
+  nlohmann::json j = nodes;
+  return j.dump();
+}
+
+// Helper: parse node list from JSON string
+static std::vector<NodeId> JsonToNodes(const std::string& json_str) {
+  auto j = nlohmann::json::parse(json_str);
+  std::vector<NodeId> nodes;
+  for (const auto& item : j) {
+    nodes.push_back(item.get<NodeId>());
+  }
+  return nodes;
+}
 
 void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
   // Guard: any exit path must clear pending_config_change_.
@@ -12,10 +30,74 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
   } guard{&pending_config_change_};
 
   // Parse config change command
-  // Format: CONFIG_CHANGE:ADD:node_id:addr  or  CONFIG_CHANGE:REMOVE:node_id
+  // Format: CONFIG_CHANGE:ADD:node_id:addr
+  //         CONFIG_CHANGE:REMOVE:node_id
+  //         CONFIG_CHANGE:JOINT:old_nodes_json:new_nodes_json
+  //         CONFIG_CHANGE:FINALIZE:new_nodes_json
+
+  if (cmd.find("CONFIG_CHANGE:JOINT:") == 0) {
+    // Joint consensus phase 1: enter Cold,Cnew transitional configuration
+    size_t pos1 = strlen("CONFIG_CHANGE:JOINT:");
+    size_t pos2 = cmd.find(':', pos1);
+    if (pos2 == std::string::npos) {
+      LOG_ERROR("Invalid JOINT config change command: {}", cmd);
+      return;
+    }
+
+    std::string old_nodes_json = cmd.substr(pos1, pos2 - pos1);
+    std::string new_nodes_json = cmd.substr(pos2 + 1);
+
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
+
+    cluster_config_.old_nodes = JsonToNodes(old_nodes_json);
+    cluster_config_.nodes = JsonToNodes(new_nodes_json);
+    cluster_config_.is_joint = true;
+    cluster_config_.version++;
+
+    LOG_INFO("Node {} applied JOINT config (old={}, new={}, version {})",
+             server_id_, old_nodes_json, new_nodes_json,
+             cluster_config_.version);
+
+    // If we are the leader, automatically propose FINALIZE after JOINT
+    // is applied. This ensures the cluster transitions out of joint mode.
+    if (role_ == RaftNodeRole::LEADER) {
+      std::string finalize_cmd =
+          "CONFIG_CHANGE:FINALIZE:" + NodesToJson(cluster_config_.nodes);
+      auto [idx, status] = log_.Append(current_term_, finalize_cmd);
+      if (status.ok()) {
+        if (log_persister_) {
+          auto entry_opt = log_.GetEntry(idx);
+          if (entry_opt) {
+            log_persister_->Append(*entry_opt);
+          }
+        }
+        LOG_INFO("Node {} auto-proposed FINALIZE at index {}", server_id_,
+                 idx);
+        BroadcastAppendEntriesLocked();
+      }
+    }
+    return;
+  }
+
+  if (cmd.find("CONFIG_CHANGE:FINALIZE:") == 0) {
+    // Joint consensus phase 2: commit Cnew, exit joint mode
+    size_t pos = strlen("CONFIG_CHANGE:FINALIZE:");
+    std::string new_nodes_json = cmd.substr(pos);
+
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
+
+    cluster_config_.nodes = JsonToNodes(new_nodes_json);
+    cluster_config_.old_nodes.clear();
+    cluster_config_.is_joint = false;
+    cluster_config_.version++;
+
+    LOG_INFO("Node {} applied FINALIZE config (new={}, version {})",
+             server_id_, new_nodes_json, cluster_config_.version);
+    return;
+  }
 
   if (cmd.find("CONFIG_CHANGE:ADD:") == 0) {
-    // Parse ADD command
+    // Legacy single-step add (converted to joint consensus internally)
     size_t pos1 = strlen("CONFIG_CHANGE:ADD:");
     size_t pos2 = cmd.find(':', pos1);
     if (pos2 == std::string::npos) {
@@ -28,46 +110,42 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
     std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
 
-    // Add to config if not already present
     if (!cluster_config_.Contains(id)) {
       cluster_config_.nodes.push_back(id);
       cluster_config_.version++;
 
-      // Update peer map if not already present
       if (id != server_id_ && peer_map_.find(id) == peer_map_.end()) {
         peer_map_[id] = addr;
         peer_addrs_.push_back(addr);
 
-        // Initialize leader state if leader
         if (role_ == RaftNodeRole::LEADER) {
           next_index_[id] = log_.GetLastLogInfo().first + 1;
           match_index_[id] = 0;
         }
       }
 
-      LOG_INFO("Node {} applied AddNode for {} (config version {})", server_id_,
-               id, cluster_config_.version);
+      LOG_INFO("Node {} applied AddNode for {} (config version {})",
+               server_id_, id, cluster_config_.version);
     }
+    return;
+  }
 
-  } else if (cmd.find("CONFIG_CHANGE:REMOVE:") == 0) {
-    // Parse REMOVE command
+  if (cmd.find("CONFIG_CHANGE:REMOVE:") == 0) {
+    // Legacy single-step remove (converted to joint consensus internally)
     size_t pos = strlen("CONFIG_CHANGE:REMOVE:");
     NodeId id = std::stoll(cmd.substr(pos));
 
     std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
 
-    // Remove from config
     cluster_config_.nodes.erase(std::remove(cluster_config_.nodes.begin(),
                                             cluster_config_.nodes.end(), id),
                                 cluster_config_.nodes.end());
     cluster_config_.version++;
 
-    // Remove from peer map
     peer_map_.erase(id);
     next_index_.erase(id);
     match_index_.erase(id);
 
-    // Remove from peer_addrs_
     peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
                                      [id, this](const NodeAddr& a) {
                                        return ParseNodeId(a) == id;
@@ -77,11 +155,10 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     LOG_INFO("Node {} applied RemoveNode for {} (config version {})",
              server_id_, id, cluster_config_.version);
 
-    // If we removed ourselves, stop
     if (id == server_id_) {
       LOG_INFO("Node {} removed from cluster, stopping", server_id_);
-      // Schedule stop (can't hold lock during Stop)
       timer_->SetTimeout(std::chrono::milliseconds(0), [this]() { Stop(); });
     }
+    return;
   }
 }

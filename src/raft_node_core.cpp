@@ -44,6 +44,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   }
 
   check_quorum_enabled_ = config.check_quorum_enabled;
+  pre_vote_enabled_ = config.pre_vote_enabled;
 
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
@@ -1014,8 +1015,15 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
         "A membership change is already in progress; wait for it to commit");
   }
 
-  // Create config change entry as a special command
-  std::string cmd = "CONFIG_CHANGE:ADD:" + std::to_string(id) + ":" + addr;
+  // Joint consensus: build old and new configurations
+  std::vector<NodeId> old_nodes = cluster_config_.nodes;
+  std::vector<NodeId> new_nodes = old_nodes;
+  new_nodes.push_back(id);
+
+  nlohmann::json j_old = old_nodes;
+  nlohmann::json j_new = new_nodes;
+  std::string cmd =
+      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
 
   // Propose as normal log entry
   auto [index, status] = log_.Append(current_term_, cmd);
@@ -1085,8 +1093,17 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     LOG_WARN("Node {} removing itself from cluster - will step down", id);
   }
 
-  // Create config change entry
-  std::string cmd = "CONFIG_CHANGE:REMOVE:" + std::to_string(id);
+  // Joint consensus: build old and new configurations
+  std::vector<NodeId> old_nodes = cluster_config_.nodes;
+  std::vector<NodeId> new_nodes;
+  for (NodeId nid : old_nodes) {
+    if (nid != id) new_nodes.push_back(nid);
+  }
+
+  nlohmann::json j_old = old_nodes;
+  nlohmann::json j_new = new_nodes;
+  std::string cmd =
+      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
 
   // Propose as normal log entry
   auto [index, status] = log_.Append(current_term_, cmd);

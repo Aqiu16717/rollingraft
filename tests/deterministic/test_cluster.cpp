@@ -34,6 +34,7 @@ void TestCluster::StartNode(NodeId id) {
     }
   }
   config.check_quorum_enabled = false;  // Simulated clock incompatible with real-time CheckQuorum
+  config.pre_vote_enabled = false;      // Pre-vote timing sensitive in simulated tests
   config.timer_factory = [this]() { return std::make_unique<SimulatedTimerService>(clock_.get()); };
   config.persister_factory = []() { return nullptr; };
   config.network_factory = [this, id]() {

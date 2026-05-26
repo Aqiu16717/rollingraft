@@ -153,6 +153,16 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     return;
   }
 
+  // Joint consensus / membership: only cluster members can vote
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    if (!cluster_config_.IsVoter(req.candidate_id_)) {
+      LOG_DEBUG("Node {} reject vote: candidate {} is not a voter",
+                server_id_, req.candidate_id_);
+      return;
+    }
+  }
+
   // Check if log is at least as up-to-date
   auto [last_index, last_term] = log_.GetLastLogInfo();
 

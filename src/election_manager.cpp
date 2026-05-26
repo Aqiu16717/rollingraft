@@ -248,15 +248,23 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   if (!IsRunning()) return;
   if (role_ == RaftNodeRole::LEADER) return;
 
-  LOG_INFO("Node {} election timeout at term {}, starting PreVote",
-           server_id_, current_term_);
-
   if (metrics_) {
     metrics_
         ->GetCounter("raft_election_timeouts_total",
                      {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
+
+  if (!pre_vote_enabled_) {
+    // Pre-vote disabled: fall back to classic election
+    LOG_INFO("Node {} election timeout at term {}, becoming Candidate",
+             server_id_, current_term_);
+    BecomeCandidateLocked();
+    return;
+  }
+
+  LOG_INFO("Node {} election timeout at term {}, starting PreVote",
+           server_id_, current_term_);
 
   // Pre-vote extension: before becoming candidate, ask peers if an
   // election would succeed. This prevents term inflation when a

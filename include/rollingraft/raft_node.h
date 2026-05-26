@@ -190,6 +190,10 @@ struct RaftNodeConfig {
   // Should be disabled in deterministic tests that use simulated clocks.
   bool check_quorum_enabled = true;
 
+  // Pre-vote: ask peers before becoming candidate to prevent term inflation.
+  // Should be disabled in deterministic tests that rely on exact timing.
+  bool pre_vote_enabled = true;
+
   /**
    * Validate configuration parameters.
    *

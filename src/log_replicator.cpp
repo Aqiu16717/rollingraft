@@ -315,17 +315,52 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     }
 
     // Count logs replicated to majority.
-    // The leader only counts itself if the entry is durably persisted.
-    int count = 0;
-    if (!log_persister_ || index <= flushed_index_) {
-      count = 1;  // Self
-    }
-    for (const auto& [peer_id, match] : match_index_) {
-      (void)peer_id;
-      if (match >= index) ++count;
+    // Joint consensus: need both old and new majorities.
+    int old_count = 0;
+    int new_count = 0;
+    bool leader_in_new = false;
+    bool leader_in_old = false;
+
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      leader_in_new = cluster_config_.Contains(server_id_);
+      leader_in_old =
+          cluster_config_.is_joint &&
+          std::find(cluster_config_.old_nodes.begin(),
+                    cluster_config_.old_nodes.end(),
+                    server_id_) != cluster_config_.old_nodes.end();
     }
 
-    if (static_cast<uint32_t>(count) >= cluster_config_.GetMajority()) {
+    if (!log_persister_ || index <= flushed_index_) {
+      if (leader_in_new) ++new_count;
+      if (leader_in_old) ++old_count;
+    }
+
+    for (const auto& [peer_id, match] : match_index_) {
+      if (match >= index) {
+        bool peer_in_new = false;
+        bool peer_in_old = false;
+        {
+          std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+          peer_in_new = cluster_config_.Contains(peer_id);
+          peer_in_old =
+              cluster_config_.is_joint &&
+              std::find(cluster_config_.old_nodes.begin(),
+                        cluster_config_.old_nodes.end(),
+                        peer_id) != cluster_config_.old_nodes.end();
+        }
+        if (peer_in_new) ++new_count;
+        if (peer_in_old) ++old_count;
+      }
+    }
+
+    bool can_commit = false;
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      can_commit = cluster_config_.JointMajoritySatisfied(old_count, new_count);
+    }
+
+    if (can_commit) {
       commit_index_ = index;
       if (metrics_) {
         metrics_

@@ -241,6 +241,10 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point>
       last_heartbeat_sent_;
 
+  // Leader lease: expiry timestamp for local reads without heartbeat broadcast.
+  // Updated when leader receives majority acks from voters.
+  std::chrono::steady_clock::time_point leader_lease_expiry_;
+
   // Pre-vote state
   uint32_t pre_vote_count_ = 0;
   bool pre_vote_running_ = false;

@@ -39,6 +39,7 @@ Status RuntimeConfig::UpdateFromJson(const std::string& json_str) {
   if (j.contains("log_retention_entries")) proposed.log_retention_entries = j["log_retention_entries"];
   if (j.contains("max_snapshot_size_bytes")) proposed.max_snapshot_size_bytes = j["max_snapshot_size_bytes"];
   if (j.contains("propose_timeout_ms")) proposed.propose_timeout_ms = j["propose_timeout_ms"];
+  if (j.contains("leader_lease_enabled")) proposed.leader_lease_enabled = j["leader_lease_enabled"];
 
   auto status = Validate(proposed);
   if (!status.ok()) return status;
@@ -68,6 +69,7 @@ std::string RuntimeConfig::ToJson() const {
   j["log_retention_entries"] = values_.log_retention_entries;
   j["max_snapshot_size_bytes"] = values_.max_snapshot_size_bytes;
   j["propose_timeout_ms"] = values_.propose_timeout_ms;
+  j["leader_lease_enabled"] = values_.leader_lease_enabled;
   return j.dump(2);
 }
 

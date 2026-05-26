@@ -40,24 +40,21 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
 }
 
 // Maximum log lag (in entries) for a learner to be auto-promoted.
-static constexpr Index kLearnerPromoteLagThreshold = 10;
-
 void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
   // PRECONDITION: election_mtx_ and replication_mtx_ are held by caller
   if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
-
-  auto [last_index, _] = log_.GetLastLogInfo();
 
   std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
   for (NodeId learner_id : cluster_config_.learners) {
     auto it = match_index_.find(learner_id);
     if (it == match_index_.end()) continue;
 
-    if (it->second + kLearnerPromoteLagThreshold >= last_index) {
+    // Promote when learner has caught up to all committed entries.
+    if (it->second >= commit_index_) {
       // Schedule promotion asynchronously to avoid lock re-entrancy.
       // PromoteLearner will check pending_config_change_ internally.
-      LOG_INFO("Node {} auto-promoting learner {} (match={} last={})",
-               server_id_, learner_id, it->second, last_index);
+      LOG_INFO("Node {} auto-promoting learner {} (match={} commit={})",
+               server_id_, learner_id, it->second, commit_index_);
       timer_->SetTimeout(std::chrono::milliseconds(0),
                          [this, learner_id]() {
                            auto status = PromoteLearner(learner_id);
@@ -277,6 +274,27 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     // CheckQuorum: track successful AppendEntries acks for quorum detection
     if (check_quorum_enabled_) {
       quorum_acks_[from] = std::chrono::steady_clock::now();
+    }
+
+    // Update leader lease if we have majority voter acks
+    {
+      auto now = std::chrono::steady_clock::now();
+      auto cfg = runtime_config_->Get();
+      int ack_count = 1;  // Leader counts itself
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      for (const auto& [peer_id, ack_time] : quorum_acks_) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now - ack_time)
+                           .count();
+        if (elapsed >= 0 &&
+            static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
+            cluster_config_.IsVoter(peer_id)) {
+          ++ack_count;
+        }
+      }
+      if (static_cast<uint32_t>(ack_count) >= cluster_config_.GetMajority()) {
+        leader_lease_expiry_ = now + std::chrono::milliseconds(cfg.election_timeout_ms);
+      }
     }
 
     // Coalescing: regular heartbeat acks also count for ReadIndex,

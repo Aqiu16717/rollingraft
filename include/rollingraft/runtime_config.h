@@ -37,6 +37,7 @@ struct RuntimeConfigValues {
   uint32_t log_retention_entries = 0;
   uint32_t max_snapshot_size_bytes = 100 * 1024 * 1024;  // 100MB
   uint32_t propose_timeout_ms = 5000;
+  bool leader_lease_enabled = true;
 };
 
 /**

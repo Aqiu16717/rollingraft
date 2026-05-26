@@ -67,6 +67,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     defaults.log_retention_entries = config.log_retention_entries;
     defaults.propose_timeout_ms = config.propose_timeout_ms;
     defaults.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
+    defaults.leader_lease_enabled = config.leader_lease_enabled;
     runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
   }
 
@@ -986,22 +987,10 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     read_req.callback = std::move(callback);
     read_req.start_time = std::chrono::steady_clock::now();
 
-    // Check if leader lease is valid (quorum acks within election_timeout)
+    // Check if leader lease is valid (O(1) timestamp check)
     auto cfg = runtime_config_->Get();
     auto now = std::chrono::steady_clock::now();
-    int ack_count = 1;  // Leader counts itself
-    for (const auto& [peer_id, ack_time] : quorum_acks_) {
-      (void)peer_id;
-      auto elapsed =
-          std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time)
-              .count();
-      if (elapsed >= 0 &&
-          static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
-        ++ack_count;
-      }
-    }
-    uint32_t majority = cluster_config_.GetMajority();
-    bool lease_valid = static_cast<uint32_t>(ack_count) >= majority;
+    bool lease_valid = cfg.leader_lease_enabled && now < leader_lease_expiry_;
 
     if (lease_valid) {
       // Lease read: skip heartbeat broadcast, acks already verified via quorum

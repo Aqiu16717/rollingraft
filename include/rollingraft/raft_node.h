@@ -176,6 +176,10 @@ struct RaftNodeConfig {
   // Graceful shutdown timeout (ms). 0 = wait indefinitely. Default 30s.
   uint32_t shutdown_timeout_ms = 30000;
 
+  // Leader lease read optimization: allow local reads without heartbeat
+  // broadcast when lease is valid (based on majority voter acks).
+  bool leader_lease_enabled = true;
+
   // Factory functions for dependency injection (testing)
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;

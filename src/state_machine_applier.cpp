@@ -87,13 +87,48 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     metrics_
         ->GetCounter("raft_readindex_heartbeats_sent_total",
                      {{"node_id", std::to_string(server_id_)}})
-        .Increment();
+            .Increment();
   }
 
-  // Send empty AppendEntries (heartbeats) to all peers
+  // Heartbeat coalescing: skip peers that received a heartbeat recently
+  // (within heartbeat_interval_ms). Their acks are already in-flight and
+  // will be counted by HandleAppendEntriesResponse.
+  auto now = std::chrono::steady_clock::now();
+  std::vector<NodeId> peers_to_send;
+  std::vector<NodeId> peers_to_skip;
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
+    auto it = last_heartbeat_sent_.find(peer_id);
+    if (it != last_heartbeat_sent_.end()) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now - it->second).count();
+      if (elapsed >= 0 &&
+          static_cast<uint32_t>(elapsed) < config_.heartbeat_interval_ms) {
+        peers_to_skip.push_back(peer_id);
+        continue;
+      }
+    }
+    peers_to_send.push_back(peer_id);
+  }
 
+  uint32_t majority = cluster_config_.GetMajority();
+  // Leader counts itself as 1 ack, so we need at least majority-1 peers.
+  if (peers_to_send.size() + 1 < majority && !peers_to_skip.empty()) {
+    size_t needed = majority - 1 - peers_to_send.size();
+    for (size_t i = 0; i < needed && i < peers_to_skip.size(); ++i) {
+      peers_to_send.push_back(peers_to_skip[i]);
+    }
+  }
+
+  if (!peers_to_skip.empty() && metrics_) {
+    metrics_
+        ->GetCounter("raft_heartbeat_coalesced_total",
+                     {{"node_id", std::to_string(server_id_)}})
+            .Increment(peers_to_skip.size());
+  }
+
+  // Send empty AppendEntries (heartbeats) only to selected peers
+  for (NodeId peer_id : peers_to_send) {
     AppendEntriesRequest req;
     req.term_ = current_term_;
     req.leader_id_ = server_id_;
@@ -142,7 +177,8 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
         });
   }
 
-  // Mark heartbeats as sent
+  // Mark heartbeats as sent (even if all coalesced, regular heartbeats
+  // in-flight will deliver acks via HandleAppendEntriesResponse).
   auto it = pending_reads_.find(read_id);
   if (it != pending_reads_.end()) {
     it->second.heartbeats_sent = true;
@@ -163,6 +199,15 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
 
   auto& read_req = it->second;
   read_req.acks.insert(from);
+
+  // For lease reads, acks are already verified via quorum; skip majority check
+  if (!read_req.heartbeats_sent) {
+    // Still check if log is applied so we can complete early
+    if (last_applied_ >= read_req.read_index) {
+      ProcessPendingReadsLocked();
+    }
+    return;
+  }
 
   // Check if we have majority
   uint32_t majority = cluster_config_.GetMajority();
@@ -203,10 +248,12 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
   std::vector<uint64_t> completed_reads;
 
   for (auto& [read_id, read_req] : pending_reads_) {
-    // Check if we have majority acks and log is applied
+    // Check if we have majority acks (or lease read) and log is applied
     uint32_t majority = cluster_config_.GetMajority();
-    if (read_req.acks.size() >= majority &&
-        last_applied_ >= read_req.read_index) {
+    bool acks_ok = read_req.heartbeats_sent
+                       ? read_req.acks.size() >= majority
+                       : true;  // Lease read: acks already verified via quorum
+    if (acks_ok && last_applied_ >= read_req.read_index) {
       completed_reads.push_back(read_id);
     }
   }

@@ -446,6 +446,30 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
             std::string::npos);
 }
 
+TEST_F(MetricsEndpointTest, MetricsShowHeartbeatCoalescing) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Issue multiple ReadIndex requests rapidly to trigger coalescing
+  for (int i = 0; i < 5; ++i) {
+    leader->ReadIndex([]() {});
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  int leader_idx = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i]->IsLeader()) leader_idx = i;
+  }
+  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
+
+  EXPECT_NE(output.find("raft_heartbeat_coalesced_total"), std::string::npos)
+      << "Missing heartbeat coalesced counter";
+}
+
 TEST_F(MetricsEndpointTest, MetricsShowTransportPeerState) {
   StartCluster();
   WaitForLeader();

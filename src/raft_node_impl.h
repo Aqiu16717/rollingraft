@@ -231,7 +231,12 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, RetryState> retry_state_;
 
   // Backpressure: number of in-flight AppendEntries per peer.
+  mutable std::mutex pending_appends_mtx_;
   std::unordered_map<NodeId, size_t> pending_appends_;
+
+  // Heartbeat coalescing: track last heartbeat sent to each peer.
+  std::unordered_map<NodeId, std::chrono::steady_clock::time_point>
+      last_heartbeat_sent_;
 
   // Pre-vote state
   uint32_t pre_vote_count_ = 0;

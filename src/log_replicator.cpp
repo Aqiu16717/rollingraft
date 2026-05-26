@@ -102,12 +102,16 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   // Heartbeats (empty entries) bypass backpressure to ensure liveness.
   constexpr size_t kMaxPendingAppends = 3;
   bool is_heartbeat = req.entries_.empty();
-  if (!is_heartbeat && pending_appends_[peer_id] >= kMaxPendingAppends) {
-    LOG_DEBUG("Node {}: backpressure on peer {}, pending={}", server_id_,
-              peer_id, pending_appends_[peer_id]);
-    return;
+  if (is_heartbeat) {
+    last_heartbeat_sent_[peer_id] = std::chrono::steady_clock::now();
   }
   if (!is_heartbeat) {
+    std::lock_guard<std::mutex> lock(pending_appends_mtx_);
+    if (pending_appends_[peer_id] >= kMaxPendingAppends) {
+      LOG_DEBUG("Node {}: backpressure on peer {}, pending={}", server_id_,
+                peer_id, pending_appends_[peer_id]);
+      return;
+    }
     pending_appends_[peer_id]++;
   }
 
@@ -128,6 +132,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
                       const std::string& error) {
         // Decrement backpressure counter only for non-heartbeat AppendEntries.
         if (!is_heartbeat) {
+          std::lock_guard<std::mutex> lock(pending_appends_mtx_);
           pending_appends_[peer_id]--;
         }
 
@@ -148,8 +153,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
           ScheduleAppendEntriesRetry(peer_id);
           return;
         }
-        // Reset retry state on successful response
-        retry_state_.erase(peer_id);
+        // HandleAppendEntriesResponse resets retry_state_ internally
         HandleAppendEntriesResponse(peer_id, response);
       });
   }
@@ -241,6 +245,16 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     // CheckQuorum: track successful AppendEntries acks for quorum detection
     if (check_quorum_enabled_) {
       quorum_acks_[from] = std::chrono::steady_clock::now();
+    }
+
+    // Coalescing: regular heartbeat acks also count for ReadIndex,
+    // so insert acks for all pending reads from this peer.
+    if (!pending_reads_.empty()) {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      std::lock_guard<std::mutex> lock_a(applier_mtx_);
+      for (auto& [read_id, read_req] : pending_reads_) {
+        read_req.acks.insert(from);
+      }
     }
 
     // Try to commit

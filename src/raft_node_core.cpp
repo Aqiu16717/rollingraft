@@ -985,12 +985,44 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     read_req.read_index = commit_index_;
     read_req.callback = std::move(callback);
     read_req.start_time = std::chrono::steady_clock::now();
-    read_req.acks.insert(server_id_);  // Leader acknowledges itself
+
+    // Check if leader lease is valid (quorum acks within election_timeout)
+    auto cfg = runtime_config_->Get();
+    auto now = std::chrono::steady_clock::now();
+    int ack_count = 1;  // Leader counts itself
+    for (const auto& [peer_id, ack_time] : quorum_acks_) {
+      (void)peer_id;
+      auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time)
+              .count();
+      if (elapsed >= 0 &&
+          static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+        ++ack_count;
+      }
+    }
+    uint32_t majority = cluster_config_.GetMajority();
+    bool lease_valid = static_cast<uint32_t>(ack_count) >= majority;
+
+    if (lease_valid) {
+      // Lease read: skip heartbeat broadcast, acks already verified via quorum
+      read_req.heartbeats_sent = false;
+      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (lease read)",
+               server_id_, read_id, commit_index_);
+      if (metrics_) {
+        metrics_
+            ->GetCounter("raft_readindex_lease_total",
+                         {{"node_id", std::to_string(server_id_)}})
+            .Increment();
+      }
+    } else {
+      // Fallback to normal ReadIndex with heartbeat broadcast
+      read_req.heartbeats_sent = true;
+      read_req.acks.insert(server_id_);  // Leader acknowledges itself
+      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (heartbeat)",
+               server_id_, read_id, commit_index_);
+    }
 
     pending_reads_[read_id] = std::move(read_req);
-
-    LOG_INFO("Node {} ReadIndex request {} at commit_index {}", server_id_,
-             read_id, commit_index_);
 
     if (metrics_) {
       metrics_
@@ -999,8 +1031,13 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
           .Increment();
     }
 
-    // Send heartbeats to confirm leadership
-    BroadcastReadIndexHeartbeatsLocked(read_id);
+    if (lease_valid) {
+      // Try to complete immediately if log already applied
+      ProcessPendingReadsLocked();
+    } else {
+      // Send heartbeats to confirm leadership
+      BroadcastReadIndexHeartbeatsLocked(read_id);
+    }
   }
 
   return Status::OK();

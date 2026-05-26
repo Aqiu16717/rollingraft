@@ -1210,6 +1210,137 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   return Status::OK();
 }
 
+Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node already exists
+  if (cluster_config_.Contains(id)) {
+    return Status::Error("Node already in cluster");
+  }
+
+  // Single-node-change safety: reject if another change is in flight.
+  if (pending_config_change_) {
+    return Status::Error(
+        "A membership change is already in progress; wait for it to commit");
+  }
+
+  // Learners do not affect quorum, so no joint consensus needed.
+  std::string cmd = "CONFIG_CHANGE:ADD_LEARNER:" + std::to_string(id) + ":" + addr;
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry synchronously for configuration changes
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist AddLearner log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
+    }
+  }
+
+  // Mark pending so no other membership change can be proposed.
+  pending_config_change_ = true;
+
+  // Add to peer map immediately (optimistic) so the leader starts
+  // replicating to the new node right away.
+  peer_map_[id] = addr;
+  next_index_[id] = log_.GetLastLogInfo().first + 1;
+  match_index_[id] = 0;
+
+  LOG_INFO("Node {} proposing AddLearner for {} at index {}", server_id_, id,
+           index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  return Status::OK();
+}
+
+Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
+  // Bridge pattern: election_mtx_ -> replication_mtx_ -> membership_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::shared_mutex> lock_m(membership_mtx_);
+
+  if (!IsRunning()) {
+    return Status::Error("Node not running");
+  }
+
+  if (role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(leader_id_, leader_addr_);
+  }
+
+  // Check if node is actually a learner
+  if (!cluster_config_.IsLearner(id)) {
+    return Status::Error("Node is not a learner");
+  }
+
+  // Single-node-change safety: reject if another change is in flight.
+  if (pending_config_change_) {
+    return Status::Error(
+        "A membership change is already in progress; wait for it to commit");
+  }
+
+  // Promotion changes quorum, so use joint consensus.
+  std::vector<NodeId> old_nodes = cluster_config_.nodes;
+  std::vector<NodeId> new_nodes = old_nodes;
+  new_nodes.push_back(id);
+
+  nlohmann::json j_old = old_nodes;
+  nlohmann::json j_new = new_nodes;
+  std::string cmd =
+      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
+
+  // Propose as normal log entry
+  auto [index, status] = log_.Append(current_term_, cmd);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Persist log entry synchronously for configuration changes
+  if (log_persister_) {
+    auto entry_opt = log_.GetEntry(index);
+    if (entry_opt) {
+      auto flush_status = log_persister_->AppendSync(*entry_opt);
+      if (!flush_status.ok()) {
+        LOG_ERROR("Node {} failed to persist PromoteLearner log entry: {}",
+                  server_id_, flush_status.GetMessage());
+        return flush_status;
+      }
+    }
+  }
+
+  // Mark pending so no other membership change can be proposed.
+  pending_config_change_ = true;
+
+  LOG_INFO("Node {} proposing PromoteLearner for {} at index {}", server_id_,
+           id, index);
+
+  // Trigger replication
+  BroadcastAppendEntriesLocked();
+
+  return Status::OK();
+}
+
 Status RaftNode::RaftNodeImpl::TransferLeadershipTo(NodeId target_id) {
   std::lock_guard<std::mutex> lock_e(election_mtx_);
 

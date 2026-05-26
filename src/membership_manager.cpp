@@ -54,6 +54,14 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     cluster_config_.is_joint = true;
     cluster_config_.version++;
 
+    // Remove newly promoted voters from learners
+    for (NodeId id : cluster_config_.nodes) {
+      cluster_config_.learners.erase(
+          std::remove(cluster_config_.learners.begin(),
+                      cluster_config_.learners.end(), id),
+          cluster_config_.learners.end());
+    }
+
     LOG_INFO("Node {} applied JOINT config (old={}, new={}, version {})",
              server_id_, old_nodes_json, new_nodes_json,
              cluster_config_.version);
@@ -91,8 +99,71 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     cluster_config_.is_joint = false;
     cluster_config_.version++;
 
+    // Ensure no voter is still in learners
+    for (NodeId id : cluster_config_.nodes) {
+      cluster_config_.learners.erase(
+          std::remove(cluster_config_.learners.begin(),
+                      cluster_config_.learners.end(), id),
+          cluster_config_.learners.end());
+    }
+
     LOG_INFO("Node {} applied FINALIZE config (new={}, version {})",
              server_id_, new_nodes_json, cluster_config_.version);
+    return;
+  }
+
+  if (cmd.find("CONFIG_CHANGE:ADD_LEARNER:") == 0) {
+    size_t pos1 = strlen("CONFIG_CHANGE:ADD_LEARNER:");
+    size_t pos2 = cmd.find(':', pos1);
+    if (pos2 == std::string::npos) {
+      LOG_ERROR("Invalid ADD_LEARNER config change command: {}", cmd);
+      return;
+    }
+
+    NodeId id = std::stoll(cmd.substr(pos1, pos2 - pos1));
+    NodeAddr addr = cmd.substr(pos2 + 1);
+
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
+
+    if (!cluster_config_.Contains(id)) {
+      cluster_config_.learners.push_back(id);
+      cluster_config_.version++;
+
+      if (id != server_id_ && peer_map_.find(id) == peer_map_.end()) {
+        peer_map_[id] = addr;
+        peer_addrs_.push_back(addr);
+
+        if (role_ == RaftNodeRole::LEADER) {
+          next_index_[id] = log_.GetLastLogInfo().first + 1;
+          match_index_[id] = 0;
+        }
+      }
+
+      LOG_INFO("Node {} applied AddLearner for {} (config version {})",
+               server_id_, id, cluster_config_.version);
+    }
+    return;
+  }
+
+  if (cmd.find("CONFIG_CHANGE:PROMOTE:") == 0) {
+    size_t pos = strlen("CONFIG_CHANGE:PROMOTE:");
+    NodeId id = std::stoll(cmd.substr(pos));
+
+    std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
+
+    // Remove from learners
+    cluster_config_.learners.erase(
+        std::remove(cluster_config_.learners.begin(),
+                    cluster_config_.learners.end(), id),
+        cluster_config_.learners.end());
+
+    if (!cluster_config_.IsVoter(id)) {
+      cluster_config_.nodes.push_back(id);
+      cluster_config_.version++;
+
+      LOG_INFO("Node {} applied PromoteLearner for {} (config version {})",
+               server_id_, id, cluster_config_.version);
+    }
     return;
   }
 
@@ -113,6 +184,12 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     if (!cluster_config_.Contains(id)) {
       cluster_config_.nodes.push_back(id);
       cluster_config_.version++;
+
+      // Also remove from learners if promoting
+      cluster_config_.learners.erase(
+          std::remove(cluster_config_.learners.begin(),
+                      cluster_config_.learners.end(), id),
+          cluster_config_.learners.end());
 
       if (id != server_id_ && peer_map_.find(id) == peer_map_.end()) {
         peer_map_[id] = addr;
@@ -140,6 +217,10 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     cluster_config_.nodes.erase(std::remove(cluster_config_.nodes.begin(),
                                             cluster_config_.nodes.end(), id),
                                 cluster_config_.nodes.end());
+    cluster_config_.learners.erase(
+        std::remove(cluster_config_.learners.begin(),
+                    cluster_config_.learners.end(), id),
+        cluster_config_.learners.end());
     cluster_config_.version++;
 
     peer_map_.erase(id);

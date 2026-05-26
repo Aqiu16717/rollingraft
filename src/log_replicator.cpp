@@ -36,6 +36,38 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
   if (role_ != RaftNodeRole::LEADER) return;
 
   BroadcastAppendEntriesLocked();
+  MaybeAutoPromoteLearnersLocked();
+}
+
+// Maximum log lag (in entries) for a learner to be auto-promoted.
+static constexpr Index kLearnerPromoteLagThreshold = 10;
+
+void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
+  // PRECONDITION: election_mtx_ and replication_mtx_ are held by caller
+  if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
+
+  auto [last_index, _] = log_.GetLastLogInfo();
+
+  std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+  for (NodeId learner_id : cluster_config_.learners) {
+    auto it = match_index_.find(learner_id);
+    if (it == match_index_.end()) continue;
+
+    if (it->second + kLearnerPromoteLagThreshold >= last_index) {
+      // Schedule promotion asynchronously to avoid lock re-entrancy.
+      // PromoteLearner will check pending_config_change_ internally.
+      LOG_INFO("Node {} auto-promoting learner {} (match={} last={})",
+               server_id_, learner_id, it->second, last_index);
+      timer_->SetTimeout(std::chrono::milliseconds(0),
+                         [this, learner_id]() {
+                           auto status = PromoteLearner(learner_id);
+                           if (!status.ok()) {
+                             LOG_DEBUG("Auto-promote learner {} failed: {}",
+                                       learner_id, status.GetMessage());
+                           }
+                         });
+    }
+  }
 }
 
 void RaftNode::RaftNodeImpl::BroadcastAppendEntriesLocked() {
@@ -286,16 +318,18 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   auto cfg = runtime_config_->Get();
   auto now = std::chrono::steady_clock::now();
 
-  // Count how many nodes have acked within election_timeout
+  // Count how many VOTERS have acked within election_timeout
   int ack_count = 1;  // Leader counts itself
   for (const auto& [peer_id, ack_time] : quorum_acks_) {
-    (void)peer_id;
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time)
             .count();
     if (elapsed >= 0 &&
         static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
-      ++ack_count;
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      if (cluster_config_.IsVoter(peer_id)) {
+        ++ack_count;
+      }
     }
   }
 
@@ -337,7 +371,7 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
 
     {
       std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
-      leader_in_new = cluster_config_.Contains(server_id_);
+      leader_in_new = cluster_config_.IsVoter(server_id_);
       leader_in_old =
           cluster_config_.is_joint &&
           std::find(cluster_config_.old_nodes.begin(),
@@ -356,7 +390,7 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
         bool peer_in_old = false;
         {
           std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
-          peer_in_new = cluster_config_.Contains(peer_id);
+          peer_in_new = cluster_config_.IsVoter(peer_id);
           peer_in_old =
               cluster_config_.is_joint &&
               std::find(cluster_config_.old_nodes.begin(),

@@ -36,6 +36,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize RequestVoteResponse: {}",
                     status.ToString());
+          return;
         }
         break;
       }
@@ -55,6 +56,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize AppendEntriesResponse: {}",
                     status.ToString());
+          return;
         }
         break;
       }
@@ -74,6 +76,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize InstallSnapshotResponse: {}",
                     status.ToString());
+          return;
         }
         break;
       }
@@ -93,6 +96,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize ClientResponse: {}",
                     status.ToString());
+          return;
         }
         break;
       }
@@ -112,6 +116,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize PreVoteResponse: {}",
                     status.ToString());
+          return;
         }
         break;
       }
@@ -239,6 +244,16 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
     LOG_DEBUG("Node {} reject PreVote: req.term {} <= {}", server_id_,
               req.term_, current_term_);
     return;
+  }
+
+  // Learners cannot become leaders
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    if (!cluster_config_.IsVoter(req.candidate_id_)) {
+      LOG_DEBUG("Node {} reject PreVote: candidate {} is not a voter",
+                server_id_, req.candidate_id_);
+      return;
+    }
   }
 
   // Check if log is at least as up-to-date

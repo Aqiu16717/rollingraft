@@ -55,11 +55,12 @@ class Protocol;
 struct ClusterConfig {
   std::vector<NodeId> nodes;      // Current/new cluster node IDs (Cnew)
   std::vector<NodeId> old_nodes;  // Previous cluster node IDs (Cold) when in joint
+  std::vector<NodeId> learners;   // Non-voting learners receiving replication
   uint64_t version = 0;           // Config version, incremented on each change
   bool is_joint = false;          // True when in joint consensus transition
 
   /**
-   * Check if a node ID is in the cluster.
+   * Check if a node ID is in the cluster (voters or learners).
    * In joint mode, checks both old and new configurations.
    * @param id Node ID to check
    * @return true if node is in the cluster
@@ -67,16 +68,29 @@ struct ClusterConfig {
   bool Contains(NodeId id) const {
     if (IsMember(id, nodes)) return true;
     if (is_joint && IsMember(id, old_nodes)) return true;
+    if (IsMember(id, learners)) return true;
     return false;
   }
 
   /**
    * Check if a node ID is a voting member.
    * In joint mode, any node in old or new can vote.
+   * Learners are NOT voters.
    * @param id Node ID to check
    * @return true if node can vote
    */
-  bool IsVoter(NodeId id) const { return Contains(id); }
+  bool IsVoter(NodeId id) const {
+    if (IsMember(id, nodes)) return true;
+    if (is_joint && IsMember(id, old_nodes)) return true;
+    return false;
+  }
+
+  /**
+   * Check if a node ID is a learner.
+   * @param id Node ID to check
+   * @return true if node is a learner
+   */
+  bool IsLearner(NodeId id) const { return IsMember(id, learners); }
 
   /**
    * Get the majority size for the current (new) configuration.
@@ -355,6 +369,27 @@ class RaftNode {
    * @return Status::OK() if configuration change was proposed
    */
   Status AddNode(NodeId id, const NodeAddr& addr);
+
+  /**
+   * Add a learner node to the cluster.
+   * Learners receive log replication but do not vote or count towards quorum.
+   * Must be called on the leader.
+   *
+   * @param id Unique node identifier
+   * @param addr Network address of the new learner
+   * @return Status::OK() if configuration change was proposed
+   */
+  Status AddLearner(NodeId id, const NodeAddr& addr);
+
+  /**
+   * Promote a learner to a voting member.
+   * Uses joint consensus for safety since promotion changes quorum.
+   * Must be called on the leader.
+   *
+   * @param id Node identifier of the learner to promote
+   * @return Status::OK() if configuration change was proposed
+   */
+  Status PromoteLearner(NodeId id);
 
   /**
    * Remove a node from the cluster.

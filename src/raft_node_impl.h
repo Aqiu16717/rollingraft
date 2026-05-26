@@ -108,6 +108,8 @@ class RaftNode::RaftNodeImpl {
 
   // Membership change (only for leader)
   Status AddNode(NodeId id, const NodeAddr& addr);
+  Status AddLearner(NodeId id, const NodeAddr& addr);
+  Status PromoteLearner(NodeId id);
   Status RemoveNode(NodeId id);
   ClusterConfig GetConfig() const;
 
@@ -186,6 +188,7 @@ class RaftNode::RaftNodeImpl {
 
   // Membership change
   void ApplyConfigChangeLocked(const std::string& cmd);
+  void MaybeAutoPromoteLearnersLocked();
 
   // Timeout handlers
   void OnElectionTimeout();

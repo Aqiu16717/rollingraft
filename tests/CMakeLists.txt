@@ -54,6 +54,9 @@ add_executable(unit_tests
   unit/test_event_bus.cpp
   unit/test_metrics_http_server.cpp
   unit/test_raft_node_config.cpp
+  unit/test_joint_consensus.cpp
+  unit/test_prevote_checkquorum.cpp
+  unit/test_learner.cpp
 )
 
 target_include_directories(unit_tests

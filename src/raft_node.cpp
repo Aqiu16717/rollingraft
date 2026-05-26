@@ -194,6 +194,14 @@ Status RaftNode::AddNode(NodeId id, const NodeAddr& addr) {
   return raft_node_impl_->AddNode(id, addr);
 }
 
+Status RaftNode::AddLearner(NodeId id, const NodeAddr& addr) {
+  return raft_node_impl_->AddLearner(id, addr);
+}
+
+Status RaftNode::PromoteLearner(NodeId id) {
+  return raft_node_impl_->PromoteLearner(id);
+}
+
 Status RaftNode::RemoveNode(NodeId id) {
   return raft_node_impl_->RemoveNode(id);
 }

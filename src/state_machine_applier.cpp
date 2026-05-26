@@ -13,9 +13,9 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
     auto entry_opt = log_.GetEntry(last_applied_);
     if (!entry_opt) {
-      LOG_ERROR("Node {} failed to get log entry {}", server_id_,
-                last_applied_);
-      continue;
+      LOG_ERROR("Node {} failed to get log entry {} — log corruption, aborting",
+                server_id_, last_applied_);
+      std::abort();
     }
 
     const auto& entry = *entry_opt;

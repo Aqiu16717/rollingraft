@@ -621,6 +621,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       reconnect_timer_.cancel();
 
       conn_->Start();  // Begin async_read loop
+      NotifyConnectionChange(true);
       FlushPendingSends();
       return;
     }
@@ -964,26 +965,30 @@ class AsioNetworkTransport : public NetworkTransport {
 
   std::shared_ptr<PeerConnection> GetOrCreatePeerConnection(
       NodeId peer_id, const NodeAddr& addr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_ptr<PeerConnection> peer;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
 
-    auto it = peers_.find(peer_id);
-    if (it != peers_.end()) {
-      auto peer = it->second;
-      auto state = peer->GetState();
-      if (state == PeerConnection::State::kConnected ||
-          state == PeerConnection::State::kConnecting) {
-        return peer;
+      auto it = peers_.find(peer_id);
+      if (it != peers_.end()) {
+        peer = it->second;
+        auto state = peer->GetState();
+        if (state == PeerConnection::State::kConnected ||
+            state == PeerConnection::State::kConnecting) {
+          return peer;
+        }
+        // Failed or unexpected state: close old peer and reconnect
+        peer->Close();
+        peers_.erase(it);
+        peer.reset();
       }
-      // Failed or unexpected state: close old peer and reconnect
-      peer->Close();
-      peers_.erase(it);
-    }
 
-    asio::ssl::context* ssl_ctx =
-        tls_config_.enabled ? &client_ssl_context_ : nullptr;
-    auto peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr,
-                                                  ssl_ctx, this);
-    peers_[peer_id] = peer;
+      asio::ssl::context* ssl_ctx =
+          tls_config_.enabled ? &client_ssl_context_ : nullptr;
+      peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr,
+                                               ssl_ctx, this);
+      peers_[peer_id] = peer;
+    }
     peer->StartConnecting();
     return peer;
   }

@@ -60,6 +60,7 @@ add_executable(benchmark_runner
   scenarios/failover.cpp
   scenarios/snapshot_recovery.cpp
   scenarios/leader_transfer.cpp
+  scenarios/concurrent_writes.cpp
 )
 
 target_link_libraries(benchmark_runner

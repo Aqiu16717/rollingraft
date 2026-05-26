@@ -29,8 +29,9 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   if (persister_) {
     auto persist_status = persister_->SaveState({current_term_, voted_for_});
     if (!persist_status.ok()) {
-      LOG_ERROR("Node {} failed to persist state when becoming Follower: {}",
+      LOG_ERROR("Node {} failed to persist state when becoming Follower: {} — aborting",
                 server_id_, persist_status.GetMessage());
+      std::abort();
     }
   }
 
@@ -73,8 +74,9 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   if (persister_) {
     auto persist_status = persister_->SaveState({current_term_, voted_for_});
     if (!persist_status.ok()) {
-      LOG_ERROR("Node {} failed to persist state when becoming Candidate: {}",
+      LOG_ERROR("Node {} failed to persist state when becoming Candidate: {} — aborting",
                 server_id_, persist_status.GetMessage());
+      std::abort();
     }
   }
 

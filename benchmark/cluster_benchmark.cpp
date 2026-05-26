@@ -63,7 +63,7 @@ bool ClusterBenchmark::SetUp() {
             << std::endl;
 
   // Give cluster time to stabilize heartbeat before benchmark load
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
   std::cerr << "[BENCH] SetUp complete." << std::endl;
 
   return true;
@@ -83,8 +83,8 @@ void ClusterBenchmark::TearDown() {
   nodes_.clear();
   state_machines_.clear();
 
-  // Small delay for resources to settle
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  // Allow async callbacks to drain before destroying nodes
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
   // Clean up data directories
   for (const auto& dir : data_dirs_) {
@@ -233,10 +233,14 @@ RaftNodeConfig ClusterBenchmark::MakeConfig(
       static_cast<int>(cluster_config_.heartbeat_interval.count());
   config.snapshot_threshold_entries =
       cluster_config_.snapshot_threshold_entries;
+  // Disable CheckQuorum and Pre-vote for benchmark stability
+  config.check_quorum_enabled = false;
+  config.pre_vote_enabled = false;
 
-  for (const auto& peer_addr : all_addrs) {
-    if (peer_addr != addr) {
-      config.peers.push_back(peer_addr);
+  for (size_t i = 0; i < all_addrs.size(); ++i) {
+    if (all_addrs[i] != addr) {
+      config.peers.push_back(all_addrs[i]);
+      config.peer_node_ids.push_back(static_cast<NodeId>(i + 1));
     }
   }
 

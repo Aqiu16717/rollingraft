@@ -43,6 +43,8 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     throw std::invalid_argument("TimerService cannot be null");
   }
 
+  check_quorum_enabled_ = config.check_quorum_enabled;
+
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
     metrics_ = std::make_unique<MetricsRegistry>();

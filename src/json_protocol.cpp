@@ -117,6 +117,17 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         break;
       }
 
+      case RaftMessageType::KPreVoteRequest: {
+        const PreVoteRequest& pre_req =
+            static_cast<const PreVoteRequest&>(req);
+        j["type"] = static_cast<int>(req.type_);
+        j["term"] = pre_req.term_;
+        j["candidate_id"] = pre_req.candidate_id_;
+        j["last_log_index"] = pre_req.last_log_index_;
+        j["last_log_term"] = pre_req.last_log_term_;
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unknown request type");
     }
@@ -231,6 +242,21 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         break;
       }
 
+      case RaftMessageType::KPreVoteRequest: {
+        if (!j.contains("term") || !j.contains("candidate_id") ||
+            !j.contains("last_log_index") || !j.contains("last_log_term")) {
+          return Status::DeSerializeError(
+              "Missing required fields for PreVote");
+        }
+
+        PreVoteRequest& pre_req = static_cast<PreVoteRequest&>(req);
+        pre_req.term_ = j["term"];
+        pre_req.candidate_id_ = j["candidate_id"];
+        pre_req.last_log_index_ = j["last_log_index"];
+        pre_req.last_log_term_ = j["last_log_term"];
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unsupported request type");
     }
@@ -292,6 +318,15 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
         j["last_applied_index"] = client_res.last_applied_index;
         j["leader_id"] = client_res.leader_id;
         j["leader_addr"] = client_res.leader_addr;
+        break;
+      }
+
+      case RaftMessageType::KPreVoteResponse: {
+        const PreVoteResponse& pre_res =
+            static_cast<const PreVoteResponse&>(res);
+        j["type"] = static_cast<int>(res.type_);
+        j["term"] = pre_res.term_;
+        j["vote_granted"] = pre_res.vote_granted_;
         break;
       }
 
@@ -394,6 +429,18 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
         if (j.contains("leader_addr")) {
           client_res.leader_addr = j["leader_addr"];
         }
+        break;
+      }
+
+      case RaftMessageType::KPreVoteResponse: {
+        if (!j.contains("term") || !j.contains("vote_granted")) {
+          return Status::DeSerializeError(
+              "Missing required fields for PreVoteResponse");
+        }
+
+        PreVoteResponse& pre_res = static_cast<PreVoteResponse&>(res);
+        pre_res.term_ = j["term"];
+        pre_res.vote_granted_ = j["vote_granted"];
         break;
       }
 

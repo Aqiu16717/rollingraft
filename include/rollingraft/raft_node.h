@@ -47,29 +47,72 @@ class Protocol;
  *
  * Thread-safe for read operations. Configuration changes are
  * propagated through the Raft log.
+ *
+ * Supports joint consensus for safe membership changes:
+ * - Normal mode: single configuration (nodes)
+ * - Joint mode: transitional configuration (old_nodes + nodes)
  */
 struct ClusterConfig {
-  std::vector<NodeId> nodes;  // Current cluster node IDs
-  uint64_t version = 0;       // Config version, incremented on each change
+  std::vector<NodeId> nodes;      // Current/new cluster node IDs (Cnew)
+  std::vector<NodeId> old_nodes;  // Previous cluster node IDs (Cold) when in joint
+  uint64_t version = 0;           // Config version, incremented on each change
+  bool is_joint = false;          // True when in joint consensus transition
 
   /**
    * Check if a node ID is in the cluster.
+   * In joint mode, checks both old and new configurations.
    * @param id Node ID to check
    * @return true if node is in the cluster
    */
   bool Contains(NodeId id) const {
-    for (NodeId node : nodes) {
-      if (node == id) return true;
-    }
+    if (IsMember(id, nodes)) return true;
+    if (is_joint && IsMember(id, old_nodes)) return true;
     return false;
   }
 
   /**
-   * Get the majority size for the current cluster.
+   * Check if a node ID is a voting member.
+   * In joint mode, any node in old or new can vote.
+   * @param id Node ID to check
+   * @return true if node can vote
+   */
+  bool IsVoter(NodeId id) const { return Contains(id); }
+
+  /**
+   * Get the majority size for the current (new) configuration.
    * @return Number of nodes needed for quorum (nodes/2 + 1)
    */
   uint32_t GetMajority() const {
     return static_cast<uint32_t>(nodes.size()) / 2 + 1;
+  }
+
+  /**
+   * Get the majority size for the old configuration (joint mode only).
+   * @return Number of nodes needed for old quorum
+   */
+  uint32_t GetOldMajority() const {
+    return static_cast<uint32_t>(old_nodes.size()) / 2 + 1;
+  }
+
+  /**
+   * Check if both old and new majorities are satisfied.
+   * Used for commit calculation in joint consensus mode.
+   * @param old_count Votes/acks in old configuration
+   * @param new_count Votes/acks in new configuration
+   * @return true if both majorities are met
+   */
+  bool JointMajoritySatisfied(int old_count, int new_count) const {
+    if (!is_joint) return new_count >= static_cast<int>(GetMajority());
+    return old_count >= static_cast<int>(GetOldMajority()) &&
+           new_count >= static_cast<int>(GetMajority());
+  }
+
+ private:
+  static bool IsMember(NodeId id, const std::vector<NodeId>& list) {
+    for (NodeId node : list) {
+      if (node == id) return true;
+    }
+    return false;
   }
 };
 
@@ -142,6 +185,10 @@ struct RaftNodeConfig {
 
   // Logging configuration
   bool json_logging = false;  // Enable JSON structured logging format
+
+  // CheckQuorum: leader steps down if it hasn't received quorum acks.
+  // Should be disabled in deterministic tests that use simulated clocks.
+  bool check_quorum_enabled = true;
 
   /**
    * Validate configuration parameters.

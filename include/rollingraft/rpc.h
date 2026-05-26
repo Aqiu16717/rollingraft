@@ -33,7 +33,9 @@ enum class RaftMessageType : int8_t {
   KClientRequest = 6,
   KClientResponse = 7,
   KConfigChangeRequest = 8,
-  KConfigChangeResponse = 9
+  KConfigChangeResponse = 9,
+  KPreVoteRequest = 10,
+  KPreVoteResponse = 11
 };
 
 /** Base class for all Raft requests. */
@@ -245,6 +247,34 @@ struct ConfigChangeRequest : public RaftRequest {
       : RaftRequest(RaftMessageType::KConfigChangeRequest),
         type_(Type::kAddNode),
         node_id_(-1) {}
+};
+
+/**
+ * PreVote RPC request.
+ *
+ * Pre-vote extension: sent by nodes before incrementing term to check
+ * if an election is likely to succeed. Does not modify persistent state.
+ */
+struct PreVoteRequest : public RaftRequest {
+  Term term_;             // Candidate's term (current_term + 1)
+  NodeId candidate_id_;   // Candidate requesting vote
+  Index last_log_index_;  // Index of candidate's last log entry
+  Term last_log_term_;    // Term of candidate's last log entry
+
+  PreVoteRequest() : RaftRequest(RaftMessageType::KPreVoteRequest) {}
+};
+
+/**
+ * PreVote RPC response.
+ */
+struct PreVoteResponse : RaftResponse {
+  Term term_;          // Current term, for candidate to update itself
+  bool vote_granted_;  // True means candidate would receive vote
+
+  PreVoteResponse()
+      : RaftResponse(RaftMessageType::KPreVoteResponse),
+        term_(0),
+        vote_granted_(false) {}
 };
 
 /**

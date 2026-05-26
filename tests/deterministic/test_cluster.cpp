@@ -33,6 +33,7 @@ void TestCluster::StartNode(NodeId id) {
       config.peer_node_ids.push_back(static_cast<NodeId>(i));
     }
   }
+  config.check_quorum_enabled = false;  // Simulated clock incompatible with real-time CheckQuorum
   config.timer_factory = [this]() { return std::make_unique<SimulatedTimerService>(clock_.get()); };
   config.persister_factory = []() { return nullptr; };
   config.network_factory = [this, id]() {

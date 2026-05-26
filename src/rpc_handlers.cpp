@@ -97,6 +97,25 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         break;
       }
 
+      case RaftMessageType::KPreVoteRequest: {
+        PreVoteRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize PreVoteRequest: {}",
+                    status.ToString());
+          return;
+        }
+        PreVoteResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
+        HandlePreVote(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize PreVoteResponse: {}",
+                    status.ToString());
+        }
+        break;
+      }
+
       default:
         LOG_ERROR("Unknown message type: {}", type_id);
         break;
@@ -146,6 +165,22 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     return;
   }
 
+  // Leader stickiness (CheckQuorum): if we have heard from a valid leader
+  // within the election timeout, do not grant vote to another candidate.
+  // This prevents disruptive nodes from triggering unnecessary elections.
+  if (check_quorum_enabled_) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - last_leader_contact_).count();
+    auto cfg = runtime_config_->Get();
+    if (elapsed >= 0 &&
+        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+      LOG_INFO("Node {} reject vote: leader contact {}ms ago (< {}ms)",
+               server_id_, elapsed, cfg.election_timeout_ms);
+      return;
+    }
+  }
+
   // Check if already voted
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
@@ -174,6 +209,59 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     LOG_INFO("Node {} voted for {} at term {}", server_id_, req.candidate_id_,
              current_term_);
   }
+}
+
+void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
+                                           PreVoteResponse& resp) {
+  std::lock_guard<std::mutex> lock(election_mtx_);
+
+  resp.term_ = current_term_;
+  resp.vote_granted_ = false;
+
+  // Pre-vote semantics (etcd-style):
+  // - Candidate sends term = current_term + 1 (but does not persist it)
+  // - Receiver rejects if its own term >= req.term (already knows more)
+  // - Receiver rejects if candidate log is not up-to-date
+  // - Receiver rejects if it has heard from a valid leader recently
+  // - Otherwise grants pre-vote (does NOT modify voted_for or persist)
+
+  if (req.term_ <= current_term_) {
+    LOG_DEBUG("Node {} reject PreVote: req.term {} <= {}", server_id_,
+              req.term_, current_term_);
+    return;
+  }
+
+  // Check if log is at least as up-to-date
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+
+  bool log_is_up_to_date =
+      (req.last_log_term_ > last_term) ||
+      (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
+
+  if (!log_is_up_to_date) {
+    LOG_DEBUG("Node {} reject PreVote: candidate log not up-to-date",
+              server_id_);
+    return;
+  }
+
+  // Leader stickiness: if we have heard from a valid leader within election
+  // timeout, reject pre-vote (even though req.term > current_term).
+  if (check_quorum_enabled_) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - last_leader_contact_).count();
+    auto cfg = runtime_config_->Get();
+    if (elapsed >= 0 &&
+        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+      LOG_INFO("Node {} reject PreVote: leader contact {}ms ago (< {}ms)",
+               server_id_, elapsed, cfg.election_timeout_ms);
+      return;
+    }
+  }
+
+  resp.vote_granted_ = true;
+  LOG_INFO("Node {} granted PreVote to {} at term {} (req_term={})",
+           server_id_, req.candidate_id_, current_term_, req.term_);
 }
 
 void RaftNode::RaftNodeImpl::HandleAppendEntries(
@@ -216,6 +304,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
         leader_addr_ = it->second;
       }
     }
+
+    // Record leader contact time for CheckQuorum leader stickiness
+    last_leader_contact_ = std::chrono::steady_clock::now();
 
     // Reset election timer
     ResetElectionTimerLocked();

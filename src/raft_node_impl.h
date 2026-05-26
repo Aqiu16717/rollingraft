@@ -117,6 +117,7 @@ class RaftNode::RaftNodeImpl {
 
   // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
+  void HandlePreVote(const PreVoteRequest&, PreVoteResponse&);
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
   void HandleInstallSnapshot(const InstallSnapshotRequest&,
                              InstallSnapshotResponse&);
@@ -145,6 +146,10 @@ class RaftNode::RaftNodeImpl {
   void SendRequestVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
   void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp,
                                  Term original_term);
+  void BroadcastPreVoteLocked();
+  void SendPreVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
+  void HandlePreVoteResponse(NodeId from, const PreVoteResponse& resp,
+                             Term original_term);
 
   // Log replication related
   void BroadcastAppendEntriesLocked();
@@ -155,6 +160,9 @@ class RaftNode::RaftNodeImpl {
   void ScheduleAppendEntriesRetryLocked(
       NodeId peer_id);  // Precondition: caller holds election_mtx_ +
                         // replication_mtx_
+
+  // CheckQuorum: leader steps down if it hasn't received quorum acks
+  void CheckQuorumLocked();  // Precondition: caller holds election_mtx_
 
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);
@@ -224,6 +232,16 @@ class RaftNode::RaftNodeImpl {
 
   // Backpressure: number of in-flight AppendEntries per peer.
   std::unordered_map<NodeId, size_t> pending_appends_;
+
+  // Pre-vote state
+  uint32_t pre_vote_count_ = 0;
+  bool pre_vote_running_ = false;
+  Term pre_vote_term_ = 0;
+
+  // CheckQuorum state
+  bool check_quorum_enabled_ = true;  // Enabled by default
+  std::chrono::steady_clock::time_point last_leader_contact_;
+  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> quorum_acks_;
 
   // Membership change safety: true while a CONFIG_CHANGE log entry
   // has been proposed but not yet committed. Prevents concurrent

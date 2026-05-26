@@ -148,10 +148,15 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   size_t cleared_sessions = client_sessions_.size();
   client_sessions_.clear();
 
+  // CheckQuorum: initialize quorum acks with grace period so that the
+  // leader does not step down before peers have a chance to ack.
+  auto now = std::chrono::steady_clock::now();
+  quorum_acks_.clear();
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
     next_index_[peer_id] = last_index + 1;
     match_index_[peer_id] = 0;
+    quorum_acks_[peer_id] = now;
   }
 
   // Stop election timer
@@ -243,7 +248,7 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   if (!IsRunning()) return;
   if (role_ == RaftNodeRole::LEADER) return;
 
-  LOG_INFO("Node {} election timeout at term {}, becoming Candidate",
+  LOG_INFO("Node {} election timeout at term {}, starting PreVote",
            server_id_, current_term_);
 
   if (metrics_) {
@@ -252,7 +257,44 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
                      {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
-  BecomeCandidateLocked();
+
+  // Pre-vote extension: before becoming candidate, ask peers if an
+  // election would succeed. This prevents term inflation when a
+  // partitioned node rejoins.
+  pre_vote_running_ = true;
+  pre_vote_count_ = 1;  // Vote for self
+  pre_vote_term_ = current_term_ + 1;
+
+  uint32_t majority;
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    majority = cluster_config_.GetMajority();
+  }
+
+  // Single-node cluster: already has majority, skip pre-vote
+  if (pre_vote_count_ >= majority) {
+    pre_vote_running_ = false;
+    BecomeCandidateLocked();
+    return;
+  }
+
+  BroadcastPreVoteLocked();
+
+  // Schedule a pre-vote timeout. If we don't get majority by then,
+  // reset and wait for the next election timeout.
+  auto cfg = runtime_config_->Get();
+  uint32_t pre_vote_timeout = cfg.election_timeout_ms / 2;
+  if (pre_vote_timeout < 10) pre_vote_timeout = 10;
+  timer_->SetTimeout(std::chrono::milliseconds(pre_vote_timeout), [this]() {
+    std::lock_guard<std::mutex> lock(election_mtx_);
+    if (pre_vote_running_) {
+      LOG_INFO("Node {} PreVote timed out, resetting", server_id_);
+      pre_vote_running_ = false;
+      pre_vote_count_ = 0;
+      // Reset election timer to wait for next timeout
+      ResetElectionTimerLocked();
+    }
+  });
 }
 
 void RaftNode::RaftNodeImpl::BroadcastRequestVoteLocked() {
@@ -377,6 +419,130 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
     // Got majority votes, become Leader
     if (vote_count_ >= majority) {
       BecomeLeaderLocked();
+    }
+  }
+}
+
+void RaftNode::RaftNodeImpl::BroadcastPreVoteLocked() {
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+
+  PreVoteRequest req;
+  req.term_ = pre_vote_term_;
+  req.candidate_id_ = server_id_;
+  req.last_log_index_ = last_index;
+  req.last_log_term_ = last_term;
+
+  LOG_INFO("Node {} broadcasting PreVote at term {} to {} peers", server_id_,
+           pre_vote_term_, peer_addrs_.size());
+
+  for (const auto& [peer_id, addr] : peer_map_) {
+    (void)peer_id;
+    SendPreVoteToPeerLocked(peer_id, addr);
+  }
+}
+
+void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id,
+                                                      const NodeAddr& addr) {
+  auto [last_index, last_term] = log_.GetLastLogInfo();
+
+  PreVoteRequest req;
+  req.term_ = pre_vote_term_;
+  req.candidate_id_ = server_id_;
+  req.last_log_index_ = last_index;
+  req.last_log_term_ = last_term;
+  req.correlation_id_ =
+      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
+
+  std::string data;
+  auto status = protocol_->SerializeRequest(req, data);
+  if (!status.ok()) {
+    LOG_ERROR("Failed to serialize PreVoteRequest: {}", status.ToString());
+    return;
+  }
+
+  if (metrics_) {
+    metrics_
+        ->GetCounter("raft_prevote_sent_total",
+                     {{"node_id", std::to_string(server_id_)}})
+        .Increment();
+  }
+
+  Term original_pre_vote_term = pre_vote_term_;
+  auto cfg = runtime_config_->Get();
+
+  network_->SendRpc(peer_id, addr, data, req.correlation_id_,
+                    std::chrono::milliseconds(cfg.rpc_timeout_ms),
+                    [this, peer_id, original_pre_vote_term](
+                        const std::string& resp, bool success,
+                        const std::string& error) {
+                      if (!success) {
+                        LOG_WARN("PreVote to {} failed: {}", peer_id, error);
+                        return;
+                      }
+
+                      PreVoteResponse response;
+                      auto status = protocol_->DeserializeResponse(resp, response);
+                      if (!status.ok()) {
+                        LOG_ERROR("Failed to deserialize PreVoteResponse: {}",
+                                  status.ToString());
+                        return;
+                      }
+                      HandlePreVoteResponse(peer_id, response,
+                                            original_pre_vote_term);
+                    });
+}
+
+void RaftNode::RaftNodeImpl::HandlePreVoteResponse(
+    NodeId from, const PreVoteResponse& resp, Term original_pre_vote_term) {
+  LOG_INFO(
+      "Node {} received PreVoteResponse from {}: granted={}, term={}",
+      server_id_, from, resp.vote_granted_, resp.term_);
+
+  std::lock_guard<std::mutex> lock(election_mtx_);
+
+  if (!IsRunning()) return;
+  if (!pre_vote_running_) return;
+
+  // If we are already a candidate or leader, pre-vote is done
+  if (role_ == RaftNodeRole::CANDIDATE || role_ == RaftNodeRole::LEADER) {
+    return;
+  }
+
+  // If our term has changed since pre-vote started, discard
+  if (original_pre_vote_term != pre_vote_term_) {
+    return;
+  }
+
+  // If response term is higher, update term and revert to follower
+  if (resp.term_ > current_term_) {
+    pre_vote_running_ = false;
+    pre_vote_count_ = 0;
+    BecomeFollowerLocked(resp.term_);
+    return;
+  }
+
+  if (resp.vote_granted_) {
+    if (metrics_) {
+      metrics_
+          ->GetCounter("raft_prevote_received_total",
+                       {{"node_id", std::to_string(server_id_)},
+                        {"granted", "true"}})
+          .Increment();
+    }
+    ++pre_vote_count_;
+    uint32_t majority;
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      majority = cluster_config_.GetMajority();
+    }
+    LOG_INFO("Node {} got PreVote from {}, total: {}/{}", server_id_, from,
+             pre_vote_count_, majority);
+
+    // Got majority pre-votes, become candidate
+    if (pre_vote_count_ >= majority) {
+      pre_vote_running_ = false;
+      pre_vote_count_ = 0;
+      BecomeCandidateLocked();
     }
   }
 }

@@ -27,6 +27,14 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;
 
+  // CheckQuorum: verify we still have majority acks before sending
+  // next round of heartbeats.
+  if (check_quorum_enabled_) {
+    CheckQuorumLocked();
+  }
+
+  if (role_ != RaftNodeRole::LEADER) return;
+
   BroadcastAppendEntriesLocked();
 }
 
@@ -91,13 +99,17 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   // Backpressure: limit in-flight AppendEntries per peer to prevent
   // memory unbounded growth when a follower is slow or partitioned.
+  // Heartbeats (empty entries) bypass backpressure to ensure liveness.
   constexpr size_t kMaxPendingAppends = 3;
-  if (pending_appends_[peer_id] >= kMaxPendingAppends) {
+  bool is_heartbeat = req.entries_.empty();
+  if (!is_heartbeat && pending_appends_[peer_id] >= kMaxPendingAppends) {
     LOG_DEBUG("Node {}: backpressure on peer {}, pending={}", server_id_,
               peer_id, pending_appends_[peer_id]);
     return;
   }
-  pending_appends_[peer_id]++;
+  if (!is_heartbeat) {
+    pending_appends_[peer_id]++;
+  }
 
   if (metrics_) {
     metrics_
@@ -112,10 +124,12 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(cfg.rpc_timeout_ms),
-      [this, peer_id](const std::string& resp, bool success,
+      [this, peer_id, is_heartbeat](const std::string& resp, bool success,
                       const std::string& error) {
-        // Always decrement, regardless of success/failure.
-        pending_appends_[peer_id]--;
+        // Decrement backpressure counter only for non-heartbeat AppendEntries.
+        if (!is_heartbeat) {
+          pending_appends_[peer_id]--;
+        }
 
         if (!success) {
           LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
@@ -224,6 +238,11 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     // Reset retry state on success
     retry_state_.erase(from);
 
+    // CheckQuorum: track successful AppendEntries acks for quorum detection
+    if (check_quorum_enabled_) {
+      quorum_acks_[from] = std::chrono::steady_clock::now();
+    }
+
     // Try to commit
     TryCommitLocked();
   } else {
@@ -243,6 +262,46 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
     // Use exponential backoff retry for log mismatch too
     ScheduleAppendEntriesRetryLocked(from);
+  }
+}
+
+void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
+  // PRECONDITION: election_mtx_ is held by caller
+  if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
+
+  auto cfg = runtime_config_->Get();
+  auto now = std::chrono::steady_clock::now();
+
+  // Count how many nodes have acked within election_timeout
+  int ack_count = 1;  // Leader counts itself
+  for (const auto& [peer_id, ack_time] : quorum_acks_) {
+    (void)peer_id;
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time)
+            .count();
+    if (elapsed >= 0 &&
+        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+      ++ack_count;
+    }
+  }
+
+  uint32_t majority;
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    majority = cluster_config_.GetMajority();
+  }
+
+  if (static_cast<uint32_t>(ack_count) < majority) {
+    LOG_WARN(
+        "Node {} lost quorum (acks={}/{}), stepping down from leadership",
+        server_id_, ack_count, majority);
+    if (metrics_) {
+      metrics_
+          ->GetCounter("raft_checkquorum_stepdown_total",
+                       {{"node_id", std::to_string(server_id_)}})
+          .Increment();
+    }
+    BecomeFollowerLocked(current_term_);
   }
 }
 

@@ -14,6 +14,8 @@ using namespace rollingraft;
 
 class MetricsEndpointTest : public ::testing::Test {
  protected:
+  bool leader_lease_enabled_ = true;
+
   void SetUp() override {
     data_dirs_ = {"/tmp/raft_metrics_node_1", "/tmp/raft_metrics_node_2",
                   "/tmp/raft_metrics_node_3"};
@@ -74,6 +76,7 @@ class MetricsEndpointTest : public ::testing::Test {
     config.max_retry_attempts = 10;
     config.metrics_enabled = true;
     config.metrics_addr = metrics_addr;
+    config.leader_lease_enabled = leader_lease_enabled_;
 
     for (size_t j = 0; j < all_addrs.size(); ++j) {
       if (all_addrs[j] != addr) {
@@ -447,6 +450,9 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
 }
 
 TEST_F(MetricsEndpointTest, MetricsShowHeartbeatCoalescing) {
+  // Disable leader lease so ReadIndex broadcasts heartbeats and triggers
+  // the coalescing counter. With lease read enabled, heartbeats are skipped.
+  leader_lease_enabled_ = false;
   StartCluster();
   WaitForLeader();
   std::this_thread::sleep_for(std::chrono::milliseconds(200));

@@ -375,9 +375,18 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
     // Reset next_index_ to retry from the conflict point.
     if (resp.conflict_index_ > 0) {
-      next_index_[from] = std::max(resp.conflict_index_, match_index_[from] + 1);
+      next_index_[from] = resp.conflict_index_;
+      // If follower reports conflict at or before our match_index_, our
+      // match_index_ is stale (follower truncated or diverged). Reset it.
+      if (resp.conflict_index_ <= match_index_[from]) {
+        match_index_[from] = resp.conflict_index_ - 1;
+      }
     } else {
-      next_index_[from] = std::max<Index>(match_index_[from] + 1, head.start_index - 1);
+      next_index_[from] = std::max<Index>(1, head.start_index - 1);
+      // If we're backing up before match_index_, reset match_index_ too.
+      if (next_index_[from] <= match_index_[from]) {
+        match_index_[from] = next_index_[from] - 1;
+      }
     }
     if (next_index_[from] < 1) {
       next_index_[from] = 1;

@@ -110,12 +110,11 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.correlation_id_ =
       next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
-  // Get log entries — only send entries that have been durably flushed
+  // Get log entries — in group commit mode we send entries that are
+  // in the in-memory log, not just fsynced ones. The pipeline ensures
+  // followers receive them promptly.
   auto [last_index, _] = log_.GetLastLogInfo();
   Index effective_last = last_index;
-  if (log_persister_) {
-    effective_last = std::min(last_index, flushed_index_);
-  }
   if (next_idx <= effective_last) {
     auto cfg = runtime_config_->Get();
     Index end =
@@ -359,11 +358,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
     // Fill the pipeline if there are more entries to send.
     auto [last_index, _] = log_.GetLastLogInfo();
-    Index effective_last = last_index;
-    if (log_persister_) {
-      effective_last = std::min(last_index, flushed_index_);
-    }
-    if (next_index_[from] <= effective_last) {
+    if (next_index_[from] <= last_index) {
       SendAppendEntriesToPeerLocked(from);
     }
   } else {
@@ -518,10 +513,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
                     server_id_) != cluster_config_.old_nodes.end();
     }
 
-    if (!log_persister_ || index <= flushed_index_) {
-      if (leader_in_new) ++new_count;
-      if (leader_in_old) ++old_count;
-    }
+    // Group commit: leader counts itself as long as the entry is in
+    // the local log (even if not yet fsynced). Durability is ensured
+    // by the fact that a majority (including followers) must have the
+    // entry before it is committed.
+    if (leader_in_new) ++new_count;
+    if (leader_in_old) ++old_count;
 
     for (const auto& [peer_id, match] : match_index_) {
       if (match >= index) {

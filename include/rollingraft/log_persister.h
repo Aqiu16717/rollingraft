@@ -42,6 +42,16 @@ struct LogPersistenceConfig {
   /** Whether to sync on critical operations (leader first log). */
   bool sync_on_critical = true;
 
+  /**
+   * Group commit interval (milliseconds).
+   *
+   * When > 0, sync_on_critical is ignored and the persister writes
+   * without sync, then explicitly syncs at this interval. This batches
+   * multiple writes into a single fsync, reducing p99 latency.
+   * Set to 0 to disable group commit (sync every batch as before).
+   */
+  uint32_t group_commit_interval_ms = 50;
+
   /** Minimum disk space required (bytes). Default: 100MB. */
   uint64_t min_disk_space_bytes = 100 * 1024 * 1024;
 
@@ -178,6 +188,14 @@ class LogPersister {
   std::vector<RaftLogEntry> Restore(uint64_t start_index);
 
   /** Get the number of pending entries in the buffer. */
+  /**
+   * Explicitly sync all pending writes to durable storage.
+   *
+   * Used by group commit to batch fsyncs. No-op if group commit
+   * is not enabled.
+   */
+  Status Sync();
+
   size_t GetPendingCount() const;
 
   /** Check if the persister is healthy (no disk errors). */

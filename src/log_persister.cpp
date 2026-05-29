@@ -56,15 +56,16 @@ void LogPersister::Start() {
   running_ = true;
   healthy_ = true;
 
-  if (persister_ && config_.sync_on_critical) {
+  bool group_commit = config_.group_commit_interval_ms > 0;
+  if (persister_ && config_.sync_on_critical && !group_commit) {
     persister_->SetSyncOnWrite(true);
   }
 
   flush_thread_ = std::thread(&LogPersister::BackgroundFlushLoop, this);
 
-  LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync={})",
+  LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync={}, group_commit={}ms)",
            config_.batch_size, config_.batch_interval_ms,
-           config_.sync_on_critical);
+           config_.sync_on_critical, config_.group_commit_interval_ms);
 }
 
 void LogPersister::Stop() {
@@ -305,6 +306,13 @@ std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
   return entries;
 }
 
+Status LogPersister::Sync() {
+  if (!persister_) {
+    return Status::OK();
+  }
+  return persister_->Sync();
+}
+
 size_t LogPersister::GetPendingCount() const {
   std::lock_guard<std::mutex> lock(buffer_mutex_);
   return buffer_.size();
@@ -320,6 +328,11 @@ std::string LogPersister::GetLastError() const {
 void LogPersister::BackgroundFlushLoop() {
   LOG_DEBUG("LogPersister background thread started");
 
+  bool group_commit = config_.group_commit_interval_ms > 0;
+  auto group_commit_interval = std::chrono::milliseconds(
+      group_commit ? config_.group_commit_interval_ms : 0);
+  auto next_sync_time = std::chrono::steady_clock::now();
+
   while (running_) {
     std::unique_lock<std::mutex> lock(buffer_mutex_);
 
@@ -332,9 +345,21 @@ void LogPersister::BackgroundFlushLoop() {
     // Release lock before flushing
     lock.unlock();
 
-    // Perform the flush
+    // Perform the flush (without sync in group commit mode)
     if (!buffer_.empty()) {
       DoFlush();
+    }
+
+    // Group commit: periodic explicit sync
+    if (group_commit && std::chrono::steady_clock::now() >= next_sync_time) {
+      auto sync_status = persister_->Sync();
+      if (!sync_status.ok()) {
+        LOG_ERROR("LogPersister group commit sync failed: {}",
+                  sync_status.ToString());
+      } else {
+        LOG_DEBUG("LogPersister group commit synced");
+      }
+      next_sync_time = std::chrono::steady_clock::now() + group_commit_interval;
     }
   }
 

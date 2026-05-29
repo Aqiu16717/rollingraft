@@ -457,6 +457,21 @@ class LevelDBPersister : public Persister {
     return Status::OK();
   }
 
+  Status Sync() override {
+    std::unique_lock lock(mutex_);
+    if (!db_) {
+      return Status::Error("Persister not open");
+    }
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::WriteBatch batch;
+    leveldb::Status s = db_->Write(write_options, &batch);
+    if (!s.ok()) {
+      return Status::Error("Sync failed: " + s.ToString());
+    }
+    return Status::OK();
+  }
+
   std::pair<uint64_t, uint64_t> GetLastLogInfo() override {
     std::shared_lock lock(mutex_);
     return GetLastLogInfoLocked();

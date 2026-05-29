@@ -98,6 +98,14 @@ class Persister {
   virtual Status AppendEntries(const std::vector<RaftLogEntry>& entries) = 0;
 
   /**
+   * Explicitly sync all pending writes to durable storage.
+   *
+   * Used by group commit to batch fsyncs.
+   * Default no-op for persisters that sync on every write.
+   */
+  virtual Status Sync() { return Status::OK(); }
+
+  /**
    * Get log entries in range [start, end).
    *
    * Used by leader to send AppendEntries to followers.

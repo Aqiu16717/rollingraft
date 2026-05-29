@@ -62,6 +62,9 @@ void LogPersister::Start() {
   }
 
   flush_thread_ = std::thread(&LogPersister::BackgroundFlushLoop, this);
+  if (group_commit) {
+    sync_thread_ = std::thread(&LogPersister::BackgroundSyncLoop, this);
+  }
 
   LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync={}, group_commit={}ms)",
            config_.batch_size, config_.batch_interval_ms,
@@ -82,9 +85,18 @@ void LogPersister::Stop() {
   if (flush_thread_.joinable()) {
     flush_thread_.join();
   }
+  if (sync_thread_.joinable()) {
+    sync_thread_.join();
+  }
 
-  // Final flush before stopping
+  // Final flush and sync before stopping
   DoFlush();
+  if (config_.group_commit_interval_ms > 0 && persister_) {
+    auto sync_status = persister_->Sync();
+    if (!sync_status.ok()) {
+      LOG_ERROR("Final group commit sync failed: {}", sync_status.ToString());
+    }
+  }
 
   LOG_INFO("LogPersister stopped (total_flushed={}, total_ops={})",
            total_flushed_.load(), total_flush_ops_.load());
@@ -326,12 +338,7 @@ std::string LogPersister::GetLastError() const {
 }
 
 void LogPersister::BackgroundFlushLoop() {
-  LOG_DEBUG("LogPersister background thread started");
-
-  bool group_commit = config_.group_commit_interval_ms > 0;
-  auto group_commit_interval = std::chrono::milliseconds(
-      group_commit ? config_.group_commit_interval_ms : 0);
-  auto next_sync_time = std::chrono::steady_clock::now();
+  LOG_DEBUG("LogPersister background flush thread started");
 
   while (running_) {
     std::unique_lock<std::mutex> lock(buffer_mutex_);
@@ -345,13 +352,24 @@ void LogPersister::BackgroundFlushLoop() {
     // Release lock before flushing
     lock.unlock();
 
-    // Perform the flush (without sync in group commit mode)
+    // Perform the flush (without sync — sync is handled by BackgroundSyncLoop)
     if (!buffer_.empty()) {
       DoFlush();
     }
+  }
 
-    // Group commit: periodic explicit sync
-    if (group_commit && std::chrono::steady_clock::now() >= next_sync_time) {
+  LOG_DEBUG("LogPersister background flush thread stopped");
+}
+
+void LogPersister::BackgroundSyncLoop() {
+  LOG_DEBUG("LogPersister background sync thread started");
+
+  auto interval = std::chrono::milliseconds(config_.group_commit_interval_ms);
+  while (running_) {
+    std::this_thread::sleep_for(interval);
+    if (!running_) break;
+
+    if (persister_) {
       auto sync_status = persister_->Sync();
       if (!sync_status.ok()) {
         LOG_ERROR("LogPersister group commit sync failed: {}",
@@ -359,11 +377,10 @@ void LogPersister::BackgroundFlushLoop() {
       } else {
         LOG_DEBUG("LogPersister group commit synced");
       }
-      next_sync_time = std::chrono::steady_clock::now() + group_commit_interval;
     }
   }
 
-  LOG_DEBUG("LogPersister background thread stopped");
+  LOG_DEBUG("LogPersister background sync thread stopped");
 }
 
 bool LogPersister::DoFlush() {

@@ -205,8 +205,11 @@ class LogPersister {
   std::string GetLastError() const;
 
  private:
-  /** Background thread main loop. */
+  /** Background flush thread main loop. */
   void BackgroundFlushLoop();
+
+  /** Background sync thread main loop (for group commit). */
+  void BackgroundSyncLoop();
 
   /**
    * Perform a single flush operation.
@@ -236,6 +239,7 @@ class LogPersister {
   // Background thread control
   std::atomic<bool> running_{false};
   std::thread flush_thread_;
+  std::thread sync_thread_;  // For group commit
   std::condition_variable flush_cv_;
   bool flush_in_progress_ = false;
 

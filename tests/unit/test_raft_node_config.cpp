@@ -245,3 +245,26 @@ TEST_F(RaftNodeConfigValidateTest, RaftNodeConstructorThrowsOnNullStateMachine) 
     RaftNode node(config, nullptr);
   }, std::invalid_argument);
 }
+
+TEST_F(RaftNodeConfigValidateTest, DeadNodeTimeoutDisabled) {
+  auto config = MakeValidConfig();
+  config.auto_remove_dead_nodes = false;
+  config.dead_node_timeout_ms = 0;
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, DeadNodeTimeoutEnabledMustBePositive) {
+  auto config = MakeValidConfig();
+  config.auto_remove_dead_nodes = true;
+  config.dead_node_timeout_ms = 0;
+  auto status = config.Validate();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("dead_node_timeout_ms"), std::string::npos);
+}
+
+TEST_F(RaftNodeConfigValidateTest, DeadNodeTimeoutEnabledValid) {
+  auto config = MakeValidConfig();
+  config.auto_remove_dead_nodes = true;
+  config.dead_node_timeout_ms = 600;
+  EXPECT_TRUE(config.Validate().ok());
+}

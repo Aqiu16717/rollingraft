@@ -173,6 +173,9 @@ class RaftNode::RaftNodeImpl {
   void HandleReadIndexAckLocked(NodeId from, uint64_t read_id);
   void ProcessPendingReadsLocked();
 
+  // Dead node detection & auto-removal (leader only)
+  void MaybeRemoveDeadNodesLocked();
+
   // Snapshot related
   void SendInstallSnapshotToPeerLocked(NodeId peer_id);
   void SendNextSnapshotChunkLocked(NodeId peer_id);
@@ -262,6 +265,9 @@ class RaftNode::RaftNodeImpl {
   bool pre_vote_enabled_ = true;      // Enabled by default
   std::chrono::steady_clock::time_point last_leader_contact_;
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point> quorum_acks_;
+
+  // Dead node detection: last time we received a valid response from each peer
+  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> last_contact_time_;
 
   // Membership change safety: true while a CONFIG_CHANGE log entry
   // has been proposed but not yet committed. Prevents concurrent

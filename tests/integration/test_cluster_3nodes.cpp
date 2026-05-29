@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "rollingraft/raft_node.h"
+#include "rollingraft/logger.h"
 
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
@@ -62,9 +63,11 @@ class Cluster3NodesTest : public ::testing::Test {
   void StartCluster() {
     auto ports = AllocateEphemeralPorts(3);
     addrs_ = FormatAddrs(ports);
+    configs_.clear();
 
     for (int i = 0; i < 3; ++i) {
       auto config = MakeConfig(i + 1, addrs_[i], addrs_);
+      configs_.push_back(config);
       auto sm = std::make_shared<MockStateMachine>();
       state_machines_.push_back(sm);
 
@@ -159,6 +162,7 @@ class Cluster3NodesTest : public ::testing::Test {
 
   std::vector<std::string> data_dirs_;
   std::vector<std::string> addrs_;
+  std::vector<RaftNodeConfig> configs_;
   std::vector<std::unique_ptr<RaftNode>> nodes_;
   std::vector<std::shared_ptr<MockStateMachine>> state_machines_;
 };
@@ -471,4 +475,54 @@ TEST_F(Cluster3NodesTest, TlsRecoversAfterLeaderCrash) {
 
   ASSERT_NE(new_leader, nullptr) << "No new TLS leader elected after crash";
   EXPECT_TRUE(new_leader->IsLeader());
+}
+
+TEST_F(Cluster3NodesTest, AutoRemovesDeadNode) {
+  auto ports = AllocateEphemeralPorts(3);
+  addrs_ = FormatAddrs(ports);
+
+  for (int i = 0; i < 3; ++i) {
+    auto config = MakeConfig(i + 1, addrs_[i], addrs_);
+    config.auto_remove_dead_nodes = true;
+    config.dead_node_timeout_ms = 500;
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+    auto start_status = nodes_[i]->Start();
+    EXPECT_TRUE(start_status.ok()) << "Failed to start node " << (i + 1);
+  }
+
+  WaitForLeader();
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Find a follower and stop it
+  size_t follower_idx = nodes_.size();
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    if (nodes_[i].get() != leader) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_LT(follower_idx, nodes_.size());
+
+  NodeId dead_id = follower_idx + 1;
+  LOG_INFO("Stopping follower node {} to simulate dead node", dead_id);
+  nodes_[follower_idx]->Stop();
+  nodes_[follower_idx].reset();
+
+  // Wait for dead node detection (dead_node_timeout_ms + buffer)
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+  // Check that the leader has removed the dead node from config
+  auto config = leader->GetConfig();
+  bool found = false;
+  for (NodeId id : config.nodes) {
+    if (id == dead_id) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found) << "Dead node " << dead_id << " should have been auto-removed";
 }

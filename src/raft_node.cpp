@@ -113,6 +113,11 @@ Status RaftNodeConfig::Validate() const {
     return Status::Error("CONFIG_INVALID",
                          "shutdown_timeout_ms must be 0 or >= 100");
   }
+  // Dead node timeout must be > 0 if auto-removal is enabled
+  if (auto_remove_dead_nodes && dead_node_timeout_ms == 0) {
+    return Status::Error("CONFIG_INVALID",
+                         "dead_node_timeout_ms must be > 0 when auto_remove_dead_nodes is enabled");
+  }
 
   return Status::OK();
 }

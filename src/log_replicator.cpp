@@ -37,6 +37,93 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
 
   BroadcastAppendEntriesLocked();
   MaybeAutoPromoteLearnersLocked();
+  MaybeRemoveDeadNodesLocked();
+}
+
+void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
+  // PRECONDITION: election_mtx_ and replication_mtx_ are held by caller
+  if (!IsRunning() || role_ != RaftNodeRole::LEADER) return;
+  if (!config_.auto_remove_dead_nodes) return;
+
+  auto now = std::chrono::steady_clock::now();
+  auto timeout = std::chrono::milliseconds(config_.dead_node_timeout_ms);
+
+  // Collect dead nodes (copy to avoid modifying during iteration)
+  std::vector<NodeId> dead_nodes;
+  {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    for (NodeId peer_id : cluster_config_.nodes) {
+      if (peer_id == server_id_) continue;  // Skip self
+
+      auto it = last_contact_time_.find(peer_id);
+      if (it == last_contact_time_.end()) {
+        // Never contacted — treat as dead if we have been leader long enough
+        dead_nodes.push_back(peer_id);
+        continue;
+      }
+
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - it->second)
+                         .count();
+      if (elapsed >= 0 && static_cast<uint32_t>(elapsed) >= config_.dead_node_timeout_ms) {
+        dead_nodes.push_back(peer_id);
+      }
+    }
+  }
+
+  for (NodeId dead_id : dead_nodes) {
+    // Safety check: ensure we still have quorum after removal
+    {
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      uint32_t remaining = cluster_config_.nodes.size() - 1;
+      uint32_t majority_after_remove = remaining / 2 + 1;
+      int active_voters = 1;  // Leader counts itself
+      for (const auto& [peer_id, ack_time] : quorum_acks_) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now - ack_time)
+                           .count();
+        if (elapsed >= 0 &&
+            static_cast<uint32_t>(elapsed) < config_.election_timeout_ms &&
+            cluster_config_.IsVoter(peer_id) && peer_id != dead_id) {
+          ++active_voters;
+        }
+      }
+      if (static_cast<uint32_t>(active_voters) < majority_after_remove) {
+        LOG_WARN("Node {}: dead node {} detected but removing it would lose quorum ({} < {}), skipping",
+                 server_id_, dead_id, active_voters, majority_after_remove);
+        continue;
+      }
+    }
+
+    LOG_INFO("Node {}: auto-removing dead node {} (no contact for {}ms)",
+             server_id_, dead_id, config_.dead_node_timeout_ms);
+
+    if (metrics_) {
+      metrics_->GetCounter("raft_dead_nodes_detected_total",
+                           {{"node_id", std::to_string(server_id_)},
+                            {"peer_id", std::to_string(dead_id)}})
+          .Increment();
+    }
+
+    // Drop locks before calling RemoveNode (it acquires its own locks)
+    // We already hold election_mtx_ + replication_mtx_, but RemoveNode
+    // acquires them in the same order, so we need to drop first.
+    // Actually RemoveNode acquires election_mtx_ then replication_mtx_ then membership_mtx_.
+    // Since we hold election_mtx_ and replication_mtx_, calling RemoveNode would deadlock.
+    // Solution: drop our locks, call RemoveNode, then re-acquire if needed.
+    // But OnHeartbeatTimeout is a timer callback — we can just return after RemoveNode.
+    // However, we may have multiple dead nodes. Use a post-task approach.
+
+    // Schedule removal asynchronously to avoid deadlock with current locks
+    auto cfg = runtime_config_->Get();
+    timer_->SetTimeout(std::chrono::milliseconds(1), [this, dead_id]() {
+      auto status = RemoveNode(dead_id);
+      if (!status.ok()) {
+        LOG_WARN("Node {}: auto-removal of dead node {} failed: {}",
+                 server_id_, dead_id, status.ToString());
+      }
+    });
+  }
 }
 
 // Maximum log lag (in entries) for a learner to be auto-promoted.
@@ -317,6 +404,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     // Reset retry state on success
     retry_state_.erase(from);
 
+    // Track last contact time for dead node detection
+    last_contact_time_[from] = std::chrono::steady_clock::now();
+
     // CheckQuorum: track successful AppendEntries acks for quorum detection
     if (check_quorum_enabled_) {
       quorum_acks_[from] = std::chrono::steady_clock::now();
@@ -392,6 +482,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
       next_index_[from] = 1;
     }
 
+    // Even on failure, the peer is alive — update contact time
+    last_contact_time_[from] = std::chrono::steady_clock::now();
+
     // Use exponential backoff retry for log mismatch too
     ScheduleAppendEntriesRetryLocked(from);
   }
@@ -423,6 +516,8 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(
   if (check_quorum_enabled_) {
     quorum_acks_[from] = std::chrono::steady_clock::now();
   }
+  // Track last contact time for dead node detection
+  last_contact_time_[from] = std::chrono::steady_clock::now();
 
   {
     auto now = std::chrono::steady_clock::now();

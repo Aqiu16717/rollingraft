@@ -155,11 +155,13 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   // leader does not step down before peers have a chance to ack.
   auto now = std::chrono::steady_clock::now();
   quorum_acks_.clear();
+  last_contact_time_.clear();
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
     next_index_[peer_id] = last_index + 1;
     match_index_[peer_id] = 0;
     quorum_acks_[peer_id] = now;
+    last_contact_time_[peer_id] = now;
   }
 
   // Stop election timer

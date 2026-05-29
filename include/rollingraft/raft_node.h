@@ -212,6 +212,11 @@ struct RaftNodeConfig {
   // Should be disabled in deterministic tests that rely on exact timing.
   bool pre_vote_enabled = true;
 
+  // Dead node auto-removal: if a follower hasn't responded for
+  // dead_node_timeout_ms, leader automatically proposes RemoveNode.
+  bool auto_remove_dead_nodes = false;
+  uint32_t dead_node_timeout_ms = 600;  // Default = election_timeout_ms * 2
+
   /**
    * Validate configuration parameters.
    *

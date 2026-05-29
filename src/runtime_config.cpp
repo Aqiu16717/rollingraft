@@ -40,6 +40,7 @@ Status RuntimeConfig::UpdateFromJson(const std::string& json_str) {
   if (j.contains("max_snapshot_size_bytes")) proposed.max_snapshot_size_bytes = j["max_snapshot_size_bytes"];
   if (j.contains("propose_timeout_ms")) proposed.propose_timeout_ms = j["propose_timeout_ms"];
   if (j.contains("leader_lease_enabled")) proposed.leader_lease_enabled = j["leader_lease_enabled"];
+  if (j.contains("max_pipeline_window")) proposed.max_pipeline_window = j["max_pipeline_window"];
 
   auto status = Validate(proposed);
   if (!status.ok()) return status;
@@ -70,6 +71,7 @@ std::string RuntimeConfig::ToJson() const {
   j["max_snapshot_size_bytes"] = values_.max_snapshot_size_bytes;
   j["propose_timeout_ms"] = values_.propose_timeout_ms;
   j["leader_lease_enabled"] = values_.leader_lease_enabled;
+  j["max_pipeline_window"] = values_.max_pipeline_window;
   return j.dump(2);
 }
 
@@ -117,6 +119,10 @@ Status RuntimeConfig::Validate(const Values& v) const {
   if (v.propose_timeout_ms < 100 || v.propose_timeout_ms > 60000) {
     return Status::Error("INVALID_CONFIG",
                          "propose_timeout_ms must be in [100, 60000]");
+  }
+  if (v.max_pipeline_window < 1 || v.max_pipeline_window > 10000) {
+    return Status::Error("INVALID_CONFIG",
+                         "max_pipeline_window must be in [1, 10000]");
   }
 
   // Cross-parameter checks

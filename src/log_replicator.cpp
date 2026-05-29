@@ -70,7 +70,16 @@ void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
 void RaftNode::RaftNodeImpl::BroadcastAppendEntriesLocked() {
   for (const auto& [peer_id, addr] : peer_map_) {
     (void)addr;
-    SendAppendEntriesToPeerLocked(peer_id);
+    // With pipeline replication, keep filling the window until
+    // backpressure kicks in or there are no more entries.
+    while (true) {
+      Index before = next_index_[peer_id];
+      SendAppendEntriesToPeerLocked(peer_id);
+      Index after = next_index_[peer_id];
+      // If next_index_ didn't advance, nothing was sent (pipeline full
+      // or no entries). Stop trying for this peer.
+      if (after == before) break;
+    }
   }
 }
 
@@ -114,6 +123,26 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     req.entries_ = log_.GetEntries(next_idx, end);
   }
 
+  bool is_heartbeat = req.entries_.empty();
+
+  // Heartbeats bypass pipeline window to ensure liveness.
+  if (!is_heartbeat) {
+    auto cfg = runtime_config_->Get();
+    size_t window = cfg.max_pipeline_window;
+    size_t inflight_count = 0;
+    auto it_inflight = inflight_.find(peer_id);
+    if (it_inflight != inflight_.end()) {
+      for (const auto& entry : it_inflight->second) {
+        inflight_count += entry.count;
+      }
+    }
+    if (inflight_count >= window) {
+      LOG_DEBUG("Node {}: pipeline full on peer {}, inflight={}/{}",
+                server_id_, peer_id, inflight_count, window);
+      return;
+    }
+  }
+
   // Serialize and send
   std::string data;
   auto status = protocol_->SerializeRequest(req, data);
@@ -126,22 +155,14 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it_addr = peer_map_.find(peer_id);
   if (it_addr == peer_map_.end()) return;
 
-  // Backpressure: limit in-flight AppendEntries per peer to prevent
-  // memory unbounded growth when a follower is slow or partitioned.
-  // Heartbeats (empty entries) bypass backpressure to ensure liveness.
-  constexpr size_t kMaxPendingAppends = 3;
-  bool is_heartbeat = req.entries_.empty();
-  if (is_heartbeat) {
-    last_heartbeat_sent_[peer_id] = std::chrono::steady_clock::now();
-  }
   if (!is_heartbeat) {
-    std::lock_guard<std::mutex> lock(pending_appends_mtx_);
-    if (pending_appends_[peer_id] >= kMaxPendingAppends) {
-      LOG_DEBUG("Node {}: backpressure on peer {}, pending={}", server_id_,
-                peer_id, pending_appends_[peer_id]);
-      return;
-    }
-    pending_appends_[peer_id]++;
+    // Track this batch in the pipeline.
+    inflight_[peer_id].push_back({next_idx, req.entries_.size()});
+    // Advance next_index_ immediately so subsequent sends continue
+    // filling the pipeline without waiting for the RPC response.
+    next_index_[peer_id] = next_idx + req.entries_.size();
+  } else {
+    last_heartbeat_sent_[peer_id] = std::chrono::steady_clock::now();
   }
 
   if (metrics_) {
@@ -157,41 +178,49 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(cfg.rpc_timeout_ms),
-      [this, peer_id, is_heartbeat](const std::string& resp, bool success,
-                      const std::string& error) {
-        // Decrement backpressure counter only for non-heartbeat AppendEntries.
-        if (!is_heartbeat) {
-          std::lock_guard<std::mutex> lock(pending_appends_mtx_);
-          pending_appends_[peer_id]--;
-        }
+        [this, peer_id, is_heartbeat](const std::string& resp, bool success,
+                        const std::string& error) {
+          if (!success) {
+            LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
+                     error);
+            ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
+            return;
+          }
 
-        if (!success) {
-          LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
-                   error);
-          // Trigger retry with backoff
-          ScheduleAppendEntriesRetry(peer_id);
-          return;
-        }
-
-        AppendEntriesResponse response;
-        auto status = protocol_->DeserializeResponse(resp, response);
-        if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
-                    status.ToString());
-          // Also retry on deserialization failure
-          ScheduleAppendEntriesRetry(peer_id);
-          return;
-        }
-        // HandleAppendEntriesResponse resets retry_state_ internally
-        HandleAppendEntriesResponse(peer_id, response);
-      });
+          AppendEntriesResponse response;
+          auto status = protocol_->DeserializeResponse(resp, response);
+          if (!status.ok()) {
+            LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
+                      status.ToString());
+            ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
+            return;
+          }
+          if (is_heartbeat) {
+            HandleHeartbeatResponse(peer_id, response);
+          } else {
+            HandleAppendEntriesResponse(peer_id, response);
+          }
+        });
   }
 }
 
-void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id) {
+void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id, bool is_heartbeat) {
   // Bridge pattern: election_mtx_ first, then replication_mtx_
   std::lock_guard<std::mutex> lock_e(election_mtx_);
   std::lock_guard<std::mutex> lock_r(replication_mtx_);
+
+  // Network failure: pop the failed batch from pipeline and reset next_index_,
+  // but only for non-heartbeat requests. Heartbeats are not tracked in inflight.
+  if (!is_heartbeat) {
+    auto it_inflight = inflight_.find(peer_id);
+    if (it_inflight != inflight_.end() && !it_inflight->second.empty()) {
+      auto head = it_inflight->second.front();
+      it_inflight->second.pop_front();
+      next_index_[peer_id] = head.start_index;
+      it_inflight->second.clear();
+    }
+  }
+
   ScheduleAppendEntriesRetryLocked(peer_id);
 }
 
@@ -255,6 +284,23 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     return;
   }
 
+  // Process pipeline head for this peer.
+  auto it_inflight = inflight_.find(from);
+  if (it_inflight == inflight_.end() || it_inflight->second.empty()) {
+    // Late response or peer not in pipeline (e.g., heartbeat).
+    // Heartbeats don't track inflight, so just handle success/failure
+    // for liveness but don't touch match_index_ based on stale state.
+    if (!resp.success_) {
+      next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
+      ScheduleAppendEntriesRetryLocked(from);
+    }
+    return;
+  }
+
+  // Pop the head of the inflight queue (FIFO, TCP preserves order).
+  auto head = it_inflight->second.front();
+  it_inflight->second.pop_front();
+
   if (resp.success_) {
     if (metrics_) {
       metrics_
@@ -263,10 +309,11 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
                         {"peer_id", std::to_string(from)}})
           .Increment();
     }
-    // Update progress
-    Index new_match = next_index_[from] - 1 + resp.entries_count_;
+    // Update progress based on the actual start index of this batch.
+    Index new_match = head.start_index + resp.entries_count_ - 1;
     match_index_[from] = std::max(match_index_[from], new_match);
-    next_index_[from] = match_index_[from] + 1;
+    // next_index_ was already advanced when sending; ensure it stays >= match+1.
+    next_index_[from] = std::max(next_index_[from], match_index_[from] + 1);
 
     // Reset retry state on success
     retry_state_.erase(from);
@@ -309,6 +356,16 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
 
     // Try to commit
     TryCommitLocked();
+
+    // Fill the pipeline if there are more entries to send.
+    auto [last_index, _] = log_.GetLastLogInfo();
+    Index effective_last = last_index;
+    if (log_persister_) {
+      effective_last = std::min(last_index, flushed_index_);
+    }
+    if (next_index_[from] <= effective_last) {
+      SendAppendEntriesToPeerLocked(from);
+    }
   } else {
     if (metrics_) {
       metrics_
@@ -317,15 +374,79 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
                         {"peer_id", std::to_string(from)}})
           .Increment();
     }
-    // Log mismatch, back off
+    // Log mismatch: clear all inflight entries for this peer because
+    // subsequent in-flight batches are now invalid (prefix missing).
+    it_inflight->second.clear();
+
+    // Reset next_index_ to retry from the conflict point.
     if (resp.conflict_index_ > 0) {
-      next_index_[from] = resp.conflict_index_;
+      next_index_[from] = std::max(resp.conflict_index_, match_index_[from] + 1);
     } else {
-      next_index_[from] = std::max<Index>(1, next_index_[from] - 1);
+      next_index_[from] = std::max<Index>(match_index_[from] + 1, head.start_index - 1);
+    }
+    if (next_index_[from] < 1) {
+      next_index_[from] = 1;
     }
 
     // Use exponential backoff retry for log mismatch too
     ScheduleAppendEntriesRetryLocked(from);
+  }
+}
+
+void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(
+    NodeId from, const AppendEntriesResponse& resp) {
+  // Bridge pattern: election_mtx_ first, then replication_mtx_
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
+
+  if (!IsRunning()) return;
+  if (role_ != RaftNodeRole::LEADER) return;
+
+  // If response term is higher, revert to Follower
+  if (resp.term_ > current_term_) {
+    lock_r.unlock();
+    BecomeFollowerLocked(resp.term_);
+    return;
+  }
+
+  if (!resp.success_) {
+    // Stale term or other rejection — schedule retry
+    ScheduleAppendEntriesRetryLocked(from);
+    return;
+  }
+
+  // Heartbeat ack: update quorum tracking and leader lease
+  if (check_quorum_enabled_) {
+    quorum_acks_[from] = std::chrono::steady_clock::now();
+  }
+
+  {
+    auto now = std::chrono::steady_clock::now();
+    auto cfg = runtime_config_->Get();
+    int ack_count = 1;  // Leader counts itself
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    for (const auto& [peer_id, ack_time] : quorum_acks_) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - ack_time)
+                         .count();
+      if (elapsed >= 0 &&
+          static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
+          cluster_config_.IsVoter(peer_id)) {
+        ++ack_count;
+      }
+    }
+    if (static_cast<uint32_t>(ack_count) >= cluster_config_.GetMajority()) {
+      leader_lease_expiry_ = now + std::chrono::milliseconds(cfg.election_timeout_ms);
+    }
+  }
+
+  // Coalescing: heartbeat acks also count for ReadIndex
+  if (!pending_reads_.empty()) {
+    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+    std::lock_guard<std::mutex> lock_a(applier_mtx_);
+    for (auto& [read_id, read_req] : pending_reads_) {
+      read_req.acks.insert(from);
+    }
   }
 }
 

@@ -158,7 +158,9 @@ class RaftNode::RaftNodeImpl {
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
   void HandleAppendEntriesResponse(NodeId from,
                                    const AppendEntriesResponse& resp);
-  void ScheduleAppendEntriesRetry(NodeId peer_id);  // With exponential backoff
+  void HandleHeartbeatResponse(NodeId from,
+                               const AppendEntriesResponse& resp);
+  void ScheduleAppendEntriesRetry(NodeId peer_id, bool is_heartbeat = false);
   void ScheduleAppendEntriesRetryLocked(
       NodeId peer_id);  // Precondition: caller holds election_mtx_ +
                         // replication_mtx_
@@ -233,9 +235,14 @@ class RaftNode::RaftNodeImpl {
   };
   std::unordered_map<NodeId, RetryState> retry_state_;
 
-  // Backpressure: number of in-flight AppendEntries per peer.
-  mutable std::mutex pending_appends_mtx_;
-  std::unordered_map<NodeId, size_t> pending_appends_;
+  // Pipeline replication: ordered inflight window per peer.
+  // Each entry tracks [start_index, count] of a sent batch.
+  // Replaces the simple kMaxPendingAppends=3 counter.
+  struct InflightEntry {
+    Index start_index;
+    size_t count;
+  };
+  std::unordered_map<NodeId, std::deque<InflightEntry>> inflight_;
 
   // Heartbeat coalescing: track last heartbeat sent to each peer.
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point>

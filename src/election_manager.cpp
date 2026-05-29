@@ -144,6 +144,7 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   next_index_.clear();
   match_index_.clear();
   retry_state_.clear();  // Reset retry state for new leadership
+  inflight_.clear();     // Clear pipeline state for new leadership
 
   // Clear client sessions - new leader doesn't have old session state
   // Clients will retry with their next command, which will be treated as new

@@ -550,9 +550,22 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
       // Persist snapshot if persister available
       if (persister_) {
-        auto status = persister_->SaveSnapshot(snapshot_temp_data_,
-                                               req.last_included_index_,
-                                               req.last_included_term_);
+        // Phase 1 streaming: avoid an extra full-copy inside SaveSnapshot
+        // by using SaveSnapshotStream. The chunk provider yields the
+        // already-buffered snapshot data as a single chunk.
+        size_t offset = 0;
+        auto chunk_provider = [&](std::string& chunk) -> bool {
+          if (offset == 0) {
+            chunk.assign(snapshot_temp_data_.data(),
+                         snapshot_temp_data_.size());
+            offset = snapshot_temp_data_.size();
+            return true;
+          }
+          return false;
+        };
+        auto status = persister_->SaveSnapshotStream(
+            chunk_provider, req.last_included_index_,
+            req.last_included_term_);
         if (!status.ok()) {
           LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
                    status.ToString());

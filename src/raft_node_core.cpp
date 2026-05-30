@@ -501,7 +501,10 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
 
   // 4. Stop NetworkTransport
   if (network_) {
-    network_->Stop();
+    auto status = network_->Stop();
+    if (!status.ok()) {
+      LOG_WARN("NetworkTransport stop failed: {}", status.ToString());
+    }
   }
 
   // 5. Stop LogPersister (flushes remaining entries)

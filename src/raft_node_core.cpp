@@ -983,7 +983,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
   // Phase 1: Election state check under election_mtx_ only.
-  std::lock_guard<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_e(election_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -995,9 +995,16 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
       return Status::NotLeader(leader_id_, leader_addr_);
     }
 
+    // Capture leader state before releasing lock. RpcCall is synchronous
+    // and may block for rpc_timeout_ms; holding election_mtx_ would stall
+    // heartbeat handling and election timers.
+    NodeId leader_id = leader_id_;
+    std::string leader_addr = leader_addr_;
+    lock_e.unlock();
+
     ReadIndexRequest req;
     ReadIndexResponse resp;
-    auto status = RpcCall(leader_addr_, req, resp,
+    auto status = RpcCall(leader_addr, req, resp,
                           std::chrono::milliseconds(config_.rpc_timeout_ms));
     if (!status.ok()) {
       return Status::Error("READINDEX_FORWARD",
@@ -1006,9 +1013,11 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     }
 
     if (!resp.leader_valid_) {
-      return Status::NotLeader(leader_id_, leader_addr_);
+      return Status::NotLeader(leader_id, leader_addr);
     }
 
+    // Re-acquire lock to check term and enqueue read
+    std::lock_guard<std::mutex> lock_e2(election_mtx_);
     if (resp.term_ > current_term_) {
       BecomeFollowerLocked(resp.term_);
       return Status::NotLeader(leader_id_, leader_addr_);

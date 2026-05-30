@@ -139,6 +139,27 @@ class StateMachine {
   virtual bool Restore(const std::vector<uint8_t>& snapshot) = 0;
 
   /**
+   * Restore state from a snapshot using streaming chunks.
+   *
+   * Default implementation collects all chunks and calls Restore().
+   * Override this to support true streaming restore and avoid loading
+   * the entire snapshot into memory at once.
+   *
+   * @param chunk_provider Callback that fills chunk and returns true if more
+   *                       data is available. Return false when done.
+   * @return true if restore succeeded, false otherwise
+   */
+  virtual bool RestoreStream(
+      const std::function<bool(std::string& chunk)>& chunk_provider) {
+    std::vector<uint8_t> data;
+    std::string chunk;
+    while (chunk_provider(chunk)) {
+      data.insert(data.end(), chunk.begin(), chunk.end());
+    }
+    return Restore(data);
+  }
+
+  /**
    * Wait for a specific log index to be applied.
    *
    * Used for linearizable reads. The callback is invoked when

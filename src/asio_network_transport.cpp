@@ -400,7 +400,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   RpcRequestHandler request_handler_;
   std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
-  char header_buffer_[4];
+  char header_buffer_[4] = {};
   std::string body_buffer_;
 
   // Write coalescing: queue multiple messages and send in a single async_write

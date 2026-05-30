@@ -126,6 +126,7 @@ class RaftNode::RaftNodeImpl {
   void HandleInstallSnapshot(const InstallSnapshotRequest&,
                              InstallSnapshotResponse&);
   void HandleClientRequest(const ClientRequest&, ClientResponse&);
+  void HandleReadIndexRequest(const ReadIndexRequest&, ReadIndexResponse&);
 
  private:
   // State transitions (must hold election_mtx_ when calling)

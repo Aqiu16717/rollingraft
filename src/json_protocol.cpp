@@ -128,6 +128,11 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         break;
       }
 
+      case RaftMessageType::KReadIndexRequest: {
+        j["type"] = static_cast<int>(req.type_);
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unknown request type");
     }
@@ -257,6 +262,11 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         break;
       }
 
+      case RaftMessageType::KReadIndexRequest: {
+        // No additional fields beyond correlation_id
+        break;
+      }
+
       default:
         return Status::ProtocolError("Unsupported request type");
     }
@@ -327,6 +337,16 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
         j["type"] = static_cast<int>(res.type_);
         j["term"] = pre_res.term_;
         j["vote_granted"] = pre_res.vote_granted_;
+        break;
+      }
+
+      case RaftMessageType::KReadIndexResponse: {
+        const ReadIndexResponse& read_res =
+            static_cast<const ReadIndexResponse&>(res);
+        j["type"] = static_cast<int>(res.type_);
+        j["term"] = read_res.term_;
+        j["read_index"] = read_res.read_index_;
+        j["leader_valid"] = read_res.leader_valid_;
         break;
       }
 
@@ -441,6 +461,20 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
         PreVoteResponse& pre_res = static_cast<PreVoteResponse&>(res);
         pre_res.term_ = j["term"];
         pre_res.vote_granted_ = j["vote_granted"];
+        break;
+      }
+
+      case RaftMessageType::KReadIndexResponse: {
+        if (!j.contains("term") || !j.contains("read_index") ||
+            !j.contains("leader_valid")) {
+          return Status::DeSerializeError(
+              "Missing required fields for ReadIndexResponse");
+        }
+
+        ReadIndexResponse& read_res = static_cast<ReadIndexResponse&>(res);
+        read_res.term_ = j["term"];
+        read_res.read_index_ = j["read_index"];
+        read_res.leader_valid_ = j["leader_valid"];
         break;
       }
 

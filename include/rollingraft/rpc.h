@@ -35,7 +35,9 @@ enum class RaftMessageType : int8_t {
   KConfigChangeRequest = 8,
   KConfigChangeResponse = 9,
   KPreVoteRequest = 10,
-  KPreVoteResponse = 11
+  KPreVoteResponse = 11,
+  KReadIndexRequest = 12,
+  KReadIndexResponse = 13
 };
 
 /** Base class for all Raft requests. */
@@ -289,6 +291,37 @@ struct ConfigChangeResponse : public RaftResponse {
 };
 
 /**
+ * ReadIndex RPC request.
+ *
+ * Sent by follower to leader to obtain a safe read index.
+ */
+struct ReadIndexRequest : public RaftRequest {
+  ReadIndexRequest() : RaftRequest(RaftMessageType::KReadIndexRequest) {}
+};
+
+/**
+ * ReadIndex RPC response.
+ *
+ * Returned by leader to follower with the current commit index.
+ */
+struct ReadIndexResponse : public RaftResponse {
+  Term term_;            // Current term, for requester to update itself
+  Index read_index_;     // Leader's commit index at the time of request
+  bool leader_valid_;    // Whether the leader is still valid
+
+  ReadIndexResponse()
+      : RaftResponse(RaftMessageType::KReadIndexResponse),
+        term_(0),
+        read_index_(0),
+        leader_valid_(false) {}
+  ReadIndexResponse(Term term, Index read_index, bool leader_valid)
+      : RaftResponse(RaftMessageType::KReadIndexResponse),
+        term_(term),
+        read_index_(read_index),
+        leader_valid_(leader_valid) {}
+};
+
+/**
  * Synchronous RPC call helper for client requests.
  *
  * @param addr Server address to contact
@@ -298,6 +331,10 @@ struct ConfigChangeResponse : public RaftResponse {
  */
 Status RpcCall(const std::string& addr, const ClientRequest& req,
                ClientResponse& resp,
+               std::chrono::milliseconds timeout = std::chrono::seconds(5));
+
+Status RpcCall(const std::string& addr, const ReadIndexRequest& req,
+               ReadIndexResponse& resp,
                std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 }  // namespace rollingraft

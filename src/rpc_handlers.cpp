@@ -121,6 +121,26 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         break;
       }
 
+      case RaftMessageType::KReadIndexRequest: {
+        ReadIndexRequest req;
+        auto status = protocol_->DeserializeRequest(data, req);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize ReadIndexRequest: {}",
+                    status.ToString());
+          return;
+        }
+        ReadIndexResponse resp;
+        resp.correlation_id_ = req.correlation_id_;
+        HandleReadIndexRequest(req, resp);
+        status = protocol_->SerializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to serialize ReadIndexResponse: {}",
+                    status.ToString());
+          return;
+        }
+        break;
+      }
+
       default:
         LOG_ERROR("Unknown message type: {}", type_id);
         break;
@@ -548,6 +568,24 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
           "commit_index={}",
           server_id_, log_.GetFirstIndex(), commit_index_);
     }
+  }
+}
+
+void RaftNode::RaftNodeImpl::HandleReadIndexRequest(
+    const ReadIndexRequest& /*req*/, ReadIndexResponse& resp) {
+  std::lock_guard<std::mutex> lock_e(election_mtx_);
+
+  resp.term_ = current_term_;
+
+  if (role_ == RaftNodeRole::LEADER) {
+    resp.leader_valid_ = true;
+    // commit_index_ is updated under replication_mtx_; acquire it for
+    // a consistent read to avoid data races with TryCommitLocked().
+    std::lock_guard<std::mutex> lock_r(replication_mtx_);
+    resp.read_index_ = commit_index_;
+  } else {
+    resp.leader_valid_ = false;
+    resp.read_index_ = 0;
   }
 }
 

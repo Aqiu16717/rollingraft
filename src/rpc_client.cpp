@@ -63,11 +63,37 @@ static bool DeserializeClientResponse(const std::string& data,
   }
 }
 
-Status RpcCall(const std::string& addr, const ClientRequest& req,
-               ClientResponse& resp,
-               std::chrono::milliseconds timeout) {
+// Helper to serialize ReadIndexRequest to JSON
+static std::string SerializeReadIndexRequest(const ReadIndexRequest& req) {
+  nlohmann::json j;
+  j["type"] = static_cast<int>(RaftMessageType::KReadIndexRequest);
+  j["correlation_id"] = req.correlation_id_;
+  return j.dump();
+}
+
+// Helper to deserialize ReadIndexResponse from JSON
+static bool DeserializeReadIndexResponse(const std::string& data,
+                                         ReadIndexResponse& resp) {
   try {
-    // Parse address
+    auto j = nlohmann::json::parse(data);
+    if (!j.contains("term") || !j.contains("read_index") ||
+        !j.contains("leader_valid")) {
+      return false;
+    }
+    resp.term_ = j["term"];
+    resp.read_index_ = j["read_index"];
+    resp.leader_valid_ = j["leader_valid"];
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+// Generic synchronous RPC helper using ASIO
+static Status DoRpcCall(const std::string& addr, const std::string& request_data,
+                        std::string& response_data,
+                        std::chrono::milliseconds timeout) {
+  try {
     auto colon_pos = addr.find(':');
     if (colon_pos == std::string::npos) {
       return Status::Error("Invalid address format, expected host:port");
@@ -77,15 +103,12 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
     std::string port_str = addr.substr(colon_pos + 1);
     uint16_t port = static_cast<uint16_t>(std::stoi(port_str));
 
-    // Setup ASIO
     asio::io_context io_context;
     asio::ip::tcp::socket socket(io_context);
     asio::ip::tcp::resolver resolver(io_context);
 
-    // Resolve and connect with timeout
     auto endpoints = resolver.resolve(host, std::to_string(port));
 
-    // Use async_connect with timeout
     std::error_code connect_ec;
     asio::steady_timer timer(io_context);
     bool connect_done = false;
@@ -115,15 +138,10 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
                            connect_ec.message());
     }
 
-    // Serialize request
-    std::string request_data = SerializeClientRequest(req);
-
-    // Send length-prefixed message
     uint32_t length = htonl(static_cast<uint32_t>(request_data.size()));
     asio::write(socket, asio::buffer(&length, sizeof(length)));
     asio::write(socket, asio::buffer(request_data));
 
-    // Read response length
     uint32_t response_length_net;
     size_t bytes_read =
         asio::read(socket, asio::buffer(&response_length_net, sizeof(length)));
@@ -132,12 +150,10 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
     }
 
     uint32_t response_length = ntohl(response_length_net);
-    if (response_length > 10 * 1024 * 1024) {  // 10MB limit
+    if (response_length > 10 * 1024 * 1024) {
       return Status::Error("Response too large");
     }
 
-    // Read response data
-    std::string response_data;
     response_data.resize(response_length);
     bytes_read =
         asio::read(socket, asio::buffer(&response_data[0], response_length));
@@ -145,12 +161,6 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
       return Status::Error("Failed to read complete response");
     }
 
-    // Deserialize response
-    if (!DeserializeClientResponse(response_data, resp)) {
-      return Status::Error("Failed to deserialize response");
-    }
-
-    // Gracefully close connection
     std::error_code ec;
     socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
     socket.close(ec);
@@ -160,6 +170,36 @@ Status RpcCall(const std::string& addr, const ClientRequest& req,
   } catch (const std::exception& e) {
     return Status::Error(std::string("RPC call failed: ") + e.what());
   }
+}
+
+Status RpcCall(const std::string& addr, const ReadIndexRequest& req,
+               ReadIndexResponse& resp,
+               std::chrono::milliseconds timeout) {
+  std::string request_data = SerializeReadIndexRequest(req);
+  std::string response_data;
+  auto status = DoRpcCall(addr, request_data, response_data, timeout);
+  if (!status.ok()) {
+    return status;
+  }
+  if (!DeserializeReadIndexResponse(response_data, resp)) {
+    return Status::Error("Failed to deserialize ReadIndexResponse");
+  }
+  return Status::OK();
+}
+
+Status RpcCall(const std::string& addr, const ClientRequest& req,
+               ClientResponse& resp,
+               std::chrono::milliseconds timeout) {
+  std::string request_data = SerializeClientRequest(req);
+  std::string response_data;
+  auto status = DoRpcCall(addr, request_data, response_data, timeout);
+  if (!status.ok()) {
+    return status;
+  }
+  if (!DeserializeClientResponse(response_data, resp)) {
+    return Status::Error("Failed to deserialize response");
+  }
+  return Status::OK();
 }
 
 }  // namespace rollingraft

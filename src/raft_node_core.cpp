@@ -990,10 +990,59 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
   }
 
   if (role_ != RaftNodeRole::LEADER) {
-    return Status::NotLeader(leader_id_, leader_addr_);
+    // Follower: forward to leader via ReadIndexRequest RPC
+    if (leader_id_ < 0 || leader_addr_.empty()) {
+      return Status::NotLeader(leader_id_, leader_addr_);
+    }
+
+    ReadIndexRequest req;
+    ReadIndexResponse resp;
+    auto status = RpcCall(leader_addr_, req, resp,
+                          std::chrono::milliseconds(config_.rpc_timeout_ms));
+    if (!status.ok()) {
+      return Status::Error("READINDEX_FORWARD",
+                           "Failed to forward ReadIndex to leader: " +
+                               status.ToString());
+    }
+
+    if (!resp.leader_valid_) {
+      return Status::NotLeader(leader_id_, leader_addr_);
+    }
+
+    if (resp.term_ > current_term_) {
+      BecomeFollowerLocked(resp.term_);
+      return Status::NotLeader(leader_id_, leader_addr_);
+    }
+
+    // Enqueue pending read with leader's commit index
+    {
+      std::lock_guard<std::mutex> lock_r(replication_mtx_);
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      std::lock_guard<std::mutex> lock_a(applier_mtx_);
+
+      uint64_t read_id = next_read_id_++;
+      PendingReadIndex read_req;
+      read_req.read_index = resp.read_index_;
+      read_req.callback = std::move(callback);
+      read_req.start_time = std::chrono::steady_clock::now();
+      read_req.heartbeats_sent = false;  // No heartbeats needed for follower reads
+      pending_reads_[read_id] = std::move(read_req);
+
+      if (metrics_) {
+        metrics_
+            ->GetCounter("raft_readindex_total",
+                         {{"node_id", std::to_string(server_id_)}})
+            .Increment();
+      }
+
+      // Try to complete immediately if log already applied
+      ProcessPendingReadsLocked();
+    }
+
+    return Status::OK();
   }
 
-  // Phase 2: ReadIndex work under full hierarchy.
+  // Phase 2: ReadIndex work under full hierarchy (leader path).
   {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);

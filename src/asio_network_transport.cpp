@@ -157,39 +157,74 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       // failure) or explicit Close().
     });
 
-    // Send message (serialized through strand)
-    auto write_handler = [self, msg, correlation_id](std::error_code ec,
-                                                     std::size_t) {
+    // Queue message for coalesced write. Must post to TcpConnection's
+    // own strand_ because Send() may be called from PeerConnection's strand.
+    asio::post(strand_, [self = shared_from_this(), msg, correlation_id]() {
+      self->write_queue_.push_back({msg, correlation_id});
+      if (!self->write_in_progress_) {
+        self->write_in_progress_ = true;
+        self->DoWrite();
+      }
+    });
+  }
+
+  void DoWrite() {
+    if (write_queue_.empty()) {
+      write_in_progress_ = false;
+      return;
+    }
+
+    // Concatenate all pending messages into a single buffer for atomic write.
+    // This avoids any issues with multi-buffer async_write implementations.
+    std::vector<uint64_t> correlation_ids;
+    size_t total_size = 0;
+    for (const auto& entry : write_queue_) {
+      total_size += entry.msg->size();
+      correlation_ids.push_back(entry.correlation_id);
+    }
+
+    auto batch_msg = std::make_shared<std::string>();
+    batch_msg->reserve(total_size);
+    for (auto& entry : write_queue_) {
+      batch_msg->append(*entry.msg);
+    }
+    write_queue_.clear();
+
+    auto self = shared_from_this();
+    auto write_handler = [self, correlation_ids, batch_msg](std::error_code ec,
+                                                            std::size_t) {
       if (ec) {
-        RpcResponseCallback cb;
-        std::shared_ptr<asio::steady_timer> timer;
-        {
-          std::lock_guard<std::mutex> lock(self->mutex_);
-          auto it = self->pending_callbacks_.find(correlation_id);
-          if (it != self->pending_callbacks_.end()) {
-            cb = std::move(it->second.callback);
-            timer = std::move(it->second.timer);
-            self->pending_callbacks_.erase(it);
+        for (uint64_t cid : correlation_ids) {
+          RpcResponseCallback cb;
+          std::shared_ptr<asio::steady_timer> timer;
+          {
+            std::lock_guard<std::mutex> lock(self->mutex_);
+            auto it = self->pending_callbacks_.find(cid);
+            if (it != self->pending_callbacks_.end()) {
+              cb = std::move(it->second.callback);
+              timer = std::move(it->second.timer);
+              self->pending_callbacks_.erase(it);
+            }
           }
-        }
-        if (timer) timer->cancel();
-        if (cb) {
-          cb("", false, "Send failed: " + ec.message());
+          if (timer) timer->cancel();
+          if (cb) {
+            cb("", false, "Send failed: " + ec.message());
+          }
         }
         self->connected_.store(false, std::memory_order_release);
       }
-      // On success: do NOT cancel timer -- it covers response wait too
-      // Response will be handled by DoRead -> HandleMessage
+      // Continue with next batch if there are more queued messages
+      self->DoWrite();
     };
 
     if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
       asio::async_write(
-          std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
+          std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*batch_msg),
           asio::bind_executor(strand_, write_handler));
     } else {
       asio::async_write(
           std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
-          asio::buffer(*msg),
+          asio::buffer(*batch_msg),
           asio::bind_executor(strand_, write_handler));
     }
   }
@@ -359,6 +394,14 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   char header_buffer_[4];
   std::string body_buffer_;
+
+  // Write coalescing: queue multiple messages and send in a single async_write
+  struct WriteEntry {
+    std::shared_ptr<std::string> msg;
+    uint64_t correlation_id;
+  };
+  std::deque<WriteEntry> write_queue_;
+  bool write_in_progress_ = false;
 
   RpcResponseCallback ExtractCallbackLocked(const std::string& response_data) {
     // Lightweight JSON parse to extract correlation_id

@@ -257,13 +257,13 @@ struct ClientResponse : public RaftResponse {
 struct ConfigChangeRequest : public RaftRequest {
   enum class Type : int8_t { kAddNode = 0, kRemoveNode = 1 };
 
-  Type type_;           // Add or remove
+  Type change_type_;    // Add or remove
   NodeId node_id_;      // Target node ID
   NodeAddr node_addr_;  // Target node address (for add operations)
 
   ConfigChangeRequest()
       : RaftRequest(RaftMessageType::KConfigChangeRequest),
-        type_(Type::kAddNode),
+        change_type_(Type::kAddNode),
         node_id_(-1) {}
 };
 

@@ -47,7 +47,7 @@ void TestCluster::CrashNode(NodeId id) { if (static_cast<size_t>(id) >= options_
 void TestCluster::RestartNode(NodeId id) { StopNode(id); StartNode(id); }
 void TestCluster::AdvanceTime(uint64_t ms) { clock_->Advance(ms); network_->DeliverAll(); }
 void TestCluster::RunUntilLeaderElected() { for (int i = 0; i < 1000; ++i) { AdvanceTime(10); if (GetLeaderId() != -1) return; } ADD_FAILURE() << "No leader elected"; }
-void TestCluster::RunUntilCommit(Index index) { for (int i = 0; i < 1000; ++i) { AdvanceTime(10); bool ok = true; for (size_t j = 0; j < options_.num_nodes; ++j) if (nodes_[j] && GetCommitIndex(static_cast<NodeId>(j)) < index) { ok = false; break; } if (ok) return; } ADD_FAILURE() << "Index not committed"; }
+void TestCluster::RunUntilCommit(Index index) { for (int i = 0; i < 1000; ++i) { AdvanceTime(10); bool ok = true; for (size_t j = 0; j < options_.num_nodes; ++j) if (nodes_[j] && (GetCommitIndex(static_cast<NodeId>(j)) < index || GetLastApplied(static_cast<NodeId>(j)) < index)) { ok = false; break; } if (ok) return; } ADD_FAILURE() << "Index not committed"; }
 void TestCluster::RunFor(uint64_t ms) { uint64_t t = clock_->Now() + ms; while (clock_->Now() < t) AdvanceTime(10); }
 void TestCluster::RunUntilIdle() { clock_->RunUntilIdle(); network_->DeliverAll(); }
 void TestCluster::Partition(std::vector<NodeId> ga, std::vector<NodeId> gb) { for (NodeId a : ga) for (NodeId b : gb) network_->Partition(a, b); }

@@ -8,24 +8,26 @@ const std::vector<double> kLatencyBuckets = {
 }  // namespace
 
 void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
-  while (last_applied_ < commit_index_) {
-    ++last_applied_;
+  while (last_enqueued_ < commit_index_) {
+    ++last_enqueued_;
 
-    auto entry_opt = log_.GetEntry(last_applied_);
+    auto entry_opt = log_.GetEntry(last_enqueued_);
     if (!entry_opt) {
       LOG_ERROR("Node {} failed to get log entry {} — log corruption, aborting",
-                server_id_, last_applied_);
+                server_id_, last_enqueued_);
       std::abort();
     }
 
     const auto& entry = *entry_opt;
 
-    // Check if this is a config change command
+    // Config changes are applied synchronously (under current locks) because
+    // ApplyConfigChangeLocked() modifies cluster_config_, pending_config_change_,
+    // and may append new log entries — all of which require lock protection.
     if (entry.data_.find("CONFIG_CHANGE:") == 0) {
       ApplyConfigChangeLocked(entry.data_);
 
-      // Still need to callback for proposals
-      auto it = pending_proposals_.find(last_applied_);
+      // Callback synchronously for config changes (rare, keep client responsive)
+      auto it = pending_proposals_.find(last_enqueued_);
       if (it != pending_proposals_.end()) {
         if (metrics_) {
           auto latency = std::chrono::duration<double>(
@@ -36,48 +38,130 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
         }
         ApplyResult result;
         result.success = true;
-        result.applied_index = last_applied_;
+        result.applied_index = last_enqueued_;
         it->second.callback(result);
         pending_proposals_.erase(it);
       }
+
+      // Enqueue a dummy task so the apply thread updates last_applied_ in order
+      ApplyTask task;
+      task.index = last_enqueued_;
+      task.is_config_change = true;
+      {
+        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+        apply_queue_.push_back(std::move(task));
+      }
+      apply_queue_cv_.notify_one();
       continue;
     }
 
-    // Apply to StateMachine
-    auto result = state_machine_->Apply(
-        std::span<const uint8_t>(
-            reinterpret_cast<const uint8_t*>(entry.data_.data()),
-            entry.data_.size()),
-        last_applied_);
-
-    // Callback to waiting users
-    auto it = pending_proposals_.find(last_applied_);
+    // Regular entries: move callback from pending_proposals_ and enqueue for
+    // async apply. The apply thread will call state_machine_->Apply().
+    auto it = pending_proposals_.find(last_enqueued_);
+    std::function<void(const ApplyResult&)> cb;
+    std::optional<std::chrono::steady_clock::time_point> propose_time;
     if (it != pending_proposals_.end()) {
-      if (metrics_) {
-        auto latency = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - it->second.propose_time).count();
-        metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
-                               {{"node_id", std::to_string(server_id_)}})
-            .Observe(latency);
-      }
-      it->second.callback(result);
+      cb = std::move(it->second.callback);
+      propose_time = it->second.propose_time;
       pending_proposals_.erase(it);
     }
-  }
 
-  if (metrics_) {
-    metrics_
-        ->GetGauge("raft_applied_index",
-                   {{"node_id", std::to_string(server_id_)}})
-        .Set(static_cast<double>(last_applied_));
-  }
+    ApplyTask task;
+    task.index = last_enqueued_;
+    task.data = entry.data_;
+    task.callback = std::move(cb);
+    task.propose_time = propose_time;
 
-  // Check if any pending reads can be completed.
-  // Acquire membership_mtx_ (shared) + applier_mtx_ for pending_reads_.
-  {
-    std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
-    std::lock_guard<std::mutex> lock_a(applier_mtx_);
-    ProcessPendingReadsLocked();
+    {
+      std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+      apply_queue_.push_back(std::move(task));
+    }
+    apply_queue_cv_.notify_one();
+  }
+}
+
+void RaftNode::RaftNodeImpl::ApplyLoop() {
+  while (apply_running_.load(std::memory_order_acquire)) {
+    std::unique_lock<std::mutex> lock(apply_queue_mtx_);
+    apply_queue_cv_.wait(lock, [this] {
+      return !apply_queue_.empty() ||
+             !apply_running_.load(std::memory_order_acquire);
+    });
+
+    if (!apply_running_.load(std::memory_order_acquire)) break;
+
+    // Batch consume up to 64 entries to amortize lock overhead.
+    const size_t kBatchSize = 64;
+    std::vector<ApplyTask> batch;
+    batch.reserve(std::min(apply_queue_.size(), kBatchSize));
+    while (!apply_queue_.empty() && batch.size() < kBatchSize) {
+      batch.push_back(std::move(apply_queue_.front()));
+      apply_queue_.pop_front();
+    }
+    lock.unlock();
+
+    Index new_last_applied = last_applied_.load(std::memory_order_acquire);
+
+    for (auto& task : batch) {
+      // Skip entries that have been superseded by a snapshot.
+      // This can happen if HandleInstallSnapshot() was called while the
+      // apply thread was processing a batch.
+      if (task.index <= new_last_applied) {
+        if (task.callback) {
+          ApplyResult result;
+          result.success = true;
+          result.applied_index = task.index;
+          task.callback(result);
+        }
+        continue;
+      }
+
+      new_last_applied = task.index;
+
+      if (task.is_config_change) {
+        // Config change already applied synchronously in ApplyCommittedLocked.
+        // Just update last_applied_ (no state_machine apply needed).
+        continue;
+      }
+
+      // Apply to StateMachine
+      auto result = state_machine_->Apply(
+          std::span<const uint8_t>(
+              reinterpret_cast<const uint8_t*>(task.data.data()),
+              task.data.size()),
+          task.index);
+
+      // Record proposal latency
+      if (task.callback) {
+        if (metrics_ && task.propose_time.has_value()) {
+          auto latency = std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - *task.propose_time).count();
+          metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
+                                 {{"node_id", std::to_string(server_id_)}})
+              .Observe(latency);
+        }
+        task.callback(result);
+      }
+    }
+
+    // Publish last_applied_ so readers (ProcessPendingReadsLocked,
+    // GetLastAppliedIndex, snapshot logic) see the update.
+    last_applied_.store(new_last_applied, std::memory_order_release);
+
+    // Process pending reads that may now be satisfied.
+    {
+      std::lock_guard<std::mutex> lock_a(applier_mtx_);
+      std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
+      ProcessPendingReadsLocked();
+    }
+
+    // Update metrics
+    if (metrics_) {
+      metrics_
+          ->GetGauge("raft_applied_index",
+                     {{"node_id", std::to_string(server_id_)}})
+          .Set(static_cast<double>(new_last_applied));
+    }
   }
 }
 
@@ -203,7 +287,7 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
   // For lease reads, acks are already verified via quorum; skip majority check
   if (!read_req.heartbeats_sent) {
     // Still check if log is applied so we can complete early
-    if (last_applied_ >= read_req.read_index) {
+    if (last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       ProcessPendingReadsLocked();
     }
     return;
@@ -216,7 +300,7 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
              read_req.acks.size(), cluster_config_.nodes.size());
 
     // Check if read_index is already applied
-    if (last_applied_ >= read_req.read_index) {
+    if (last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       // Can complete immediately
       auto callback = std::move(read_req.callback);
       if (metrics_) {
@@ -253,7 +337,7 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
     bool acks_ok = read_req.heartbeats_sent
                        ? read_req.acks.size() >= majority
                        : true;  // Lease read: acks already verified via quorum
-    if (acks_ok && last_applied_ >= read_req.read_index) {
+    if (acks_ok && last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       completed_reads.push_back(read_id);
     }
   }

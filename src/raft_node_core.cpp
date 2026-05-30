@@ -276,7 +276,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       }
       config_json["nodes"] = nodes;
       j["cluster_config"] = config_json;
-      j["last_applied"] = last_applied_;
+      j["last_applied"] = last_applied_.load(std::memory_order_acquire);
 
       return j.dump();
     });
@@ -462,6 +462,10 @@ Status RaftNode::RaftNodeImpl::Start() {
     BecomeFollowerLocked(current_term_);
   }
 
+  // Start async apply thread
+  apply_running_.store(true, std::memory_order_release);
+  apply_thread_ = std::thread(&RaftNodeImpl::ApplyLoop, this);
+
   LOG_INFO("RaftNode {} started successfully", config_.node_id);
 
   NodeLifecycleEvent started_event;
@@ -505,7 +509,28 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
     log_persister_->Stop();
   }
 
-  // 6. Clean up pending proposals
+  // 6. Stop async apply thread and drain remaining queue
+  apply_running_.store(false, std::memory_order_release);
+  apply_queue_cv_.notify_all();
+  if (apply_thread_.joinable()) {
+    apply_thread_.join();
+  }
+  // Drain any tasks that weren't processed
+  std::deque<ApplyTask> remaining;
+  {
+    std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+    remaining = std::move(apply_queue_);
+  }
+  for (auto& task : remaining) {
+    if (task.callback) {
+      ApplyResult result;
+      result.success = false;
+      result.error_message = "Node stopped";
+      task.callback(result);
+    }
+  }
+
+  // 7. Clean up pending proposals
   std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>>
       callbacks_to_run;
   {

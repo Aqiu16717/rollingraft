@@ -518,8 +518,15 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
       }
 
       // Update indices
-      last_applied_ = req.last_included_index_;
+      last_applied_.store(req.last_included_index_, std::memory_order_release);
       commit_index_ = req.last_included_index_;
+
+      // Clear async apply queue — entries covered by snapshot are obsolete
+      {
+        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+        apply_queue_.clear();
+        last_enqueued_ = req.last_included_index_;
+      }
 
       // Persist snapshot if persister available
       if (persister_) {

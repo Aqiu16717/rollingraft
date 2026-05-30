@@ -3,9 +3,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <set>
 #include <shared_mutex>
@@ -219,7 +221,7 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Raft Volatile State ==========
   Index commit_index_ = 0;
-  Index last_applied_ = 0;
+  std::atomic<Index> last_applied_{0};
   Index flushed_index_ = 0;  // Highest log index durably persisted
   NodeId leader_id_ = -1;
   NodeAddr leader_addr_;
@@ -325,6 +327,23 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
+
+  // ========== Async Apply Thread ==========
+  struct ApplyTask {
+    Index index;
+    std::string data;
+    std::function<void(const ApplyResult&)> callback;
+    bool is_config_change = false;
+    std::optional<std::chrono::steady_clock::time_point> propose_time;
+  };
+  std::thread apply_thread_;
+  std::deque<ApplyTask> apply_queue_;
+  std::mutex apply_queue_mtx_;
+  std::condition_variable apply_queue_cv_;
+  std::atomic<bool> apply_running_{false};
+  Index last_enqueued_ = 0;  // Last index enqueued for async apply
+
+  void ApplyLoop();
 
   // ========== Pending ReadIndex Requests ==========
   std::unordered_map<uint64_t, PendingReadIndex> pending_reads_;

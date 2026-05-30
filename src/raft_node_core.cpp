@@ -723,7 +723,7 @@ Status RaftNode::RaftNodeImpl::Propose(
           }
           return;
         }
-        // Commit/broadcast: runs on persister thread with no locks held.
+        // Commit: runs on persister thread with no locks held.
         std::lock_guard<std::mutex> lock_e(election_mtx_);
         std::lock_guard<std::mutex> lock_r(replication_mtx_);
         if (!IsRunning()) {
@@ -737,8 +737,6 @@ Status RaftNode::RaftNodeImpl::Propose(
         }
         // Retry commit now that this entry is durable
         TryCommitLocked();
-        // Replicate to followers
-        BroadcastAppendEntriesLocked();
       });
     }
   } else {
@@ -761,11 +759,8 @@ Status RaftNode::RaftNodeImpl::Propose(
         .Increment();
   }
 
-  // Trigger log replication only if no persister (otherwise callback triggers
-  // it)
-  if (!log_persister_) {
-    BroadcastAppendEntriesLocked();
-  }
+  // Broadcast immediately — replication is decoupled from persistence (T2)
+  BroadcastAppendEntriesLocked();
 
   return Status::OK();
 }
@@ -835,7 +830,7 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             }
             return;
           }
-          // Commit/broadcast: runs on persister thread with no locks held.
+          // Commit: runs on persister thread with no locks held.
           std::lock_guard<std::mutex> lock_e(election_mtx_);
           std::lock_guard<std::mutex> lock_r(replication_mtx_);
           if (!IsRunning()) {
@@ -848,7 +843,6 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
             flushed_index_ = index;
           }
           TryCommitLocked();
-          BroadcastAppendEntriesLocked();
         });
       }
     }
@@ -868,13 +862,13 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
     pending_proposals_[index] = std::move(proposal);
   }
 
-  // If no persister, treat as immediately flushed and trigger replication
+  // Broadcast immediately — replication is decoupled from persistence (T2)
   if (!log_persister_) {
     flushed_index_ = std::max(flushed_index_, indices.back());
-    BroadcastAppendEntriesLocked();
-    // For single-node clusters, no followers will respond; try commit now
-    TryCommitLocked();
   }
+  BroadcastAppendEntriesLocked();
+  // For single-node clusters, no followers will respond; try commit now
+  TryCommitLocked();
 
   return Status::OK();
 }

@@ -46,7 +46,6 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
   if (!config_.auto_remove_dead_nodes) return;
 
   auto now = std::chrono::steady_clock::now();
-  auto timeout = std::chrono::milliseconds(config_.dead_node_timeout_ms);
 
   // Collect dead nodes (copy to avoid modifying during iteration)
   std::vector<NodeId> dead_nodes;
@@ -115,7 +114,6 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
     // However, we may have multiple dead nodes. Use a post-task approach.
 
     // Schedule removal asynchronously to avoid deadlock with current locks
-    auto cfg = runtime_config_->Get();
     timer_->SetTimeout(std::chrono::milliseconds(1), [this, dead_id]() {
       auto status = RemoveNode(dead_id);
       if (!status.ok()) {

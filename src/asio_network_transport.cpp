@@ -102,6 +102,14 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       if (pending.timer) pending.timer->cancel();
       if (pending.callback) pending.callback("", false, "Connection closed");
     }
+    // Drain any queued writes that haven't been dispatched yet.  This
+    // prevents messages from lingering in write_queue_ if the connection
+    // is closed before DoWrite() empties it.
+    auto self = shared_from_this();
+    asio::post(strand_, [self]() {
+      self->write_queue_.clear();
+      self->write_in_progress_ = false;
+    });
   }
 
   bool IsConnected() const {

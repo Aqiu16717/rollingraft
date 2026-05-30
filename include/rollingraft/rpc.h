@@ -71,7 +71,12 @@ struct RequestVoteRequest : public RaftRequest {
   Index last_log_index_;  // Index of candidate's last log entry (Section 5.4)
   Term last_log_term_;    // Term of candidate's last log entry (Section 5.4)
 
-  RequestVoteRequest() : RaftRequest(RaftMessageType::KRequestVoteRequest) {}
+  RequestVoteRequest()
+      : RaftRequest(RaftMessageType::KRequestVoteRequest),
+        term_(0),
+        candidate_id_(-1),
+        last_log_index_(0),
+        last_log_term_(0) {}
   RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index,
                      Term last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),
@@ -116,7 +121,12 @@ struct AppendEntriesRequest : public RaftRequest {
   Index leader_commit_;  // Leader's commit index
 
   AppendEntriesRequest()
-      : RaftRequest(RaftMessageType::KAppendEntriesRequest) {}
+      : RaftRequest(RaftMessageType::KAppendEntriesRequest),
+        term_(0),
+        leader_id_(-1),
+        prev_log_index_(0),
+        prev_log_term_(0),
+        leader_commit_(0) {}
   AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index,
                        Term prev_log_term, std::vector<RaftLogEntry> entries,
                        Index leader_commit)
@@ -171,7 +181,13 @@ struct InstallSnapshotRequest : public RaftRequest {
   bool done_;                  // True if this is the last chunk
 
   InstallSnapshotRequest()
-      : RaftRequest(RaftMessageType::KInstallSnapshotRequest) {}
+      : RaftRequest(RaftMessageType::KInstallSnapshotRequest),
+        term_(0),
+        leader_id_(-1),
+        last_included_index_(0),
+        last_included_term_(0),
+        offset_(0),
+        done_(false) {}
   InstallSnapshotRequest(Term term, NodeId leader_id, Index last_included_index,
                          Term last_included_term, uint32_t offset,
                          std::vector<char> data, bool done)
@@ -263,7 +279,12 @@ struct PreVoteRequest : public RaftRequest {
   Index last_log_index_;  // Index of candidate's last log entry
   Term last_log_term_;    // Term of candidate's last log entry
 
-  PreVoteRequest() : RaftRequest(RaftMessageType::KPreVoteRequest) {}
+  PreVoteRequest()
+      : RaftRequest(RaftMessageType::KPreVoteRequest),
+        term_(0),
+        candidate_id_(-1),
+        last_log_index_(0),
+        last_log_term_(0) {}
 };
 
 /**

@@ -164,9 +164,9 @@ class SpdlogAdapter::Impl {
   NodeId node_id_ = -1;
 };
 
-SpdlogAdapter::SpdlogAdapter() : impl_(new Impl()) {}
+SpdlogAdapter::SpdlogAdapter() : impl_(std::make_unique<Impl>()) {}
 
-SpdlogAdapter::~SpdlogAdapter() { delete impl_; }
+SpdlogAdapter::~SpdlogAdapter() = default;
 
 void SpdlogAdapter::Log(LogLevel level, const std::string& message) {
   impl_->Log(level, message);

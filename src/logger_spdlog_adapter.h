@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+
 #include "rollingraft/logger.h"
 #include "rollingraft/types.h"
 
@@ -9,6 +11,10 @@ class SpdlogAdapter : public Logger {
   SpdlogAdapter();
   ~SpdlogAdapter() override;
 
+  // Non-copyable, non-movable (Pimpl with unique_ptr)
+  SpdlogAdapter(const SpdlogAdapter&) = delete;
+  SpdlogAdapter& operator=(const SpdlogAdapter&) = delete;
+
   void Log(LogLevel level, const std::string& message) override;
   LogLevel GetLogLevel() const override;
   void SetLogLevel(LogLevel level) override;
@@ -16,7 +22,7 @@ class SpdlogAdapter : public Logger {
 
  private:
   class Impl;
-  Impl* impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace rollingraft

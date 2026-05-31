@@ -2,6 +2,8 @@
 #include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
+#include <fstream>
+
 using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
@@ -472,34 +474,82 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
     std::lock_guard<std::mutex> lock_a(applier_mtx_);
 
-    // Handle snapshot chunk
+    // Handle snapshot chunk — write to temp file to avoid OOM on large
+    // snapshots (P0 Phase 2 streaming fix).
     if (req.offset_ == 0) {
-      // New snapshot transfer, clear buffer
-      snapshot_temp_data_.clear();
+      // New snapshot transfer: create temp file
+      snapshot_temp_path_ = "/tmp/rollingraft_snapshot_" +
+                            std::to_string(server_id_) + "_" +
+                            std::to_string(req.last_included_index_) + "_" +
+                            std::to_string(req.last_included_term_);
+      std::ofstream ofs(snapshot_temp_path_,
+                        std::ios::binary | std::ios::trunc);
+      if (!ofs) {
+        LOG_ERROR("Node {} failed to create snapshot temp file: {}",
+                  server_id_, snapshot_temp_path_);
+        return;
+      }
       LOG_INFO("Node {} starting snapshot receive: index={}, term={}",
                server_id_, req.last_included_index_, req.last_included_term_);
     }
 
-    // Append chunk data
-    snapshot_temp_data_.append(req.data_.data(), req.data_.size());
+    // Append chunk to temp file
+    {
+      std::ofstream ofs(snapshot_temp_path_,
+                        std::ios::binary | std::ios::app);
+      if (!ofs) {
+        LOG_ERROR("Node {} failed to open snapshot temp file: {}",
+                  server_id_, snapshot_temp_path_);
+        return;
+      }
+      ofs.write(req.data_.data(), req.data_.size());
+      if (!ofs) {
+        LOG_ERROR("Node {} failed to write snapshot chunk to temp file",
+                  server_id_);
+        return;
+      }
+    }
     LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}",
               server_id_, req.offset_, req.data_.size(), req.done_);
 
-    // Final chunk: restore state machine
+    // Final chunk: restore state machine and persist
     if (req.done_) {
+      // Get file size for logging
+      std::ifstream ifs_size(snapshot_temp_path_,
+                             std::ios::binary | std::ios::ate);
+      auto file_size = static_cast<int64_t>(ifs_size.tellg());
+
       LOG_INFO(
           "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-          server_id_, snapshot_temp_data_.size(), req.last_included_index_,
+          server_id_, file_size, req.last_included_index_,
           req.last_included_term_);
 
-      // Restore state machine
-      std::vector<uint8_t> snapshot_bytes(snapshot_temp_data_.begin(),
-                                          snapshot_temp_data_.end());
+      // Restore state machine via streaming interface
+      auto restore_ifs = std::make_shared<std::ifstream>();
+      auto restore_initialized = std::make_shared<bool>(false);
+      auto restore_provider = [&](std::string& chunk) -> bool {
+        if (!*restore_initialized) {
+          restore_ifs->open(snapshot_temp_path_, std::ios::binary);
+          *restore_initialized = true;
+        }
+        if (!*restore_ifs) return false;
+        constexpr size_t kChunkSize = 64 * 1024;
+        chunk.resize(kChunkSize);
+        restore_ifs->read(chunk.data(), kChunkSize);
+        auto bytes_read = restore_ifs->gcount();
+        if (bytes_read <= 0) {
+          restore_ifs->close();
+          *restore_initialized = false;
+          return false;
+        }
+        chunk.resize(bytes_read);
+        return true;
+      };
 
-      if (!state_machine_->Restore(snapshot_bytes)) {
+      if (!state_machine_->RestoreStream(restore_provider)) {
         LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
-        // Clear buffer and wait for leader to retry
-        snapshot_temp_data_.clear();
+        std::remove(snapshot_temp_path_.c_str());
+        snapshot_temp_path_.clear();
         return;
       }
 
@@ -550,21 +600,28 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
       // Persist snapshot if persister available
       if (persister_) {
-        // Phase 1 streaming: avoid an extra full-copy inside SaveSnapshot
-        // by using SaveSnapshotStream. The chunk provider yields the
-        // already-buffered snapshot data as a single chunk.
-        size_t offset = 0;
-        auto chunk_provider = [&](std::string& chunk) -> bool {
-          if (offset == 0) {
-            chunk.assign(snapshot_temp_data_.data(),
-                         snapshot_temp_data_.size());
-            offset = snapshot_temp_data_.size();
-            return true;
+        auto persist_ifs = std::make_shared<std::ifstream>();
+        auto persist_initialized = std::make_shared<bool>(false);
+        auto persist_provider = [&](std::string& chunk) -> bool {
+          if (!*persist_initialized) {
+            persist_ifs->open(snapshot_temp_path_, std::ios::binary);
+            *persist_initialized = true;
           }
-          return false;
+          if (!*persist_ifs) return false;
+          constexpr size_t kChunkSize = 64 * 1024;
+          chunk.resize(kChunkSize);
+          persist_ifs->read(chunk.data(), kChunkSize);
+          auto bytes_read = persist_ifs->gcount();
+          if (bytes_read <= 0) {
+            persist_ifs->close();
+            *persist_initialized = false;
+            return false;
+          }
+          chunk.resize(bytes_read);
+          return true;
         };
         auto status = persister_->SaveSnapshotStream(
-            chunk_provider, req.last_included_index_,
+            persist_provider, req.last_included_index_,
             req.last_included_term_);
         if (!status.ok()) {
           LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
@@ -573,8 +630,11 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
         }
       }
 
-      // Clear buffer
-      snapshot_temp_data_.clear();
+      // Clean up temp file
+      if (!snapshot_temp_path_.empty()) {
+        std::remove(snapshot_temp_path_.c_str());
+        snapshot_temp_path_.clear();
+      }
 
       LOG_INFO(
           "Node {} successfully restored from snapshot, log start={}, "

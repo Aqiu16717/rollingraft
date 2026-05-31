@@ -352,7 +352,7 @@ class RaftNode::RaftNodeImpl {
 
   // ========== Snapshot Transfer State ==========
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
-  std::string snapshot_temp_data_;  // Follower side (chunk buffer)
+  std::string snapshot_temp_path_;  // Follower side: temp file for streaming
 
   // ========== Metrics ==========
   std::unique_ptr<MetricsRegistry> metrics_;

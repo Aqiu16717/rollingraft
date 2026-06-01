@@ -526,3 +526,68 @@ TEST_F(Cluster3NodesTest, AutoRemovesDeadNode) {
   }
   EXPECT_FALSE(found) << "Dead node " << dead_id << " should have been auto-removed";
 }
+
+TEST_F(Cluster3NodesTest, DoesNotRemoveNodeAfterPartitionHeals) {
+  auto ports = AllocateEphemeralPorts(3);
+  addrs_ = FormatAddrs(ports);
+
+  configs_.clear();
+  for (int i = 0; i < 3; ++i) {
+    auto config = MakeConfig(i + 1, addrs_[i], addrs_);
+    config.auto_remove_dead_nodes = true;
+    config.dead_node_timeout_ms = 800;
+    configs_.push_back(config);
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+    auto start_status = nodes_[i]->Start();
+    EXPECT_TRUE(start_status.ok()) << "Failed to start node " << (i + 1);
+  }
+
+  WaitForLeader();
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Find a follower
+  size_t follower_idx = nodes_.size();
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    if (nodes_[i].get() != leader) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_LT(follower_idx, nodes_.size());
+  NodeId follower_id = follower_idx + 1;
+
+  // Stop the follower to simulate network partition
+  LOG_INFO("Stopping follower node {} to simulate partition", follower_id);
+  nodes_[follower_idx]->Stop();
+  nodes_[follower_idx].reset();
+
+  // Wait less than dead_node_timeout_ms (simulating temporary partition)
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+  // Restart the follower (partition heals)
+  LOG_INFO("Restarting follower node {} after partition heals", follower_id);
+  auto sm = std::make_shared<MockStateMachine>();
+  state_machines_[follower_idx] = sm;
+  nodes_[follower_idx] = std::make_unique<RaftNode>(configs_[follower_idx], sm);
+  auto restart_status = nodes_[follower_idx]->Start();
+  EXPECT_TRUE(restart_status.ok()) << "Failed to restart node " << follower_id;
+
+  // Wait for the follower to catch up and for any pending removal to resolve
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  // Verify the follower was NOT auto-removed
+  auto config = leader->GetConfig();
+  bool found = false;
+  for (NodeId id : config.nodes) {
+    if (id == follower_id) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found) << "Follower " << follower_id
+                     << " should NOT have been auto-removed after partition healed";
+}

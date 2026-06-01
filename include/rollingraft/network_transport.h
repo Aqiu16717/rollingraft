@@ -97,6 +97,21 @@ class NetworkTransport {
   }
 
   /**
+   * Enable or disable write coalescing (batching) for outbound messages.
+   *
+   * When enabled, multiple messages to the same peer are concatenated into
+   * a single async_write. When disabled, each message is sent immediately.
+   * Default is enabled. This is a transport-specific optimization; the
+   * default implementation is a no-op for transports that do not support
+   * batching.
+   *
+   * @param enabled true to enable batching, false to disable
+   */
+  virtual void SetBatchingEnabled(bool enabled) {
+    (void)enabled;  // Default no-op
+  }
+
+  /**
    * Start the transport layer.
    *
    * Begins listening for incoming connections and enables sending.

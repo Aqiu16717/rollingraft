@@ -202,6 +202,8 @@ Status RaftNode::RaftNodeImpl::Start() {
     return status;
   }
 
+  network_->SetBatchingEnabled(config_.transport_batching_enabled);
+
   status = network_->Start();
   if (!status.ok()) {
     if (persister_) persister_->Close();

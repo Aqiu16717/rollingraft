@@ -217,6 +217,12 @@ struct RaftNodeConfig {
   bool auto_remove_dead_nodes = false;
   uint32_t dead_node_timeout_ms = 600;  // Default = election_timeout_ms * 2
 
+  // Transport write coalescing (batching): when enabled, multiple outbound
+  // messages to the same peer are concatenated into a single async_write.
+  // Disabling may improve stability under extreme concurrency at the cost of
+  // slightly higher syscall overhead. Default = enabled.
+  bool transport_batching_enabled = true;
+
   /**
    * Validate configuration parameters.
    *

@@ -119,6 +119,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   NodeId GetPeerId() const { return peer_id_; }
   NodeAddr GetAddr() const { return addr_; }
 
+  void SetBatchingEnabled(bool enabled) { batching_enabled_ = enabled; }
+
   void Send(const std::string& data, uint64_t correlation_id,
             RpcResponseCallback callback, std::chrono::milliseconds timeout) {
     auto self = shared_from_this();
@@ -165,15 +167,52 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       // failure) or explicit Close().
     });
 
-    // Queue message for coalesced write. Must post to TcpConnection's
-    // own strand_ because Send() may be called from PeerConnection's strand.
-    asio::post(strand_, [self = shared_from_this(), msg, correlation_id]() {
-      self->write_queue_.push_back({msg, correlation_id});
-      if (!self->write_in_progress_) {
-        self->write_in_progress_ = true;
-        self->DoWrite();
+    if (batching_enabled_) {
+      // Queue message for coalesced write. Must post to TcpConnection's
+      // own strand_ because Send() may be called from PeerConnection's strand.
+      asio::post(strand_, [self = shared_from_this(), msg, correlation_id]() {
+        self->write_queue_.push_back({msg, correlation_id});
+        if (!self->write_in_progress_) {
+          self->write_in_progress_ = true;
+          self->DoWrite();
+        }
+      });
+    } else {
+      // Batching disabled: direct async_write per message. Avoids strand
+      // queue accumulation under extreme concurrency.
+      auto write_handler = [self = shared_from_this(), correlation_id,
+                            msg](std::error_code ec, std::size_t) {
+        if (ec) {
+          RpcResponseCallback cb;
+          std::shared_ptr<asio::steady_timer> timer;
+          {
+            std::lock_guard<std::mutex> lock(self->mutex_);
+            auto it = self->pending_callbacks_.find(correlation_id);
+            if (it != self->pending_callbacks_.end()) {
+              cb = std::move(it->second.callback);
+              timer = std::move(it->second.timer);
+              self->pending_callbacks_.erase(it);
+            }
+          }
+          if (timer) timer->cancel();
+          if (cb) {
+            cb("", false, "Send failed: " + ec.message());
+          }
+          self->connected_.store(false, std::memory_order_release);
+        }
+      };
+
+      if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
+        asio::async_write(
+            std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
+            asio::bind_executor(strand_, write_handler));
+      } else {
+        asio::async_write(
+            std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
+            asio::buffer(*msg),
+            asio::bind_executor(strand_, write_handler));
       }
-    });
+    }
   }
 
   void DoWrite() {
@@ -410,6 +449,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   };
   std::deque<WriteEntry> write_queue_;
   bool write_in_progress_ = false;
+  bool batching_enabled_ = true;
 
   RpcResponseCallback ExtractCallbackLocked(const std::string& response_data) {
     // Lightweight JSON parse to extract correlation_id
@@ -613,6 +653,8 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   }
 
   State GetState() const { return state_.load(std::memory_order_acquire); }
+
+  std::shared_ptr<TcpConnection> GetConnection() const { return conn_; }
 
  private:
   void OnTcpConnected(std::error_code ec,
@@ -834,6 +876,17 @@ class AsioNetworkTransport : public NetworkTransport {
     std::lock_guard<std::mutex> lock(mutex_);
     if (peer_state_callback_) {
       peer_state_callback_(peer_id, state);
+    }
+  }
+
+  void SetBatchingEnabled(bool enabled) override {
+    batching_enabled_.store(enabled, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [peer_id, peer] : peers_) {
+      auto conn = peer->GetConnection();
+      if (conn) {
+        conn->SetBatchingEnabled(enabled);
+      }
     }
   }
 
@@ -1066,6 +1119,8 @@ class AsioNetworkTransport : public NetworkTransport {
   TlsConfig tls_config_;
   asio::ssl::context server_ssl_context_{asio::ssl::context::tls_server};
   asio::ssl::context client_ssl_context_{asio::ssl::context::tls_client};
+
+  std::atomic<bool> batching_enabled_{true};
 };
 
 // Factory function

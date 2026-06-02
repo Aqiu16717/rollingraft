@@ -317,6 +317,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
   {
     std::lock_guard<std::mutex> lock_e(election_mtx_);
 
+    RecordActivityLocked();
+
     if (metrics_) {
       metrics_
           ->GetCounter("raft_appendentries_received_total",
@@ -648,6 +650,8 @@ void RaftNode::RaftNodeImpl::HandleReadIndexRequest(
     const ReadIndexRequest& /*req*/, ReadIndexResponse& resp) {
   std::lock_guard<std::mutex> lock_e(election_mtx_);
 
+  RecordActivityLocked();
+
   resp.term_ = current_term_;
 
   if (role_ == RaftNodeRole::LEADER) {
@@ -667,6 +671,8 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
   // Bridge pattern: election_mtx_ -> replication_mtx_
   std::unique_lock<std::mutex> lock_e(election_mtx_);
   std::unique_lock<std::mutex> lock_r(replication_mtx_);
+
+  RecordActivityLocked();
 
   // Check if we are the leader
   if (role_ != RaftNodeRole::LEADER) {

@@ -687,6 +687,8 @@ Status RaftNode::RaftNodeImpl::Propose(
   std::lock_guard<std::mutex> lock_e(election_mtx_);
   std::lock_guard<std::mutex> lock_r(replication_mtx_);
 
+  RecordActivityLocked();
+
   if (!IsRunning()) {
     return Status::Error("Node not running");
   }
@@ -776,6 +778,8 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
   // Bridge pattern: election_mtx_ -> replication_mtx_
   std::lock_guard<std::mutex> lock_e(election_mtx_);
   std::lock_guard<std::mutex> lock_r(replication_mtx_);
+
+  RecordActivityLocked();
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
@@ -989,6 +993,8 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
   // Phase 1: Election state check under election_mtx_ only.
   std::unique_lock<std::mutex> lock_e(election_mtx_);
+
+  RecordActivityLocked();
 
   if (!IsRunning()) {
     return Status::Error("Node not running");

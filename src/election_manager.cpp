@@ -227,10 +227,16 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   // Read dynamic config snapshot (thread-safe via RuntimeConfig)
   auto cfg = runtime_config_->Get();
 
-  // Random timeout [election_timeout, 2 * election_timeout)
+  uint32_t base_timeout = cfg.election_timeout_ms;
+  // Quiesced mode: extend election timeout to reduce false elections
+  // when the leader has paused heartbeats due to idleness.
+  if (quiesced_.load(std::memory_order_acquire)) {
+    base_timeout = config_.quiesced_election_timeout_ms;
+  }
+
+  // Random timeout [base_timeout, 2 * base_timeout)
   static thread_local std::mt19937 gen(std::random_device{}());
-  std::uniform_int_distribution<> dis(cfg.election_timeout_ms,
-                                      2 * cfg.election_timeout_ms);
+  std::uniform_int_distribution<> dis(base_timeout, 2 * base_timeout);
 
   uint32_t timeout = dis(gen);
 
@@ -258,6 +264,29 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
         ->GetCounter("raft_election_timeouts_total",
                      {{"node_id", std::to_string(server_id_)}})
         .Increment();
+  }
+
+  // Quiesced mode: if we have been quiesced for multiple consecutive timeouts,
+  // the leader may actually be dead. Exit quiesced and start election.
+  // Otherwise, just reset the timer with extended timeout.
+  if (quiesced_.load(std::memory_order_acquire)) {
+    ++consecutive_quiesced_timeouts_;
+    if (consecutive_quiesced_timeouts_ >=
+        config_.quiesced_max_consecutive_timeouts) {
+      LOG_INFO(
+          "Node {} exiting quiesced mode after {} consecutive timeouts, "
+          "starting election",
+          server_id_, consecutive_quiesced_timeouts_);
+      ExitQuiescedLocked();
+      // Fall through to normal election handling
+    } else {
+      LOG_DEBUG(
+          "Node {} quiesced election timeout {}/{}, resetting timer",
+          server_id_, consecutive_quiesced_timeouts_,
+          config_.quiesced_max_consecutive_timeouts);
+      ResetElectionTimerLocked();
+      return;
+    }
   }
 
   if (!pre_vote_enabled_) {

@@ -27,6 +27,24 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
   if (!IsRunning()) return;
   if (role_ != RaftNodeRole::LEADER) return;
 
+  // Quiesced mode: if idle for too long, enter quiesced state and skip
+  // empty heartbeats to reduce network/CPU overhead.
+  if (ShouldEnterQuiescedLocked()) {
+    EnterQuiescedLocked();
+  }
+  if (quiesced_.load(std::memory_order_acquire)) {
+    // In quiesced mode, only send heartbeats if there are pending reads
+    // that need heartbeat acks. Otherwise skip entirely.
+    bool has_pending_reads = false;
+    {
+      std::lock_guard<std::mutex> lock_a(applier_mtx_);
+      has_pending_reads = !pending_reads_.empty();
+    }
+    if (!has_pending_reads) {
+      return;
+    }
+  }
+
   // CheckQuorum: verify we still have majority acks before sending
   // next round of heartbeats.
   if (check_quorum_enabled_) {

@@ -223,6 +223,16 @@ struct RaftNodeConfig {
   // slightly higher syscall overhead. Default = enabled.
   bool transport_batching_enabled = true;
 
+  // Quiesced mode: when enabled, the cluster reduces heartbeat and election
+  // activity during idle periods to save CPU/network. Heartbeats are paused
+  // on the leader and election timeouts are extended on followers.
+  // Default = disabled.
+  bool quiesced_mode_enabled = false;
+  uint32_t quiesced_idle_threshold_ms = 2000;      // Idle time before quiescing
+  uint32_t quiesced_heartbeat_interval_ms = 5000;  // Heartbeat interval when quiesced
+  uint32_t quiesced_election_timeout_ms = 10000;   // Election timeout when quiesced
+  uint32_t quiesced_max_consecutive_timeouts = 3;  // Max quiesced timeouts before forcing election
+
   /**
    * Validate configuration parameters.
    *

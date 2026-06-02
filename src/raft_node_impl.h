@@ -142,6 +142,12 @@ class RaftNode::RaftNodeImpl {
   void StartSnapshotCheckTimerLocked();
   void StopSnapshotCheckTimerLocked();
 
+  // Quiesced mode
+  void RecordActivityLocked();
+  bool ShouldEnterQuiescedLocked() const;
+  void EnterQuiescedLocked();
+  void ExitQuiescedLocked();
+
   // Snapshot related
   void MaybeTriggerAutoSnapshotLocked();
   void DoSnapshotLocked(const std::string& trigger);
@@ -268,6 +274,11 @@ class RaftNode::RaftNodeImpl {
   bool pre_vote_enabled_ = true;      // Enabled by default
   std::chrono::steady_clock::time_point last_leader_contact_;
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point> quorum_acks_;
+
+  // Quiesced mode state
+  std::atomic<bool> quiesced_{false};
+  std::chrono::steady_clock::time_point last_activity_time_;
+  uint32_t consecutive_quiesced_timeouts_ = 0;
 
   // Dead node detection: last time we received a valid response from each peer
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point> last_contact_time_;

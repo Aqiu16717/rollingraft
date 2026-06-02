@@ -711,7 +711,7 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
 
     // Wait for ReadIndex with timeout (use rpc_timeout_ms)
     auto wait_status = future.wait_for(
-        std::chrono::milliseconds(config_.rpc_timeout_ms));
+        std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
 
     lock_e.lock();
     lock_r.lock();

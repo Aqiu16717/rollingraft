@@ -312,7 +312,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   // Send
   network_->SendRpc(peer_id, it_addr->second, data, req.correlation_id_,
-                    std::chrono::milliseconds(config_.rpc_timeout_ms),
+                    std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
                     [this, peer_id](const std::string& resp, bool success,
                                     const std::string& error) {
                       // Deserialize response first (outside lock)

@@ -68,6 +68,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     defaults.propose_timeout_ms = config.propose_timeout_ms;
     defaults.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
     defaults.leader_lease_enabled = config.leader_lease_enabled;
+    defaults.transport_batching_enabled = config.transport_batching_enabled;
     runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
   }
 
@@ -154,7 +155,8 @@ Status RaftNode::RaftNodeImpl::Start() {
     // Initialize and start LogPersister
     LogPersistenceConfig log_config;
     log_config.batch_size = config_.max_entries_per_append;
-    log_config.batch_interval_ms = config_.heartbeat_interval_ms / 2;
+    auto rc = runtime_config_->Get();
+    log_config.batch_interval_ms = rc.heartbeat_interval_ms / 2;
     log_config.data_dir = config_.data_dir;
 
     // Wire ASIO executor for async truncation if using AsioTimerService
@@ -202,7 +204,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     return status;
   }
 
-  network_->SetBatchingEnabled(config_.transport_batching_enabled);
+  network_->SetBatchingEnabled(runtime_config_->Get().transport_batching_enabled);
 
   status = network_->Start();
   if (!status.ok()) {
@@ -374,8 +376,13 @@ Status RaftNode::RaftNodeImpl::Start() {
       if (!runtime_config_) {
         return "{\"error\":\"runtime_config_not_initialized\"}";
       }
+      auto old_cfg = runtime_config_->Get();
       auto status = runtime_config_->UpdateFromJson(json);
       if (status.ok()) {
+        auto new_cfg = runtime_config_->Get();
+        if (new_cfg.transport_batching_enabled != old_cfg.transport_batching_enabled) {
+          network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
+        }
         return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
       }
       nlohmann::json j;
@@ -1016,7 +1023,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     ReadIndexRequest req;
     ReadIndexResponse resp;
     auto status = RpcCall(leader_addr, req, resp,
-                          std::chrono::milliseconds(config_.rpc_timeout_ms));
+                          std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
     if (!status.ok()) {
       return Status::Error("READINDEX_FORWARD",
                            "Failed to forward ReadIndex to leader: " +

@@ -39,6 +39,7 @@ struct RuntimeConfigValues {
   uint32_t propose_timeout_ms = 5000;
   bool leader_lease_enabled = true;
   uint32_t max_pipeline_window = 128;
+  bool transport_batching_enabled = true;
 };
 
 /**

@@ -58,6 +58,7 @@ add_executable(unit_tests
   unit/test_prevote_checkquorum.cpp
   unit/test_learner.cpp
   unit/test_quiesced_mode.cpp
+  unit/test_runtime_config.cpp
 )
 
 target_include_directories(unit_tests

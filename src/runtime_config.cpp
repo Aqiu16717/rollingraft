@@ -41,6 +41,7 @@ Status RuntimeConfig::UpdateFromJson(const std::string& json_str) {
   if (j.contains("propose_timeout_ms")) proposed.propose_timeout_ms = j["propose_timeout_ms"];
   if (j.contains("leader_lease_enabled")) proposed.leader_lease_enabled = j["leader_lease_enabled"];
   if (j.contains("max_pipeline_window")) proposed.max_pipeline_window = j["max_pipeline_window"];
+  if (j.contains("transport_batching_enabled")) proposed.transport_batching_enabled = j["transport_batching_enabled"];
 
   auto status = Validate(proposed);
   if (!status.ok()) return status;
@@ -72,6 +73,7 @@ std::string RuntimeConfig::ToJson() const {
   j["propose_timeout_ms"] = values_.propose_timeout_ms;
   j["leader_lease_enabled"] = values_.leader_lease_enabled;
   j["max_pipeline_window"] = values_.max_pipeline_window;
+  j["transport_batching_enabled"] = values_.transport_batching_enabled;
   return j.dump(2);
 }
 

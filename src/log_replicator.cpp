@@ -100,7 +100,7 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
                            now - ack_time)
                            .count();
         if (elapsed >= 0 &&
-            static_cast<uint32_t>(elapsed) < config_.election_timeout_ms &&
+            static_cast<uint32_t>(elapsed) < runtime_config_->Get().election_timeout_ms &&
             cluster_config_.IsVoter(peer_id) && peer_id != dead_id) {
           ++active_voters;
         }

@@ -52,6 +52,16 @@ target_link_libraries(benchmark_failover
     rollingraft
 )
 
+# Persister microbenchmark executable
+add_executable(benchmark_persister
+  persister_benchmark.cpp
+)
+
+target_link_libraries(benchmark_persister
+  PRIVATE
+    rollingraft
+)
+
 # Unified benchmark runner
 add_executable(benchmark_runner
   main.cpp

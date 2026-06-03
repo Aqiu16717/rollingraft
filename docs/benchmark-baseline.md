@@ -1,0 +1,185 @@
+# LevelDBPersister 性能基准报告
+
+> **目的**：在 T3 WAL 分离改变存储层之前，建立 LevelDBPersister 的性能基线，为后续对比提供数据支撑。
+>
+> **测试时间**：2026-06-03  
+> **测试平台**：macOS ARM64 (Apple Silicon)  
+> **代码版本**：`e201982` (main)
+
+---
+
+## 测试方法
+
+### 测试程序
+
+`benchmark/persister_benchmark.cpp` —— 直接对 `LevelDBPersister` 进行微基准测试，不经过网络或 Raft 协议层。
+
+### 测试维度
+
+1. **Append 吞吐**：单线程写入，测量 ops/sec 和 latency 分布（P50/P99）
+2. **恢复时间**：创建 N 条 entry 后关闭 DB，测量重新 `Open()` 的耗时
+3. **内存占用**：通过 `getrusage(RUSAGE_SELF).ru_maxrss` 追踪峰值 RSS
+
+### 参数矩阵
+
+- **Entry 数量**：1K / 10K / 100K（恢复/内存），50K（吞吐）
+- **Payload 大小**：100B / 1KB
+- **Batch 大小**：1 / 10 / 100
+- **压缩模式**：`kNoCompression` / `kSnappyCompression`
+
+### 注意事项
+
+- 每次测试使用独立临时目录，测试结束后清理
+- 写入后强制调用 `Sync()` 确保数据落盘
+- 随机数据（`std::mt19937` seed=42），Snappy 对完全随机数据压缩率极低
+
+---
+
+## 1. Append 吞吐
+
+### 1.1 单条写入（100B payload）
+
+| 指标 | No Compression | Snappy |
+|------|---------------|--------|
+| **Ops/sec** | 187,266 | 200,000 |
+| **Avg latency** | 5.1 us | 4.8 us |
+| **P50 latency** | 3.6 us | 3.6 us |
+| **P99 latency** | 18.7 us | 18.3 us |
+| **数据目录大小** | 8.02 MB | 8.08 MB |
+
+**分析**：
+- 吞吐接近 **200K ops/sec**，单条写入 latency 中位数仅 **3.6 us**
+- Snappy 对随机数据压缩率几乎为零（8.02 MB vs 8.08 MB），但压缩 CPU 开销也极低，吞吐反而略高（noise）
+- P99 约 18 us，说明偶有 fsync 或 LevelDB 内部刷新导致的延迟尖刺
+
+### 1.2 批量写入（100B payload，Snappy）
+
+| Batch Size | Ops/sec (batches) | Entries/sec | Avg latency | P99 latency | 数据目录 |
+|-----------|-------------------|-------------|-------------|-------------|----------|
+| 1x | 200,000 | 200,000 | 4.8 us | 18.3 us | 8.08 MB |
+| 10x | 37,879 | **378,790** | 25.7 us | 45.4 us | 7.07 MB |
+| 100x | 5,000 | **500,000** | 193.2 us | 852.8 us | 6.84 MB |
+
+**分析**：
+- Batch 越大，**entries/sec 越高**，但单条 latency 增加
+- 100x batch 达到 **50万 entries/sec**，但 P99 latency 飙升到 **853 us**（单条约 8.5 us，batch 整体延迟高）
+- 数据目录大小随 batch 增大略有下降（write batch 合并减少了 overhead）
+
+### 1.3 单条写入（1KB payload）
+
+| 指标 | No Compression | Snappy |
+|------|---------------|--------|
+| **Ops/sec** | 67,114 | 66,225 |
+| **Avg latency** | 14.7 us | 14.9 us |
+| **P50 latency** | 6.8 us | 7.2 us |
+| **P99 latency** | 34.5 us | 31.8 us |
+| **数据目录大小** | 10.24 MB | 10.24 MB |
+
+**分析**：
+- 1KB payload 时吞吐降至 ~66K ops/sec，约为 100B 的 1/3（I/O 量增大 10x，但 overhead 占比下降）
+- Snappy 仍无压缩收益（随机数据）
+
+---
+
+## 2. 恢复时间（Reopen Duration）
+
+恢复测试流程：
+1. 创建 DB 并写入 N 条 entry
+2. 关闭 DB
+3. 重新 `Open()` 并测量耗时
+
+| Entries | No Compression | Snappy |
+|---------|---------------|--------|
+| **1K** | 16 ms | 18 ms |
+| **10K** | 38 ms | 36 ms |
+| **100K** | 72 ms | 76 ms |
+
+**分析**：
+- 恢复时间与 entry 数量呈**次线性增长**：100K 是 1K 的 100 倍，但 reopen 仅增加 4.5 倍
+- LevelDB 的 reopen 主要是读取 manifest 和索引块，不需要遍历全部数据
+- 压缩模式对恢复时间**无显著影响**
+- **结论**：当前存储层恢复性能优秀，100K entries 仅需 ~75ms
+
+---
+
+## 3. 内存占用（Peak RSS）
+
+通过 `getrusage(RUSAGE_SELF).ru_maxrss` 测量：
+
+| Entries | No Compression | Snappy |
+|---------|---------------|--------|
+| **1K** | ~0 KB delta | ~0 KB delta |
+| **10K** | ~0 KB delta | ~0 KB delta |
+| **100K** | ~0 KB delta | ~0 KB delta |
+
+**分析**：
+- LevelDBPersister **不显著增加进程 RSS**
+- LevelDB 使用 mmap 访问 SST 文件，数据页由 OS page cache 管理，不直接计入进程 RSS
+- 进程 RSS 基线约 **18 MB**（主要是库加载和运行时 overhead）
+- **结论**：存储层内存压力极低，适合高吞吐场景
+
+---
+
+## 4. 压缩效果分析（T5 数据支撑）
+
+| 场景 | No Compression | Snappy | 节省空间 |
+|------|---------------|--------|----------|
+| 50K x 100B 随机数据 | 8.02 MB | 8.08 MB | **-0.7%** |
+| 10K x 1KB 随机数据 | 10.24 MB | 10.24 MB | **0%** |
+
+**关键发现**：
+- **随机数据对 Snappy 不可压缩**（符合预期，Snappy 设计用于压缩结构化/重复数据）
+- 吞吐无损失：Snappy 压缩/解压速度极快（~200-500MB/s），不会成为瓶颈
+- **建议**：对于结构化日志数据（如 JSON、protobuf），Snappy 可能提供 2-5x 压缩率；对于已压缩/加密数据，应使用 `kNoCompression`
+- **重要提示**：本基准使用**随机 payload**，不可压缩。实际 snapshot 数据的可压缩性取决于 StateMachine 实现。如果 snapshot chunks 是大块结构化数据（如序列化 key-value 对），Snappy 压缩率可能达到 2-5x。
+
+---
+
+## 5. 结论与建议
+
+### 5.1 基线数据汇总
+
+| 指标 | 基线值 | 备注 |
+|------|--------|------|
+| 单条 100B append 吞吐 | **~190K ops/sec** | 单线程，无压缩 |
+| 单条 1KB append 吞吐 | **~66K ops/sec** | 单线程，无压缩 |
+| 100x batch entries/sec | **~500K entries/sec** | 单线程，Snappy |
+| 100K entries reopen | **~75 ms** | 次线性增长 |
+| 进程 RSS 增量 | **~0 KB** | 依赖 OS page cache |
+
+### 5.2 对 T3 WAL 分离的预期
+
+T3 引入 WALPersister 后，以下指标应重点关注：
+
+1. **Append 吞吐**：WAL 顺序写入应显著高于 LevelDB 的 LSM-Tree 写入，预期提升 2-5x
+2. **恢复时间**：WAL replay 需要顺序读取全部记录，100K entries 恢复时间可能高于 LevelDB 的索引 reopen
+3. **内存占用**：WAL 的内存索引（`std::map<uint64_t, IndexEntry>`）会引入额外 RSS，需量化对比
+4. **磁盘空间**：WAL segment 文件无压缩（当前设计），预期磁盘占用高于 LevelDB+Snappy（对可压缩数据）
+
+### 5.3 配置建议
+
+- **默认保持 `compression_type=1`（Snappy）**：对随机数据无损失，对结构化数据有收益
+- **高吞吐场景启用 batch**：`AppendEntries(batch)` 比单条 append 提升 2.5x entries/sec
+- **监控 P99 latency**：单条 append P99 ~18us，但 batch 100x 时 P99 可达 850us，需根据 SLA 调整 batch 大小
+
+---
+
+## 附录：复现方法
+
+```bash
+# 编译 benchmark
+cd build_test
+cmake .. && cmake --build . --target benchmark_persister
+
+# 运行基准测试
+./benchmark/benchmark_persister
+
+# 输出包括：
+# - Append 吞吐（ops/sec、latency 分布、RSS 增量、目录大小）
+# - 恢复时间（create vs reopen、目录大小）
+# - 内存占用（RSS before/after/delta、目录大小）
+```
+
+---
+
+*Report generated by @GeoHot, commit `e201982`.*

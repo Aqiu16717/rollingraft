@@ -115,8 +115,12 @@ Status WALPersister::Open(const std::string& wal_dir) {
     while ((entry = readdir(dir)) != nullptr) {
       std::string name(entry->d_name);
       if (name.size() > 4 && name.substr(name.size() - 4) == ".wal") {
-        uint64_t id = std::stoull(name.substr(0, name.size() - 4));
-        segment_ids.push_back(id);
+        try {
+          uint64_t id = std::stoull(name.substr(0, name.size() - 4));
+          segment_ids.push_back(id);
+        } catch (const std::exception&) {
+          // Skip malformed segment filenames
+        }
       }
     }
     closedir(dir);
@@ -415,8 +419,12 @@ Status WALPersister::Replay(
       while ((entry = readdir(dir)) != nullptr) {
         std::string name(entry->d_name);
         if (name.size() > 4 && name.substr(name.size() - 4) == ".wal") {
-          uint64_t id = std::stoull(name.substr(0, name.size() - 4));
-          segment_ids.push_back(id);
+          try {
+            uint64_t id = std::stoull(name.substr(0, name.size() - 4));
+            segment_ids.push_back(id);
+          } catch (const std::exception&) {
+            // Skip malformed segment filenames
+          }
         }
       }
       closedir(dir);
@@ -457,9 +465,13 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
     while ((entry = readdir(dir)) != nullptr) {
       std::string name(entry->d_name);
       if (name.size() > 4 && name.substr(name.size() - 4) == ".wal") {
-        uint64_t id = std::stoull(name.substr(0, name.size() - 4));
-        if (id < first_segment_to_keep) {
-          segments_to_delete.push_back(id);
+        try {
+          uint64_t id = std::stoull(name.substr(0, name.size() - 4));
+          if (id < first_segment_to_keep) {
+            segments_to_delete.push_back(id);
+          }
+        } catch (const std::exception&) {
+          // Skip malformed segment filenames
         }
       }
     }

@@ -338,3 +338,38 @@ TEST_F(LevelDBPersisterTest, SnapshotCorruptionDetected) {
     EXPECT_TRUE(loaded_data.empty());
   }
 }
+
+// Test that SetCompressionType can be called before Open
+TEST_F(LevelDBPersisterTest, CompressionTypeNoCompression) {
+  persister_->Close();
+  std::filesystem::remove_all(test_dir_);
+  std::filesystem::create_directories(test_dir_);
+
+  persister_->SetCompressionType(Persister::kNoCompression);
+  ASSERT_TRUE(persister_->Open(test_dir_).ok());
+
+  auto entry = MakeEntry(1, 1, "hello");
+  ASSERT_TRUE(persister_->AppendEntries({entry}).ok());
+
+  std::vector<RaftLogEntry> out;
+  ASSERT_TRUE(persister_->GetEntries(1, 2, &out).ok());
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].data_, "hello");
+}
+
+TEST_F(LevelDBPersisterTest, CompressionTypeSnappy) {
+  persister_->Close();
+  std::filesystem::remove_all(test_dir_);
+  std::filesystem::create_directories(test_dir_);
+
+  persister_->SetCompressionType(Persister::kSnappyCompression);
+  ASSERT_TRUE(persister_->Open(test_dir_).ok());
+
+  auto entry = MakeEntry(1, 1, "hello snappy");
+  ASSERT_TRUE(persister_->AppendEntries({entry}).ok());
+
+  std::vector<RaftLogEntry> out;
+  ASSERT_TRUE(persister_->GetEntries(1, 2, &out).ok());
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].data_, "hello snappy");
+}

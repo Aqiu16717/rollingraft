@@ -119,6 +119,13 @@ Status RaftNodeConfig::Validate() const {
                          "dead_node_timeout_ms must be > 0 when auto_remove_dead_nodes is enabled");
   }
 
+  // Compression type must be 0 (none) or 1 (snappy)
+  if (compression_type > 1) {
+    return Status::Error("CONFIG_INVALID",
+                         "compression_type must be 0 (none) or 1 (snappy), got " +
+                             std::to_string(compression_type));
+  }
+
   return Status::OK();
 }
 

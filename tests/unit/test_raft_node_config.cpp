@@ -268,3 +268,29 @@ TEST_F(RaftNodeConfigValidateTest, DeadNodeTimeoutEnabledValid) {
   config.dead_node_timeout_ms = 600;
   EXPECT_TRUE(config.Validate().ok());
 }
+
+TEST_F(RaftNodeConfigValidateTest, CompressionTypeDefaultValid) {
+  auto config = MakeValidConfig();
+  EXPECT_EQ(config.compression_type, 1u);
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, CompressionTypeNoneValid) {
+  auto config = MakeValidConfig();
+  config.compression_type = 0;
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, CompressionTypeSnappyValid) {
+  auto config = MakeValidConfig();
+  config.compression_type = 1;
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, CompressionTypeInvalid) {
+  auto config = MakeValidConfig();
+  config.compression_type = 2;
+  auto status = config.Validate();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("compression_type"), std::string::npos);
+}

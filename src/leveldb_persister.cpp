@@ -246,6 +246,10 @@ class LevelDBPersister : public Persister {
 
   void SetSyncOnWrite(bool sync) override { sync_on_write_ = sync; }
 
+  void SetCompressionType(Persister::CompressionType type) override {
+    compression_type_ = type;
+  }
+
   Status Open(const std::string& data_dir) override {
     std::unique_lock lock(mutex_);
 
@@ -255,6 +259,9 @@ class LevelDBPersister : public Persister {
 
     leveldb::Options options;
     options.create_if_missing = true;
+    options.compression = (compression_type_ == Persister::kSnappyCompression)
+                              ? leveldb::kSnappyCompression
+                              : leveldb::kNoCompression;
 
     leveldb::DB* db_ptr = nullptr;
     leveldb::Status status = leveldb::DB::Open(options, data_dir, &db_ptr);
@@ -882,6 +889,7 @@ class LevelDBPersister : public Persister {
   uint64_t snapshot_last_term_ = 0;
 
   bool sync_on_write_ = false;
+  Persister::CompressionType compression_type_ = Persister::kSnappyCompression;
 };
 
 // Factory function implementation

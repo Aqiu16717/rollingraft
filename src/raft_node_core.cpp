@@ -43,6 +43,11 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     throw std::invalid_argument("TimerService cannot be null");
   }
 
+  if (persister_) {
+    persister_->SetCompressionType(
+        static_cast<Persister::CompressionType>(config.compression_type));
+  }
+
   check_quorum_enabled_ = config.check_quorum_enabled;
   pre_vote_enabled_ = config.pre_vote_enabled;
 

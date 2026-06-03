@@ -255,6 +255,25 @@ class Persister {
    * @param sync true to enable fsync on every write
    */
   virtual void SetSyncOnWrite(bool sync) { (void)sync; }
+
+  /**
+   * Compression types supported by persistent storage backends.
+   */
+  enum CompressionType {
+    kNoCompression = 0,
+    kSnappyCompression = 1,
+  };
+
+  /**
+   * Configure compression type for new data writes.
+   *
+   * Implementations that support compression (e.g. LevelDB)
+   * can override this. Must be set before Open() to take effect.
+   * Default is no-op (implementation decides).
+   *
+   * @param type Compression algorithm to use
+   */
+  virtual void SetCompressionType(CompressionType type) { (void)type; }
 };
 
 /** Factory function type for creating Persister instances. */

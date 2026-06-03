@@ -233,6 +233,10 @@ struct RaftNodeConfig {
   uint32_t quiesced_election_timeout_ms = 10000;   // Election timeout when quiesced
   uint32_t quiesced_max_consecutive_timeouts = 3;  // Max quiesced timeouts before forcing election
 
+  // LevelDB compression: 0 = no compression, 1 = Snappy (default).
+  // Affects all new SST files written after Open(). Existing files unchanged.
+  uint32_t compression_type = 1;
+
   /**
    * Validate configuration parameters.
    *

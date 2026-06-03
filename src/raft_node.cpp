@@ -181,8 +181,10 @@ void RaftNode::SetLeaderChangeCallback(
 
 Status RaftNode::Propose(
     const std::string& command,
-    std::function<void(const ApplyResult& result)> callback) {
-  return raft_node_impl_->Propose(command, std::move(callback));
+    std::function<void(const ApplyResult& result)> callback,
+    uint64_t session_id,
+    uint64_t seq_num) {
+  return raft_node_impl_->Propose(command, std::move(callback), session_id, seq_num);
 }
 
 Status RaftNode::ProposeBatch(

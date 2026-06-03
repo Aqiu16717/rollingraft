@@ -30,6 +30,7 @@
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
+#include "rollingraft/client_session_manager.h"
 #include "rollingraft/runtime_config.h"
 
 namespace rollingraft {
@@ -100,7 +101,9 @@ class RaftNode::RaftNodeImpl {
   void SetLeaderChangeCallback(std::function<void(NodeId, std::string)> cb);
 
   Status Propose(const std::string& command,
-                 std::function<void(const ApplyResult&)> callback);
+                 std::function<void(const ApplyResult&)> callback,
+                 uint64_t session_id = 0,
+                 uint64_t seq_num = 0);
   Status ProposeBatch(
       const std::vector<std::string>& commands,
       std::function<void(const std::vector<ApplyResult>& results)> callback);
@@ -238,7 +241,12 @@ class RaftNode::RaftNodeImpl {
   // ========== Leader State ==========
   std::unordered_map<NodeId, Index> next_index_;
   std::unordered_map<NodeId, Index> match_index_;
-  std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Idempotency
+  std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Legacy RPC idempotency
+
+  // Client session manager for Propose() API idempotency
+  std::unique_ptr<ClientSessionManager> session_manager_;
+  // Tracks which log entries have session info for result caching on apply
+  std::unordered_map<Index, std::pair<uint64_t, uint64_t>> proposal_sessions_;
 
   // Retry tracking for AppendEntries
   struct RetryState {
@@ -347,6 +355,8 @@ class RaftNode::RaftNodeImpl {
     std::function<void(const ApplyResult&)> callback;
     bool is_config_change = false;
     std::optional<std::chrono::steady_clock::time_point> propose_time;
+    uint64_t session_id = 0;
+    uint64_t seq_num = 0;
   };
   std::thread apply_thread_;
   std::deque<ApplyTask> apply_queue_;

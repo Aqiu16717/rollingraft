@@ -66,11 +66,23 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
       pending_proposals_.erase(it);
     }
 
+    // Check if this proposal has session info
+    uint64_t session_id = 0;
+    uint64_t seq_num = 0;
+    auto sit = proposal_sessions_.find(last_enqueued_);
+    if (sit != proposal_sessions_.end()) {
+      session_id = sit->second.first;
+      seq_num = sit->second.second;
+      proposal_sessions_.erase(sit);
+    }
+
     ApplyTask task;
     task.index = last_enqueued_;
     task.data = entry.data_;
     task.callback = std::move(cb);
     task.propose_time = propose_time;
+    task.session_id = session_id;
+    task.seq_num = seq_num;
 
     {
       std::lock_guard<std::mutex> lock(apply_queue_mtx_);
@@ -130,6 +142,16 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
               reinterpret_cast<const uint8_t*>(task.data.data()),
               task.data.size()),
           task.index);
+
+      // Cache result in session manager if this was a session-based proposal
+      if (task.session_id != 0 && session_manager_) {
+        SessionResult sr;
+        sr.success = result.success;
+        sr.response = result.response;
+        sr.applied_index = result.applied_index;
+        sr.error_message = result.error_message;
+        session_manager_->RecordResult(task.session_id, task.seq_num, sr);
+      }
 
       // Record proposal latency
       if (task.callback) {

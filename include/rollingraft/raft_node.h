@@ -345,11 +345,17 @@ class RaftNode {
    *
    * @param command Opaque command data for state machine
    * @param callback Invoked when command is applied or fails
+   * @param session_id Optional client session ID for idempotency (0 = disabled)
+   * @param seq_num Monotonically increasing sequence number within session
    * @return Status::OK() if proposal was accepted (not yet applied)
    * @note Callback is called asynchronously from a different thread
+   * @note If session_id != 0 and seq_num <= last executed seq, returns
+   *       cached result immediately without re-executing
    */
   Status Propose(const std::string& command,
-                 std::function<void(const ApplyResult& result)> callback);
+                 std::function<void(const ApplyResult& result)> callback,
+                 uint64_t session_id = 0,
+                 uint64_t seq_num = 0);
 
   /**
    * Propose a batch of commands for cluster-wide replication.

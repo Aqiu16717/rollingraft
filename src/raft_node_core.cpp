@@ -72,6 +72,11 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
     runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
   }
 
+  // Initialize client session manager
+  {
+    session_manager_ = std::make_unique<ClientSessionManager>();
+  }
+
   // Configure JSON logging if enabled
   if (config.json_logging) {
     Logger* logger = LoggerFactory::Instance().GetLogger();
@@ -689,10 +694,12 @@ void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
 
 Status RaftNode::RaftNodeImpl::Propose(
     const std::string& command,
-    std::function<void(const ApplyResult&)> callback) {
+    std::function<void(const ApplyResult&)> callback,
+    uint64_t session_id,
+    uint64_t seq_num) {
   // Bridge pattern: election_mtx_ -> replication_mtx_
-  std::lock_guard<std::mutex> lock_e(election_mtx_);
-  std::lock_guard<std::mutex> lock_r(replication_mtx_);
+  std::unique_lock<std::mutex> lock_e(election_mtx_);
+  std::unique_lock<std::mutex> lock_r(replication_mtx_);
 
   RecordActivityLocked();
 
@@ -711,10 +718,42 @@ Status RaftNode::RaftNodeImpl::Propose(
     return Status::NotLeader(leader_id_, leader_addr_);
   }
 
+  // Client session deduplication
+  if (session_id != 0 && session_manager_) {
+    SessionResult cached;
+    if (session_manager_->IsDuplicate(session_id, seq_num, cached)) {
+      // Return cached result asynchronously via callback
+      ApplyResult result;
+      result.success = cached.success;
+      result.response = cached.response;
+      result.applied_index = cached.applied_index;
+      result.error_message = cached.error_message;
+      if (callback) {
+        // Post callback to avoid invoking under lock
+        auto cb = std::move(callback);
+        lock_r.unlock();
+        lock_e.unlock();
+        cb(result);
+      }
+      if (metrics_) {
+        metrics_->GetCounter("raft_propose_total",
+                             {{"node_id", std::to_string(server_id_)},
+                              {"result", "deduplicated"}})
+            .Increment();
+      }
+      return Status::OK();
+    }
+  }
+
   // Append to local log
   auto [index, status] = log_.Append(current_term_, command);
   if (!status.ok()) {
     return status;
+  }
+
+  // Track session info for this proposal if applicable
+  if (session_id != 0) {
+    proposal_sessions_[index] = {session_id, seq_num};
   }
 
   // Persist log entry (async with callback)

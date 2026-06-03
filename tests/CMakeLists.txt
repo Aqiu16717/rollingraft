@@ -60,6 +60,7 @@ add_executable(unit_tests
   unit/test_quiesced_mode.cpp
   unit/test_runtime_config.cpp
   unit/test_client_session.cpp
+  unit/test_wal_persister.cpp
 )
 
 target_include_directories(unit_tests

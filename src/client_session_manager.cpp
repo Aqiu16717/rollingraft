@@ -4,7 +4,7 @@
 
 namespace rollingraft {
 
-ClientSessionManager::ClientSessionManager(size_t max_sessions, uint32_t ttl_ms)
+ClientSessionManager::ClientSessionManager(size_t max_sessions, uint64_t ttl_ms)
     : max_sessions_(max_sessions), ttl_ms_(ttl_ms) {}
 
 bool ClientSessionManager::IsDuplicate(uint64_t session_id, uint64_t seq_num,
@@ -88,7 +88,7 @@ size_t ClientSessionManager::EvictExpired() {
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                        now - sit->second.entry.last_active)
                        .count();
-    if (elapsed >= 0 && static_cast<uint32_t>(elapsed) >= ttl_ms_) {
+    if (elapsed >= 0 && static_cast<uint64_t>(elapsed) >= ttl_ms_) {
       // Remove expired session
       auto base_it = std::next(it).base();  // Convert reverse to forward iterator
       sessions_.erase(sit);

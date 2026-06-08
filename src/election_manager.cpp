@@ -340,14 +340,6 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
 }
 
 void RaftNode::RaftNodeImpl::BroadcastRequestVoteLocked() {
-  auto [last_index, last_term] = log_.GetLastLogInfo();
-
-  RequestVoteRequest req;
-  req.term_ = current_term_;
-  req.candidate_id_ = server_id_;
-  req.last_log_index_ = last_index;
-  req.last_log_term_ = last_term;
-
   LOG_INFO("Node {} broadcasting RequestVote at term {} to {} peers",
            server_id_, current_term_, peer_addrs_.size());
 
@@ -466,14 +458,6 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(
 }
 
 void RaftNode::RaftNodeImpl::BroadcastPreVoteLocked() {
-  auto [last_index, last_term] = log_.GetLastLogInfo();
-
-  PreVoteRequest req;
-  req.term_ = pre_vote_term_;
-  req.candidate_id_ = server_id_;
-  req.last_log_index_ = last_index;
-  req.last_log_term_ = last_term;
-
   LOG_INFO("Node {} broadcasting PreVote at term {} to {} peers", server_id_,
            pre_vote_term_, peer_addrs_.size());
 

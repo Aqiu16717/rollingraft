@@ -41,7 +41,6 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
   if (role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
-    auto cfg = runtime_config_->Get();
     heartbeat_timer_ = timer_->SetInterval(
         std::chrono::milliseconds(config_.quiesced_heartbeat_interval_ms),
         [this]() { OnHeartbeatTimeout(); });

@@ -27,8 +27,8 @@ struct RaftLogEntry {
   RaftLogEntry(Index index, Term term, const std::string& command)
       : index_(index), term_(term), command_(command) {}
 
-  Index index_;            // Position in the log (1-based)
-  Term term_;              // Term when entry was created
+  Index index_ = 0;        // Position in the log (1-based)
+  Term term_ = 0;          // Term when entry was created
   std::string data_;       // Binary data payload
   std::string command_;    // Command string (legacy, prefer data_)
   uint32_t checksum_ = 0;  // CRC32 checksum for data integrity

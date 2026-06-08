@@ -55,7 +55,7 @@ class ClientSessionManager {
    * @param ttl_ms Session TTL in milliseconds (0 = no expiration)
    */
   explicit ClientSessionManager(size_t max_sessions = 10000,
-                                uint32_t ttl_ms = 300000);
+                                uint64_t ttl_ms = 300000);
 
   /**
    * Check if a request is a duplicate and return cached result if so.
@@ -98,7 +98,7 @@ class ClientSessionManager {
  private:
   mutable std::mutex mtx_;
   size_t max_sessions_;
-  uint32_t ttl_ms_;
+  uint64_t ttl_ms_;
 
   // LRU list: front = most recently used, back = least recently used
   std::list<uint64_t> lru_list_;

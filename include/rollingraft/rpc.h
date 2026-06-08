@@ -52,7 +52,7 @@ struct RaftRequest {
 
 /** Base class for all Raft responses. */
 struct RaftResponse {
-  RaftMessageType type_;
+  RaftMessageType type_ = RaftMessageType::KInvalid;
   uint64_t correlation_id_ = 0;  // Mirrors the request's correlation ID
 
   RaftResponse() = default;

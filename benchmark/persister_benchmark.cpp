@@ -1,22 +1,29 @@
 /**
  * @file persister_benchmark.cpp
- * @brief LevelDBPersister microbenchmark for baseline establishment
+ * @brief Persister microbenchmark with pluggable backend support
  *
- * Measures three dimensions:
- * 1. Append throughput (ops/sec) vs entry size, batch size, compression
- * 2. Recovery time (reopen duration) vs entry count
- * 3. Memory footprint (peak RSS) vs entry count
+ * Supports both LevelDBPersister and HybridPersister (T3 Phase 3).
+ * Produces CSV output for easy comparison across backends.
+ *
+ * Usage:
+ *   ./benchmark_persister --backend=leveldb
+ *   ./benchmark_persister --backend=hybrid --entries=50000 --payload=100
+ *                         --batch=1,10,100 --compression=0,1
+ *                         --output=results.csv
  */
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <memory>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <string>
 #include <sys/resource.h>
 #include <vector>
@@ -24,6 +31,102 @@
 #include "rollingraft/persister.h"
 
 using namespace rollingraft;
+
+// ------------------------------------------------------------------
+// Backend selection
+// ------------------------------------------------------------------
+
+enum class Backend {
+  kLevelDB,
+  kHybrid,
+};
+
+static Backend ParseBackend(const std::string& s) {
+  if (s == "hybrid") return Backend::kHybrid;
+  if (s == "leveldb") return Backend::kLevelDB;
+  std::cerr << "Unknown backend: " << s << ", defaulting to leveldb\n";
+  return Backend::kLevelDB;
+}
+
+static std::string BackendName(Backend b) {
+  switch (b) {
+    case Backend::kHybrid: return "hybrid";
+    case Backend::kLevelDB: return "leveldb";
+  }
+  return "unknown";
+}
+
+// Factory: currently only LevelDBPersister is wired. HybridPersister
+// will be added here once T3 Phase 2 lands.
+static std::unique_ptr<Persister> CreatePersister(Backend backend) {
+  (void)backend;
+  // TODO(T3-Phase3): switch to CreateHybridPersister() when available.
+  // if (backend == Backend::kHybrid) return CreateHybridPersister();
+  return CreateLevelDBPersister();
+}
+
+// ------------------------------------------------------------------
+// CLI arguments
+// ------------------------------------------------------------------
+
+struct BenchmarkArgs {
+  Backend backend = Backend::kLevelDB;
+  int entries = 50000;
+  int payload_bytes = 100;
+  std::vector<int> batch_sizes = {1, 10, 100};
+  std::vector<int> compression_values = {0, 1};
+  std::string output_path = "persister_benchmark_results.csv";
+  std::string data_dir_prefix = "/tmp/rollingraft_persister_bench";
+};
+
+static std::vector<int> ParseIntList(const std::string& s) {
+  std::vector<int> out;
+  std::stringstream ss(s);
+  std::string item;
+  while (std::getline(ss, item, ',')) {
+    try {
+      out.push_back(std::stoi(item));
+    } catch (...) {
+      std::cerr << "Ignoring invalid integer: " << item << "\n";
+    }
+  }
+  return out;
+}
+
+static BenchmarkArgs ParseArgs(int argc, char** argv) {
+  BenchmarkArgs args;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg.rfind("--backend=", 0) == 0) {
+      args.backend = ParseBackend(arg.substr(10));
+    } else if (arg.rfind("--entries=", 0) == 0) {
+      args.entries = std::stoi(arg.substr(10));
+    } else if (arg.rfind("--payload=", 0) == 0) {
+      args.payload_bytes = std::stoi(arg.substr(10));
+    } else if (arg.rfind("--batch=", 0) == 0) {
+      args.batch_sizes = ParseIntList(arg.substr(8));
+    } else if (arg.rfind("--compression=", 0) == 0) {
+      args.compression_values = ParseIntList(arg.substr(14));
+    } else if (arg.rfind("--output=", 0) == 0) {
+      args.output_path = arg.substr(9);
+    } else if (arg.rfind("--data-dir=", 0) == 0) {
+      args.data_dir_prefix = arg.substr(11);
+    } else if (arg == "--help" || arg == "-h") {
+      std::cout << "Usage: " << argv[0] << " [options]\n"
+                << "  --backend=NAME        leveldb (default) or hybrid\n"
+                << "  --entries=N           entries per scenario (default 50000)\n"
+                << "  --payload=N           payload size in bytes (default 100)\n"
+                << "  --batch=LIST          comma-separated batch sizes (default 1,10,100)\n"
+                << "  --compression=LIST    comma-separated 0/1 values (default 0,1)\n"
+                << "  --output=PATH         CSV output path (default persister_benchmark_results.csv)\n"
+                << "  --data-dir=PATH       temp directory prefix (default /tmp/rollingraft_persister_bench)\n";
+      std::exit(0);
+    } else {
+      std::cerr << "Unknown option: " << arg << "\n";
+    }
+  }
+  return args;
+}
 
 // ------------------------------------------------------------------
 // Helpers
@@ -73,54 +176,62 @@ static std::string FormatBytes(size_t bytes) {
   return oss.str();
 }
 
+static size_t GetDirectorySize(const std::string& path) {
+  size_t total = 0;
+  if (!std::filesystem::exists(path)) return 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(path)) {
+    if (entry.is_regular_file()) total += entry.file_size();
+  }
+  return total;
+}
+
 // ------------------------------------------------------------------
 // Benchmark: Append Throughput
 // ------------------------------------------------------------------
 
-struct AppendBenchConfig {
-  int total_entries = 100000;
-  size_t entry_size = 100;
-  int batch_size = 1;
+struct AppendResult {
+  int batch_size = 0;
   Persister::CompressionType compression = Persister::kSnappyCompression;
-};
-
-struct AppendBenchResult {
   double ops_per_second = 0.0;
   double latency_avg_us = 0.0;
   double latency_p50_us = 0.0;
   double latency_p99_us = 0.0;
   size_t peak_rss_kb = 0;
-  std::chrono::milliseconds duration_ms{0};
   size_t data_dir_size_bytes = 0;
+  std::chrono::milliseconds duration_ms{0};
 };
 
-static AppendBenchResult RunAppendBenchmark(const AppendBenchConfig& cfg,
-                                            const std::string& data_dir) {
+static AppendResult RunAppendBenchmark(Backend backend,
+                                       const std::string& data_dir,
+                                       int total_entries,
+                                       size_t entry_size,
+                                       int batch_size,
+                                       Persister::CompressionType compression) {
   std::filesystem::remove_all(data_dir);
   std::filesystem::create_directories(data_dir);
 
-  auto persister = CreateLevelDBPersister();
-  persister->SetCompressionType(cfg.compression);
+  auto persister = CreatePersister(backend);
+  persister->SetCompressionType(compression);
   if (!persister->Open(data_dir).ok()) {
     std::cerr << "Failed to open persister at " << data_dir << "\n";
     return {};
   }
 
   std::mt19937 rng(42);
-  std::string payload = RandomString(cfg.entry_size, rng);
+  std::string payload = RandomString(entry_size, rng);
 
   std::vector<double> latencies_us;
-  latencies_us.reserve(cfg.total_entries / std::max(1, cfg.batch_size));
+  latencies_us.reserve(total_entries / std::max(1, batch_size));
 
   size_t rss_before_kb = GetPeakRssKb();
 
   auto t0 = std::chrono::steady_clock::now();
 
   int index = 1;
-  while (index <= cfg.total_entries) {
+  while (index <= total_entries) {
     std::vector<RaftLogEntry> batch;
-    batch.reserve(cfg.batch_size);
-    for (int i = 0; i < cfg.batch_size && index <= cfg.total_entries; ++i, ++index) {
+    batch.reserve(batch_size);
+    for (int i = 0; i < batch_size && index <= total_entries; ++i, ++index) {
       batch.push_back(MakeEntry(index, 1, payload));
     }
 
@@ -140,20 +251,17 @@ static AppendBenchResult RunAppendBenchmark(const AppendBenchConfig& cfg,
   auto t1 = std::chrono::steady_clock::now();
   auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
 
-  // Force sync to ensure all data is on disk for fair measurement
   persister->Sync();
 
   size_t rss_after_kb = GetPeakRssKb();
-
-  // Compute data dir size
-  size_t dir_size = 0;
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(data_dir)) {
-    if (entry.is_regular_file()) dir_size += entry.file_size();
-  }
+  size_t dir_size = GetDirectorySize(data_dir);
 
   persister->Close();
+  std::filesystem::remove_all(data_dir);
 
-  AppendBenchResult result;
+  AppendResult result;
+  result.batch_size = batch_size;
+  result.compression = compression;
   result.duration_ms = duration_ms;
   result.peak_rss_kb = rss_after_kb > rss_before_kb ? rss_after_kb - rss_before_kb : 0;
   result.data_dir_size_bytes = dir_size;
@@ -161,14 +269,12 @@ static AppendBenchResult RunAppendBenchmark(const AppendBenchConfig& cfg,
   int actual_ops = static_cast<int>(latencies_us.size());
   if (actual_ops > 0 && duration_ms.count() > 0) {
     result.ops_per_second = actual_ops * 1000.0 / duration_ms.count();
-
     std::sort(latencies_us.begin(), latencies_us.end());
     result.latency_avg_us = std::accumulate(latencies_us.begin(), latencies_us.end(), 0.0) / actual_ops;
     result.latency_p50_us = latencies_us[actual_ops * 50 / 100];
     result.latency_p99_us = latencies_us[std::min(actual_ops * 99 / 100, actual_ops - 1)];
   }
 
-  std::filesystem::remove_all(data_dir);
   return result;
 }
 
@@ -176,16 +282,19 @@ static AppendBenchResult RunAppendBenchmark(const AppendBenchConfig& cfg,
 // Benchmark: Recovery Time
 // ------------------------------------------------------------------
 
-struct RecoveryBenchResult {
+struct RecoveryResult {
+  int num_entries = 0;
+  Persister::CompressionType compression = Persister::kSnappyCompression;
   std::chrono::milliseconds create_ms{0};
   std::chrono::milliseconds reopen_ms{0};
   size_t data_dir_size_bytes = 0;
 };
 
-static RecoveryBenchResult RunRecoveryBenchmark(int num_entries,
-                                                size_t entry_size,
-                                                Persister::CompressionType compression,
-                                                const std::string& data_dir) {
+static RecoveryResult RunRecoveryBenchmark(Backend backend,
+                                           const std::string& data_dir,
+                                           int num_entries,
+                                           size_t entry_size,
+                                           Persister::CompressionType compression) {
   std::filesystem::remove_all(data_dir);
   std::filesystem::create_directories(data_dir);
 
@@ -194,7 +303,7 @@ static RecoveryBenchResult RunRecoveryBenchmark(int num_entries,
 
   // Phase 1: Create DB
   {
-    auto persister = CreateLevelDBPersister();
+    auto persister = CreatePersister(backend);
     persister->SetCompressionType(compression);
     persister->Open(data_dir);
 
@@ -211,35 +320,28 @@ static RecoveryBenchResult RunRecoveryBenchmark(int num_entries,
     persister->Sync();
     auto t1 = std::chrono::steady_clock::now();
 
-    RecoveryBenchResult result;
+    RecoveryResult result;
+    result.num_entries = num_entries;
+    result.compression = compression;
     result.create_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-
-    size_t dir_size = 0;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(data_dir)) {
-      if (entry.is_regular_file()) dir_size += entry.file_size();
-    }
-    result.data_dir_size_bytes = dir_size;
-
+    result.data_dir_size_bytes = GetDirectorySize(data_dir);
     persister->Close();
   }
 
-  // Phase 2: Reopen and measure
+  // Phase 2: Reopen
   {
-    auto persister = CreateLevelDBPersister();
+    auto persister = CreatePersister(backend);
     persister->SetCompressionType(compression);
 
     auto t0 = std::chrono::steady_clock::now();
     persister->Open(data_dir);
     auto t1 = std::chrono::steady_clock::now();
 
-    RecoveryBenchResult result;
+    RecoveryResult result;
+    result.num_entries = num_entries;
+    result.compression = compression;
     result.reopen_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-
-    size_t dir_size = 0;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(data_dir)) {
-      if (entry.is_regular_file()) dir_size += entry.file_size();
-    }
-    result.data_dir_size_bytes = dir_size;
+    result.data_dir_size_bytes = GetDirectorySize(data_dir);
 
     persister->Close();
     std::filesystem::remove_all(data_dir);
@@ -251,28 +353,30 @@ static RecoveryBenchResult RunRecoveryBenchmark(int num_entries,
 // Benchmark: Memory Footprint
 // ------------------------------------------------------------------
 
-struct MemoryBenchResult {
+struct MemoryResult {
+  int num_entries = 0;
+  Persister::CompressionType compression = Persister::kSnappyCompression;
   size_t rss_before_kb = 0;
   size_t rss_after_kb = 0;
   size_t rss_delta_kb = 0;
   size_t data_dir_size_bytes = 0;
 };
 
-static MemoryBenchResult RunMemoryBenchmark(int num_entries,
-                                            size_t entry_size,
-                                            Persister::CompressionType compression,
-                                            const std::string& data_dir) {
+static MemoryResult RunMemoryBenchmark(Backend backend,
+                                       const std::string& data_dir,
+                                       int num_entries,
+                                       size_t entry_size,
+                                       Persister::CompressionType compression) {
   std::filesystem::remove_all(data_dir);
   std::filesystem::create_directories(data_dir);
 
   std::mt19937 rng(42);
   std::string payload = RandomString(entry_size, rng);
 
-  auto persister = CreateLevelDBPersister();
+  auto persister = CreatePersister(backend);
   persister->SetCompressionType(compression);
   persister->Open(data_dir);
 
-  // Get baseline RSS after open
   size_t rss_before_kb = GetPeakRssKb();
 
   std::vector<RaftLogEntry> batch;
@@ -288,153 +392,211 @@ static MemoryBenchResult RunMemoryBenchmark(int num_entries,
 
   size_t rss_after_kb = GetPeakRssKb();
 
-  size_t dir_size = 0;
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(data_dir)) {
-    if (entry.is_regular_file()) dir_size += entry.file_size();
-  }
-
-  persister->Close();
-  std::filesystem::remove_all(data_dir);
-
-  MemoryBenchResult result;
+  MemoryResult result;
+  result.num_entries = num_entries;
+  result.compression = compression;
   result.rss_before_kb = rss_before_kb;
   result.rss_after_kb = rss_after_kb;
   result.rss_delta_kb = rss_after_kb > rss_before_kb ? rss_after_kb - rss_before_kb : 0;
-  result.data_dir_size_bytes = dir_size;
+  result.data_dir_size_bytes = GetDirectorySize(data_dir);
+
+  persister->Close();
+  std::filesystem::remove_all(data_dir);
   return result;
+}
+
+// ------------------------------------------------------------------
+// CSV output
+// ------------------------------------------------------------------
+
+struct CsvRow {
+  std::string scenario;
+  std::string backend;
+  int entries = 0;
+  int payload_bytes = 0;
+  int batch_size = 0;
+  int compression = 0;
+  double ops_per_sec = 0.0;
+  double latency_p50_us = 0.0;
+  double latency_p99_us = 0.0;
+  double latency_avg_us = 0.0;
+  size_t rss_kb = 0;
+  double dir_size_mb = 0.0;
+  double duration_ms = 0.0;
+  int recovery_entries = 0;
+  double reopen_ms = 0.0;
+  double create_ms = 0.0;
+};
+
+static void WriteCsvHeader(std::ostream& out) {
+  out << "scenario,backend,entries,payload_bytes,batch_size,compression,"
+      << "ops_per_sec,latency_p50_us,latency_p99_us,latency_avg_us,"
+      << "rss_kb,dir_size_mb,duration_ms,recovery_entries,reopen_ms,create_ms\n";
+}
+
+static void WriteCsvRow(std::ostream& out, const CsvRow& row) {
+  out << row.scenario << ","
+      << row.backend << ","
+      << row.entries << ","
+      << row.payload_bytes << ","
+      << row.batch_size << ","
+      << row.compression << ","
+      << std::fixed << std::setprecision(2) << row.ops_per_sec << ","
+      << row.latency_p50_us << ","
+      << row.latency_p99_us << ","
+      << row.latency_avg_us << ","
+      << row.rss_kb << ","
+      << row.dir_size_mb << ","
+      << row.duration_ms << ","
+      << row.recovery_entries << ","
+      << row.reopen_ms << ","
+      << row.create_ms << "\n";
 }
 
 // ------------------------------------------------------------------
 // Main
 // ------------------------------------------------------------------
 
-static void PrintHeader(const std::string& title) {
-  std::cout << "\n" << std::string(70, '=') << "\n";
-  std::cout << "  " << title << "\n";
-  std::cout << std::string(70, '=') << "\n";
-}
-
-static void PrintAppendResult(const std::string& label,
-                              const AppendBenchResult& r) {
-  std::cout << std::left << std::setw(30) << label
-            << " | Ops/sec: " << std::right << std::setw(10) << std::fixed << std::setprecision(0) << r.ops_per_second
-            << " | Avg: " << std::setw(6) << std::setprecision(1) << r.latency_avg_us << " us"
-            << " | P50: " << std::setw(6) << r.latency_p50_us << " us"
-            << " | P99: " << std::setw(6) << r.latency_p99_us << " us"
-            << " | RSS+: " << std::setw(6) << r.peak_rss_kb << " KB"
-            << " | Dir: " << FormatBytes(r.data_dir_size_bytes)
-            << "\n";
-}
-
-static void PrintRecoveryResult(const std::string& label,
-                                const RecoveryBenchResult& r) {
-  std::cout << std::left << std::setw(30) << label
-            << " | Create: " << std::right << std::setw(6) << r.create_ms.count() << " ms"
-            << " | Reopen: " << std::setw(6) << r.reopen_ms.count() << " ms"
-            << " | Dir: " << FormatBytes(r.data_dir_size_bytes)
-            << "\n";
-}
-
-static void PrintMemoryResult(const std::string& label,
-                              const MemoryBenchResult& r) {
-  std::cout << std::left << std::setw(30) << label
-            << " | RSS before: " << std::right << std::setw(8) << r.rss_before_kb << " KB"
-            << " | RSS after: " << std::setw(8) << r.rss_after_kb << " KB"
-            << " | Delta: " << std::setw(8) << r.rss_delta_kb << " KB"
-            << " | Dir: " << FormatBytes(r.data_dir_size_bytes)
-            << "\n";
-}
-
 int main(int argc, char** argv) {
-  (void)argc;
-  (void)argv;
+  BenchmarkArgs args = ParseArgs(argc, argv);
 
-  const std::string kDataDir = "/tmp/rollingraft_persister_bench";
+  std::vector<CsvRow> rows;
 
-  std::cout << "RollingRaft LevelDBPersister Baseline Benchmark\n";
-  std::cout << "Platform: " << (sizeof(void*) == 8 ? "x86_64" : "unknown") << "\n";
-  std::cout << "Timestamp: " << std::chrono::system_clock::now().time_since_epoch().count() << "\n";
+  std::cout << "RollingRaft Persister Benchmark\n";
+  std::cout << "Backend: " << BackendName(args.backend) << "\n";
+  std::cout << "Entries: " << args.entries << "\n";
+  std::cout << "Payload: " << args.payload_bytes << " B\n";
+  std::cout << "Batch sizes: ";
+  for (auto b : args.batch_sizes) std::cout << b << " ";
+  std::cout << "\n";
+  std::cout << "Compression modes: ";
+  for (auto c : args.compression_values) std::cout << c << " ";
+  std::cout << "\n\n";
 
   // ================================================================
   // 1. Append Throughput
   // ================================================================
-  PrintHeader("1. Append Throughput");
-  std::cout << std::left << std::setw(30) << "Scenario"
-            << " | Ops/sec  | Avg us | P50 us | P99 us | RSS+   | Dir size\n";
-  std::cout << std::string(100, '-') << "\n";
+  std::cout << "[1/3] Running append throughput benchmarks...\n";
+  for (int compression_val : args.compression_values) {
+    auto compression = (compression_val == 0) ? Persister::kNoCompression
+                                              : Persister::kSnappyCompression;
+    for (int batch_size : args.batch_sizes) {
+      std::string data_dir = args.data_dir_prefix + "_append_" +
+                             std::to_string(args.payload_bytes) + "B_" +
+                             std::to_string(batch_size) + "x_" +
+                             std::to_string(compression_val);
+      auto r = RunAppendBenchmark(args.backend, data_dir, args.entries,
+                                  args.payload_bytes, batch_size, compression);
 
-  // Single-entry append, small payload, both compression modes
-  for (auto compression : {Persister::kNoCompression, Persister::kSnappyCompression}) {
-    std::string comp_label = (compression == Persister::kNoCompression) ? "no-compression" : "snappy";
+      CsvRow row;
+      row.scenario = "append";
+      row.backend = BackendName(args.backend);
+      row.entries = args.entries;
+      row.payload_bytes = args.payload_bytes;
+      row.batch_size = batch_size;
+      row.compression = compression_val;
+      row.ops_per_sec = r.ops_per_second;
+      row.latency_p50_us = r.latency_p50_us;
+      row.latency_p99_us = r.latency_p99_us;
+      row.latency_avg_us = r.latency_avg_us;
+      row.rss_kb = r.peak_rss_kb;
+      row.dir_size_mb = r.data_dir_size_bytes / (1024.0 * 1024.0);
+      row.duration_ms = r.duration_ms.count();
+      rows.push_back(row);
 
-    AppendBenchConfig cfg;
-    cfg.total_entries = 50000;
-    cfg.entry_size = 100;
-    cfg.batch_size = 1;
-    cfg.compression = compression;
-    auto r = RunAppendBenchmark(cfg, kDataDir + "_append_single_100B_" + comp_label);
-    PrintAppendResult("single-append 100B " + comp_label, r);
-  }
-
-  // Batched append, small payload
-  for (int batch_size : {10, 100}) {
-    AppendBenchConfig cfg;
-    cfg.total_entries = 50000;
-    cfg.entry_size = 100;
-    cfg.batch_size = batch_size;
-    cfg.compression = Persister::kSnappyCompression;
-    auto r = RunAppendBenchmark(cfg, kDataDir + "_append_batch_" + std::to_string(batch_size));
-    PrintAppendResult("batch-append " + std::to_string(batch_size) + "x100B snappy", r);
-  }
-
-  // Larger payload
-  for (auto compression : {Persister::kNoCompression, Persister::kSnappyCompression}) {
-    std::string comp_label = (compression == Persister::kNoCompression) ? "no-compression" : "snappy";
-
-    AppendBenchConfig cfg;
-    cfg.total_entries = 10000;
-    cfg.entry_size = 1024;
-    cfg.batch_size = 1;
-    cfg.compression = compression;
-    auto r = RunAppendBenchmark(cfg, kDataDir + "_append_single_1KB_" + comp_label);
-    PrintAppendResult("single-append 1KB " + comp_label, r);
+      std::cout << "  batch=" << batch_size
+                << " compression=" << compression_val
+                << " ops/sec=" << std::fixed << std::setprecision(0) << r.ops_per_second
+                << " p50=" << r.latency_p50_us << "us"
+                << " p99=" << r.latency_p99_us << "us"
+                << " rss+=" << r.peak_rss_kb << "KB"
+                << " dir=" << FormatBytes(r.data_dir_size_bytes)
+                << "\n";
+    }
   }
 
   // ================================================================
   // 2. Recovery Time
   // ================================================================
-  PrintHeader("2. Recovery Time (Reopen Duration)");
-  std::cout << std::left << std::setw(30) << "Scenario"
-            << " | Create ms | Reopen ms | Dir size\n";
-  std::cout << std::string(70, '-') << "\n";
+  std::cout << "\n[2/3] Running recovery benchmarks...\n";
+  std::vector<int> recovery_entry_counts = {1000, 10000, 100000};
+  for (int num_entries : recovery_entry_counts) {
+    for (int compression_val : args.compression_values) {
+      auto compression = (compression_val == 0) ? Persister::kNoCompression
+                                                : Persister::kSnappyCompression;
+      std::string data_dir = args.data_dir_prefix + "_recovery_" +
+                             std::to_string(num_entries) + "_" +
+                             std::to_string(compression_val);
+      auto r = RunRecoveryBenchmark(args.backend, data_dir, num_entries,
+                                    args.payload_bytes, compression);
 
-  for (int num_entries : {1000, 10000, 100000}) {
-    for (auto compression : {Persister::kNoCompression, Persister::kSnappyCompression}) {
-      std::string comp_label = (compression == Persister::kNoCompression) ? "no-comp" : "snappy";
-      auto r = RunRecoveryBenchmark(num_entries, 100, compression,
-                                    kDataDir + "_recovery_" + std::to_string(num_entries) + "_" + comp_label);
-      PrintRecoveryResult(std::to_string(num_entries) + " entries 100B " + comp_label, r);
+      CsvRow row;
+      row.scenario = "recovery";
+      row.backend = BackendName(args.backend);
+      row.entries = num_entries;
+      row.payload_bytes = args.payload_bytes;
+      row.batch_size = 0;
+      row.compression = compression_val;
+      row.dir_size_mb = r.data_dir_size_bytes / (1024.0 * 1024.0);
+      row.recovery_entries = num_entries;
+      row.reopen_ms = r.reopen_ms.count();
+      row.create_ms = r.create_ms.count();
+      rows.push_back(row);
+
+      std::cout << "  entries=" << num_entries
+                << " compression=" << compression_val
+                << " create=" << r.create_ms.count() << "ms"
+                << " reopen=" << r.reopen_ms.count() << "ms"
+                << " dir=" << FormatBytes(r.data_dir_size_bytes)
+                << "\n";
     }
   }
 
   // ================================================================
   // 3. Memory Footprint
   // ================================================================
-  PrintHeader("3. Memory Footprint (Peak RSS)");
-  std::cout << std::left << std::setw(30) << "Scenario"
-            << " | RSS before | RSS after  | Delta      | Dir size\n";
-  std::cout << std::string(80, '-') << "\n";
+  std::cout << "\n[3/3] Running memory benchmarks...\n";
+  for (int num_entries : recovery_entry_counts) {
+    for (int compression_val : args.compression_values) {
+      auto compression = (compression_val == 0) ? Persister::kNoCompression
+                                                : Persister::kSnappyCompression;
+      std::string data_dir = args.data_dir_prefix + "_memory_" +
+                             std::to_string(num_entries) + "_" +
+                             std::to_string(compression_val);
+      auto r = RunMemoryBenchmark(args.backend, data_dir, num_entries,
+                                  args.payload_bytes, compression);
 
-  for (int num_entries : {1000, 10000, 100000}) {
-    for (auto compression : {Persister::kNoCompression, Persister::kSnappyCompression}) {
-      std::string comp_label = (compression == Persister::kNoCompression) ? "no-comp" : "snappy";
-      auto r = RunMemoryBenchmark(num_entries, 100, compression,
-                                  kDataDir + "_memory_" + std::to_string(num_entries) + "_" + comp_label);
-      PrintMemoryResult(std::to_string(num_entries) + " entries 100B " + comp_label, r);
+      CsvRow row;
+      row.scenario = "memory";
+      row.backend = BackendName(args.backend);
+      row.entries = num_entries;
+      row.payload_bytes = args.payload_bytes;
+      row.batch_size = 0;
+      row.compression = compression_val;
+      row.rss_kb = r.rss_delta_kb;
+      row.dir_size_mb = r.data_dir_size_bytes / (1024.0 * 1024.0);
+      rows.push_back(row);
+
+      std::cout << "  entries=" << num_entries
+                << " compression=" << compression_val
+                << " rss_delta=" << r.rss_delta_kb << "KB"
+                << " dir=" << FormatBytes(r.data_dir_size_bytes)
+                << "\n";
     }
   }
 
-  std::cout << "\n" << std::string(70, '=') << "\n";
+  // ================================================================
+  // Write CSV
+  // ================================================================
+  std::ofstream csv(args.output_path);
+  if (csv) {
+    WriteCsvHeader(csv);
+    for (const auto& row : rows) WriteCsvRow(csv, row);
+    std::cout << "\nCSV written to: " << args.output_path << "\n";
+  } else {
+    std::cerr << "Failed to write CSV: " << args.output_path << "\n";
+  }
+
   std::cout << "Benchmark complete.\n";
   return 0;
 }

@@ -16,6 +16,7 @@
 6. [Event System](#6-event-system)
 7. [Runtime Configuration](#7-runtime-configuration)
 8. [Common Patterns](#8-common-patterns)
+9. [Metrics & Monitoring](#9-metrics--monitoring)
 
 ---
 
@@ -679,6 +680,186 @@ node.ReadIndex([sm]() {
 **Trade-offs:**
 - `ReadIndex`: Strongest guarantee, but requires RTT to majority
 - `Leader Lease`: Faster, but may serve slightly stale data during network partitions
+
+---
+
+## 9. Metrics & Monitoring
+
+RollingRaft exposes Prometheus-compatible metrics via an HTTP server. Enable it by setting `metrics_enabled = true` and `metrics_addr` in `RaftNodeConfig`.
+
+### 9.1 HTTP Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/metrics` | GET | Public | Prometheus metrics in text format |
+| `/healthz` | GET | Public | Liveness probe: `{"status":"alive"}` |
+| `/livez` | GET | Public | Same as `/healthz` |
+| `/readyz` | GET | Public | Readiness probe: ready if leader is known |
+| `/v1/status` | GET | Public | JSON status: node_id, role, term, leader_id, commit_index |
+| `/v1/members` | POST | Admin | Add a new cluster member |
+| `/v1/members/:id` | DELETE | Admin | Remove a cluster member |
+| `/v1/snapshot/trigger` | POST | Admin | Trigger manual snapshot |
+| `/v1/leadership/transfer` | POST | Admin | Transfer leadership |
+| `/v1/config` | GET | Admin | Get runtime config as JSON |
+| `/v1/config` | PATCH | Admin | Update runtime config |
+
+**Admin Authentication:** If `admin_token` is configured, admin endpoints require:
+```
+Authorization: Bearer <admin_token>
+```
+
+### 9.2 Core Metrics
+
+#### Leadership & Elections
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_role` | Gauge | Current role: 0=follower, 1=candidate, 2=leader |
+| `raft_current_term` | Gauge | Current Raft term |
+| `raft_elections_total` | Counter | Total elections started |
+| `raft_leader_elected_total` | Counter | Total successful leader elections |
+| `raft_election_timeouts_total` | Counter | Total election timeouts |
+
+#### Proposals & Commits
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_propose_total` | Counter | Total proposals received |
+| `raft_commits_total` | Counter | Total log entries committed |
+| `raft_commit_index` | Gauge | Current commit index |
+| `raft_applied_index` | Gauge | Last index applied to state machine |
+| `raft_proposal_latency_seconds` | Histogram | End-to-end proposal latency |
+
+#### Log Replication
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_appendentries_sent_total` | Counter | AE requests sent |
+| `raft_appendentries_retries_total` | Counter | AE retries |
+| `raft_appendentries_success_total` | Counter | Successful AE responses |
+| `raft_appendentries_failure_total` | Counter | Failed AE responses |
+| `raft_appendentries_received_total` | Counter | AE requests received |
+
+#### ReadIndex
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_readindex_total` | Counter | Total ReadIndex requests |
+| `raft_readindex_lease_total` | Counter | ReadIndex served from leader lease |
+| `raft_readindex_heartbeats_sent_total` | Counter | Heartbeats sent for ReadIndex quorum |
+| `raft_readindex_acks_received_total` | Counter | Acknowledgments received for ReadIndex |
+| `raft_readindex_completed_total` | Counter | Completed ReadIndex operations |
+| `raft_readindex_latency_seconds` | Histogram | ReadIndex latency |
+
+#### Snapshots
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_snapshot_sends_started_total` | Counter | Snapshot transfers started |
+| `raft_snapshot_chunks_sent_total` | Counter | Snapshot chunks sent |
+| `raft_snapshot_sends_completed_total` | Counter | Successful snapshot transfers |
+| `raft_snapshots_received_total` | Counter | Snapshots received |
+| `raft_log_compactions_total` | Counter | Log compaction events |
+| `raft_log_entries_compacted_total` | Counter | Log entries removed by compaction |
+
+#### Voting
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_requestvote_sent_total` | Counter | RequestVote requests sent |
+| `raft_requestvote_received_total` | Counter | RequestVote requests received |
+| `raft_votes_granted_total` | Counter | Votes granted |
+| `raft_prevote_sent_total` | Counter | PreVote requests sent |
+| `raft_prevote_received_total` | Counter | PreVote requests received |
+
+#### Transport & Cluster Health
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `transport_peer_state` | Gauge | Peer connection state: 0=disconnected, 1=connecting, 2=connected, 3=failed |
+| `raft_transport_peer_connected` | Gauge | 1 if peer is connected, 0 otherwise |
+| `raft_transport_connections_total` | Counter | Total successful connections established |
+| `raft_dead_nodes_detected_total` | Counter | Dead node detections by leader |
+| `raft_checkquorum_stepdown_total` | Counter | Leader step-downs due to CheckQuorum |
+| `raft_heartbeat_coalesced_total` | Counter | Heartbeats skipped due to coalescing |
+
+#### Quiesced Mode
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `raft_quiesced_mode_entered_total` | Counter | Times quiesced mode was entered |
+| `raft_quiesced_mode_exited_total` | Counter | Times quiesced mode was exited |
+| `raft_quiesced_mode_active` | Gauge | 1 if currently quiesced, 0 otherwise |
+
+### 9.3 Histogram Buckets
+
+RollingRaft uses the following fixed buckets for latency histograms:
+
+```
+0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+```
+
+Units: **seconds**.
+
+### 9.4 Prometheus Configuration Example
+
+```yaml
+scrape_configs:
+  - job_name: 'rollingraft'
+    static_configs:
+      - targets: ['node1:9001', 'node2:9001', 'node3:9001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+```
+
+### 9.5 Grafana Dashboard JSON (Snippet)
+
+```json
+{
+  "panels": [
+    {
+      "title": "Raft Role",
+      "targets": [
+        {
+          "expr": "raft_role",
+          "legendFormat": "node {{node_id}}"
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "title": "Proposal Latency P99",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(raft_proposal_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "title": "Commit Index",
+      "targets": [
+        {
+          "expr": "raft_commit_index",
+          "legendFormat": "node {{node_id}}"
+        }
+      ],
+      "type": "timeseries"
+    }
+  ]
+}
+```
+
+### 9.6 Recommended Alerts
+
+| Alert | PromQL | Threshold |
+|-------|--------|-----------|
+| No Leader | `max(raft_role) < 2` | > 30s |
+| High Proposal Latency | `histogram_quantile(0.99, raft_proposal_latency_seconds_bucket) > 1` | > 5m |
+| Follower Lag | `max(raft_commit_index) - min(raft_commit_index) > 1000` | > 5m |
+| Frequent Elections | `rate(raft_leader_elected_total[5m]) > 0.1` | > 5m |
+| Snapshot Transfer Failing | `rate(raft_snapshot_sends_started_total[5m]) > rate(raft_snapshot_sends_completed_total[5m])` | > 10m |
 
 ---
 

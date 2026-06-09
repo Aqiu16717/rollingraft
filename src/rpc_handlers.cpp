@@ -516,47 +516,48 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
     // Final chunk: restore state machine and persist
     if (req.done_) {
-      // Get file size for logging
-      std::ifstream ifs_size(snapshot_temp_path_,
-                             std::ios::binary | std::ios::ate);
-      auto file_size = static_cast<int64_t>(ifs_size.tellg());
+      try {
+        // Get file size for logging
+        std::ifstream ifs_size(snapshot_temp_path_,
+                               std::ios::binary | std::ios::ate);
+        auto file_size = static_cast<int64_t>(ifs_size.tellg());
 
-      LOG_INFO(
-          "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-          server_id_, file_size, req.last_included_index_,
-          req.last_included_term_);
+        LOG_INFO(
+            "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
+            server_id_, file_size, req.last_included_index_,
+            req.last_included_term_);
 
-      // Restore state machine via streaming interface
-      auto restore_ifs = std::make_shared<std::ifstream>();
-      auto restore_initialized = std::make_shared<bool>(false);
-      auto restore_provider = [&](std::string& chunk) -> bool {
-        if (!*restore_initialized) {
-          restore_ifs->open(snapshot_temp_path_, std::ios::binary);
-          *restore_initialized = true;
-        }
-        if (!*restore_ifs) return false;
-        constexpr size_t kChunkSize = 64 * 1024;
-        chunk.resize(kChunkSize);
-        restore_ifs->read(chunk.data(), kChunkSize);
-        auto bytes_read = restore_ifs->gcount();
-        if (bytes_read <= 0) {
-          restore_ifs->close();
-          *restore_initialized = false;
-          return false;
-        }
-        chunk.resize(bytes_read);
-        return true;
-      };
+        // Restore state machine via streaming interface
+        auto restore_ifs = std::make_shared<std::ifstream>();
+        auto restore_initialized = std::make_shared<bool>(false);
+        auto restore_provider = [&](std::string& chunk) -> bool {
+          if (!*restore_initialized) {
+            restore_ifs->open(snapshot_temp_path_, std::ios::binary);
+            *restore_initialized = true;
+          }
+          if (!*restore_ifs) return false;
+          constexpr size_t kChunkSize = 64 * 1024;
+          chunk.resize(kChunkSize);
+          restore_ifs->read(chunk.data(), kChunkSize);
+          auto bytes_read = restore_ifs->gcount();
+          if (bytes_read <= 0) {
+            restore_ifs->close();
+            *restore_initialized = false;
+            return false;
+          }
+          chunk.resize(bytes_read);
+          return true;
+        };
 
-      if (!state_machine_->RestoreStream(restore_provider)) {
-        LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
-        if (std::remove(snapshot_temp_path_.c_str()) != 0) {
-          LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
-                   snapshot_temp_path_);
+        if (!state_machine_->RestoreStream(restore_provider)) {
+          LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
+          if (std::remove(snapshot_temp_path_.c_str()) != 0) {
+            LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
+                     snapshot_temp_path_);
+          }
+          snapshot_temp_path_.clear();
+          return;
         }
-        snapshot_temp_path_.clear();
-        return;
-      }
 
       // Update log: discard all entries covered by snapshot
       uint64_t old_first_index = log_.GetFirstIndex();
@@ -648,6 +649,18 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
           "Node {} successfully restored from snapshot, log start={}, "
           "commit_index={}",
           server_id_, log_.GetFirstIndex(), commit_index_);
+      } catch (const std::exception& e) {
+        LOG_ERROR("Node {} exception during snapshot restore: {}", server_id_,
+                  e.what());
+        if (!snapshot_temp_path_.empty()) {
+          if (std::remove(snapshot_temp_path_.c_str()) != 0) {
+            LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
+                     snapshot_temp_path_);
+          }
+          snapshot_temp_path_.clear();
+        }
+        throw;  // Re-throw to preserve original behavior
+      }
     }
   }
 }

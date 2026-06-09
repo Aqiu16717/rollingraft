@@ -51,14 +51,14 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         addr_(addr),
         connected_(false) {}
 
-  TcpConnection(asio::io_context& io_ctx)
+  explicit TcpConnection(asio::io_context& io_ctx)
       : socket_(asio::ip::tcp::socket(io_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(-1),
         addr_(""),
         connected_(false) {}
 
-  TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx)
+  explicit TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx)
       : socket_(asio::ssl::stream<asio::ip::tcp::socket>(io_ctx, ssl_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(-1),
@@ -117,7 +117,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
   NodeId GetPeerId() const { return peer_id_; }
-  NodeAddr GetAddr() const { return addr_; }
+  const NodeAddr& GetAddr() const { return addr_; }
 
   void SetBatchingEnabled(bool enabled) { batching_enabled_ = enabled; }
 

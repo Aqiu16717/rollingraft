@@ -65,7 +65,7 @@ class Gauge {
  */
 class Histogram {
  public:
-  explicit Histogram(std::vector<double> buckets) : buckets_(buckets) {
+  explicit Histogram(const std::vector<double>& buckets) : buckets_(buckets) {
     for (size_t i = 0; i < buckets_.size() + 1; ++i) {
       counts_.push_back(std::make_unique<std::atomic<uint64_t>>(0));
     }

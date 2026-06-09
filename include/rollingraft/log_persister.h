@@ -86,8 +86,8 @@ class LogPersister {
    * @param persister Underlying persistent storage
    * @param config Persistence configuration
    */
-  LogPersister(std::shared_ptr<Persister> persister,
-               LogPersistenceConfig config = {});
+  explicit LogPersister(std::shared_ptr<Persister> persister,
+                        LogPersistenceConfig config = {});
 
   ~LogPersister();
 

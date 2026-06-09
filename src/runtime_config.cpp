@@ -77,7 +77,7 @@ std::string RuntimeConfig::ToJson() const {
   return j.dump(2);
 }
 
-Status RuntimeConfig::Validate(const Values& v) const {
+Status RuntimeConfig::Validate(const Values& v) {
   // Range checks
   if (v.election_timeout_ms < 50 || v.election_timeout_ms > 5000) {
     return Status::Error("INVALID_CONFIG", "election_timeout_ms must be in [50, 5000]");

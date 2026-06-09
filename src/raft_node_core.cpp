@@ -1514,6 +1514,7 @@ uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
   return log_.GetLogTerm(index);
 }
 
+// static member function - does not access instance state
 NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
   // Simple parsing: extract port number as ID from address
   // In production, should use configured node_id mapping

@@ -201,7 +201,7 @@ class RaftNode::RaftNodeImpl {
 
   // Utility methods
   uint64_t GetLogTermLocked(uint64_t index);
-  NodeId ParseNodeId(const NodeAddr& addr);
+  static NodeId ParseNodeId(const NodeAddr& addr);
 
   // Membership change
   void ApplyConfigChangeLocked(const std::string& cmd);

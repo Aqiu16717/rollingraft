@@ -83,7 +83,7 @@ class RuntimeConfig {
    * @param v Values to validate
    * @return Status::OK() if valid, error with details otherwise
    */
-  Status Validate(const Values& v) const;
+  static Status Validate(const Values& v);
 
  private:
   mutable std::shared_mutex mtx_;

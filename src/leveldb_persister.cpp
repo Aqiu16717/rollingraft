@@ -810,7 +810,7 @@ class LevelDBPersister : public Persister {
     return {0, 0};
   }
 
-  std::string MakeLogKey(uint64_t index) {
+  static std::string MakeLogKey(uint64_t index) {
     // Format: "log:{index:016x}" (16 hex digits for fixed width sorting)
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%s%016llx", kLogPrefix,
@@ -818,7 +818,7 @@ class LevelDBPersister : public Persister {
     return std::string(buf);
   }
 
-  std::string SerializeEntry(const RaftLogEntry& entry) {
+  static std::string SerializeEntry(const RaftLogEntry& entry) {
     // Format: index (4) + term (4) + data_len (4) + data + checksum (4)
     // Total: 16 + data_len bytes
     std::string result;
@@ -840,7 +840,7 @@ class LevelDBPersister : public Persister {
     return result;
   }
 
-  bool DeserializeEntry(const leveldb::Slice& slice, RaftLogEntry& entry) {
+  static bool DeserializeEntry(const leveldb::Slice& slice, RaftLogEntry& entry) {
     // Format: index (4) + term (4) + data_len (4) + data + checksum (4)
     // Minimum size: 16 bytes (with empty data)
     if (slice.size() < 16) {

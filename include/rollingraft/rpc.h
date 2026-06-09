@@ -44,6 +44,7 @@ enum class RaftMessageType : int8_t {
 struct RaftRequest {
   RaftMessageType type_;
   uint64_t correlation_id_ = 0;  // Unique ID for request-response matching
+  uint64_t group_id = 0;         // Raft group ID (0 = default/single-group)
 
   RaftRequest() = delete;
   explicit RaftRequest(RaftMessageType type) : type_(type) {}
@@ -54,6 +55,7 @@ struct RaftRequest {
 struct RaftResponse {
   RaftMessageType type_ = RaftMessageType::KInvalid;
   uint64_t correlation_id_ = 0;  // Mirrors the request's correlation ID
+  uint64_t group_id = 0;         // Raft group ID (0 = default/single-group)
 
   RaftResponse() = default;
   explicit RaftResponse(RaftMessageType type) : type_(type) {}

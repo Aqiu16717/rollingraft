@@ -65,6 +65,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
   try {
     nlohmann::json j;
     j["correlation_id"] = req.correlation_id_;
+    j["group_id"] = req.group_id;
 
     switch (req.type_) {
       case RaftMessageType::KRequestVoteRequest: {
@@ -164,6 +165,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
     }
 
     req.correlation_id_ = j.value("correlation_id", 0);
+    req.group_id = j.value("group_id", 0);
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteRequest: {
@@ -288,6 +290,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
     nlohmann::json j;
 
     j["correlation_id"] = res.correlation_id_;
+    j["group_id"] = res.group_id;
 
     switch (res.type_) {
       case RaftMessageType::KRequestVoteResponse: {
@@ -381,6 +384,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     }
 
     res.correlation_id_ = j.value("correlation_id", 0);
+    res.group_id = j.value("group_id", 0);
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteResponse: {

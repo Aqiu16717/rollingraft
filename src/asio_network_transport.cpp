@@ -27,7 +27,25 @@
 #include "rollingraft/tls_config.h"
 #include "rollingraft/types.h"
 
+#include "nlohmann/json.hpp"
+
 namespace rollingraft {
+
+namespace {
+
+// Extract group_id from a JSON-encoded RPC body.
+// Returns 0 if the field is missing or parsing fails (backward compatibility).
+uint64_t ExtractGroupId(const std::string& body) {
+  try {
+    auto j = nlohmann::json::parse(body);
+    return j.value("group_id", 0);
+  } catch (const std::exception& e) {
+    LOG_DEBUG("ExtractGroupId failed: {}", e.what());
+    return 0;
+  }
+}
+
+}  // namespace
 
 // Message format: [length: 4 bytes (big-endian)][data: length bytes]
 using SocketVariant =
@@ -281,6 +299,13 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     request_handler_ = handler;
   }
 
+  void SetGroupRequestHandler(
+      std::function<void(NodeId, uint64_t, const std::string&, std::string&)>
+          handler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    group_request_handler_ = std::move(handler);
+  }
+
  private:
   void DoReadHeader() {
     auto self = shared_from_this();
@@ -357,8 +382,28 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
     if (request_handler_) {
       // This is a server connection, handle request
+      uint64_t group_id = ExtractGroupId(body_buffer_);
       std::string response;
-      request_handler_(peer_id_, body_buffer_, response);
+
+      if (group_id == 0) {
+        // Existing single-group path (backward compatible)
+        request_handler_(peer_id_, body_buffer_, response);
+      } else {
+        // Multi-raft group dispatch stub. In full multi-raft this will
+        // route to the appropriate RaftGroup; for now we either call the
+        // optional group handler or return a clear error.
+        if (group_request_handler_) {
+          group_request_handler_(peer_id_, group_id, body_buffer_, response);
+        } else {
+          LOG_WARN("Received message for group_id={} but no group handler "
+                   "registered (multi-raft not enabled)",
+                   group_id);
+          nlohmann::json err;
+          err["error"] = "MULTI_RAFT_NOT_ENABLED";
+          err["group_id"] = group_id;
+          response = err.dump();
+        }
+      }
 
       // Send response
       uint32_t length = static_cast<uint32_t>(response.size());
@@ -437,6 +482,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   mutable std::mutex mutex_;
   RpcRequestHandler request_handler_;
+  std::function<void(NodeId, uint64_t, const std::string&, std::string&)>
+      group_request_handler_;
   std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
   char header_buffer_[4] = {};
@@ -872,6 +919,18 @@ class AsioNetworkTransport : public NetworkTransport {
     peer_state_callback_ = std::move(callback);
   }
 
+  /**
+   * Register a handler for multi-raft group messages.
+   * This is a spike/stub API; in full multi-raft it will route to the
+   * appropriate RaftGroup. For now group_id==0 stays on the existing path.
+   */
+  void SetGroupRequestHandler(
+      std::function<void(NodeId, uint64_t, const std::string&, std::string&)>
+          handler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    group_request_handler_ = std::move(handler);
+  }
+
   void OnPeerStateChanged(NodeId peer_id, int state) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (peer_state_callback_) {
@@ -1035,6 +1094,7 @@ class AsioNetworkTransport : public NetworkTransport {
               [this, new_conn](std::error_code handshake_ec) {
                 if (!handshake_ec) {
                   new_conn->SetRequestHandler(request_handler_);
+                  new_conn->SetGroupRequestHandler(group_request_handler_);
                   new_conn->Start();
                   LOG_INFO("Accepted inbound TLS connection");
                 } else {
@@ -1050,6 +1110,7 @@ class AsioNetworkTransport : public NetworkTransport {
           return;
         } else {
           new_conn->SetRequestHandler(request_handler_);
+          new_conn->SetGroupRequestHandler(group_request_handler_);
           new_conn->Start();
           LOG_INFO("Accepted inbound connection from {}",
                    new_conn->TcpSocket()
@@ -1111,6 +1172,8 @@ class AsioNetworkTransport : public NetworkTransport {
   NodeAddr listen_addr_;
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   RpcRequestHandler request_handler_;
+  std::function<void(NodeId, uint64_t, const std::string&, std::string&)>
+      group_request_handler_;
   ConnectionCallback connection_callback_;
   std::function<void(NodeId, int)> peer_state_callback_;
 

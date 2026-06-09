@@ -16,9 +16,9 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
       network_(std::move(network)),
       timer_(std::move(timer)),
       persister_(std::move(persister)),
-      protocol_(std::move(protocol)) {
+      protocol_(std::move(protocol)),
+      peer_addrs_(config.peers) {
   server_id_ = config.node_id;
-  peer_addrs_ = config.peers;
 
   // Build peer map
   bool has_explicit_peer_ids = !config.peer_node_ids.empty();
@@ -137,9 +137,9 @@ Status RaftNode::RaftNodeImpl::Start() {
     }
 
     // Restore snapshot if exists
-    uint64_t snapshot_index = 0;
-    uint64_t snapshot_term = 0;
     if (persister_->HasSnapshot()) {
+      uint64_t snapshot_index = 0;
+      uint64_t snapshot_term = 0;
       std::string snapshot_data;
       auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index,
                                              snapshot_term);

@@ -74,7 +74,7 @@ bool TimingSafeEqual(const std::string& a, const std::string& b) {
 
 bool IsAdminEndpoint(const std::string& path, const std::string& method) {
   if (path == "/v1/members" && method == "POST") return true;
-  if (path.find("/v1/members/") == 0 && method == "DELETE") return true;
+  if (path.starts_with("/v1/members/") && method == "DELETE") return true;
   if (path == "/v1/snapshot/trigger" && method == "POST") return true;
   if (path == "/v1/leadership/transfer" && method == "POST") return true;
   if (path == "/v1/config") return true;  // GET and PATCH
@@ -369,7 +369,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
       response_body = "{\"error\":\"status_provider_not_set\"}\n";
     }
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/members" && request.find("POST") == 0 &&
+  } else if (path == "/v1/members" && request.starts_with("POST") &&
              add_member_handler_) {
     int32_t node_id = -1;
     std::string addr;
@@ -388,7 +388,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
       response_body = add_member_handler_(node_id, addr);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
-  } else if (path.find("/v1/members/") == 0 && request.find("DELETE") == 0 &&
+  } else if (path.starts_with("/v1/members/") && request.starts_with("DELETE") &&
              remove_member_handler_) {
     int32_t node_id = -1;
     size_t last_slash = path.find_last_of('/');
@@ -397,12 +397,12 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
     }
     response_body = remove_member_handler_(node_id);
     status_line = "HTTP/1.1 202 Accepted\r\n";
-  } else if (path == "/v1/snapshot/trigger" && request.find("POST") == 0 &&
+  } else if (path == "/v1/snapshot/trigger" && request.starts_with("POST") &&
              trigger_snapshot_handler_) {
     response_body = trigger_snapshot_handler_();
     status_line = "HTTP/1.1 202 Accepted\r\n";
   } else if (path == "/v1/leadership/transfer" &&
-             request.find("POST") == 0 && transfer_leadership_handler_) {
+             request.starts_with("POST") && transfer_leadership_handler_) {
     int32_t target_id = -1;
     try {
       auto j = nlohmann::json::parse(body);
@@ -418,11 +418,11 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
       response_body = transfer_leadership_handler_(target_id);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
-  } else if (path == "/v1/config" && request.find("GET") == 0 &&
+  } else if (path == "/v1/config" && request.starts_with("GET") &&
              config_provider_) {
     response_body = config_provider_();
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/config" && request.find("PATCH") == 0 &&
+  } else if (path == "/v1/config" && request.starts_with("PATCH") &&
              config_updater_) {
     response_body = config_updater_(body);
     status_line = "HTTP/1.1 200 OK\r\n";

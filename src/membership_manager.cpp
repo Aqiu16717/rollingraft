@@ -35,7 +35,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
   //         CONFIG_CHANGE:JOINT:old_nodes_json:new_nodes_json
   //         CONFIG_CHANGE:FINALIZE:new_nodes_json
 
-  if (cmd.find("CONFIG_CHANGE:JOINT:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:JOINT:")) {
     // Joint consensus phase 1: enter Cold,Cnew transitional configuration
     size_t pos1 = strlen("CONFIG_CHANGE:JOINT:");
     size_t pos2 = cmd.find(':', pos1);
@@ -87,7 +87,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     return;
   }
 
-  if (cmd.find("CONFIG_CHANGE:FINALIZE:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:FINALIZE:")) {
     // Joint consensus phase 2: commit Cnew, exit joint mode
     size_t pos = strlen("CONFIG_CHANGE:FINALIZE:");
     std::string new_nodes_json = cmd.substr(pos);
@@ -112,7 +112,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     return;
   }
 
-  if (cmd.find("CONFIG_CHANGE:ADD_LEARNER:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:ADD_LEARNER:")) {
     size_t pos1 = strlen("CONFIG_CHANGE:ADD_LEARNER:");
     size_t pos2 = cmd.find(':', pos1);
     if (pos2 == std::string::npos) {
@@ -145,7 +145,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     return;
   }
 
-  if (cmd.find("CONFIG_CHANGE:PROMOTE:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:PROMOTE:")) {
     size_t pos = strlen("CONFIG_CHANGE:PROMOTE:");
     NodeId id = std::stoll(cmd.substr(pos));
 
@@ -167,7 +167,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     return;
   }
 
-  if (cmd.find("CONFIG_CHANGE:ADD:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:ADD:")) {
     // Legacy single-step add (converted to joint consensus internally)
     size_t pos1 = strlen("CONFIG_CHANGE:ADD:");
     size_t pos2 = cmd.find(':', pos1);
@@ -207,7 +207,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     return;
   }
 
-  if (cmd.find("CONFIG_CHANGE:REMOVE:") == 0) {
+  if (cmd.starts_with("CONFIG_CHANGE:REMOVE:")) {
     // Legacy single-step remove (converted to joint consensus internally)
     size_t pos = strlen("CONFIG_CHANGE:REMOVE:");
     NodeId id = std::stoll(cmd.substr(pos));

@@ -12,6 +12,7 @@
 #include <leveldb/write_batch.h>
 #include <shared_mutex>
 
+#include "rollingraft/hybrid_persister.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/persister.h"
 
@@ -894,7 +895,7 @@ class LevelDBPersister : public Persister {
 
 // Factory function implementation
 std::unique_ptr<Persister> CreateLevelDBPersister() {
-  return std::make_unique<LevelDBPersister>();
+  return std::make_unique<HybridPersister>();
 }
 
 }  // namespace rollingraft

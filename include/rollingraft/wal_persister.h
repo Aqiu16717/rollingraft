@@ -146,6 +146,26 @@ class WALPersister {
    */
   std::pair<uint64_t, uint64_t> GetLogRange() const;
 
+  /**
+   * Read a single log entry by index.
+   *
+   * @param index Log entry index
+   * @param entry Output parameter for the entry
+   * @return Status::OK() on success
+   */
+  Status GetEntry(uint64_t index, RaftLogEntry& entry);
+
+  /**
+   * Read log entries in the range [start, end).
+   *
+   * @param start Start index (inclusive)
+   * @param end End index (exclusive)
+   * @param out Output vector for entries
+   * @return Status::OK() on success
+   */
+  Status GetEntries(uint64_t start, uint64_t end,
+                    std::vector<RaftLogEntry>* out);
+
  private:
   // Segment file format constants
   static constexpr uint32_t kMagic = 0x57414C30;  // "WAL0"
@@ -184,6 +204,8 @@ class WALPersister {
   Status OpenSegment(uint64_t segment_id, int* fd);
   Status CreateSegment(uint64_t segment_id);
   Status CloseSegment(Segment* seg);
+  Status ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
+                        RaftLogEntry& entry);
   Status WriteSegmentHeader(int fd, uint64_t segment_id);
   Status WriteRecord(int fd, WALRecordType type, const std::string& payload,
                      uint64_t* out_offset);

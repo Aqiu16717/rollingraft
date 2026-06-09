@@ -133,19 +133,17 @@ TEST_F(LevelDBPersisterTest, DetectsCorruptedData) {
   ASSERT_TRUE(persister_->GetEntries(1, 11, &result).ok());
   EXPECT_EQ(result.size(), 10);
 
-  // Corrupt the data by directly modifying the serialized value
+  // Close and corrupt WAL files (log entries now live in WAL, not LevelDB)
   persister_->Close();
 
-  // Corrupt LevelDB files
-  for (const auto& file : std::filesystem::directory_iterator(test_dir_)) {
+  std::string wal_dir = test_dir_ + "/wal";
+  for (const auto& file : std::filesystem::directory_iterator(wal_dir)) {
     if (file.is_regular_file()) {
-      // Try to corrupt .ldb files
       std::string ext = file.path().extension().string();
-      if (ext == ".ldb" || ext == ".log") {
+      if (ext == ".wal") {
         std::fstream fs(file.path(),
                         std::ios::in | std::ios::out | std::ios::binary);
         if (fs) {
-          // Seek to middle and corrupt
           fs.seekg(0, std::ios::end);
           auto size = fs.tellg();
           if (size > 50) {
@@ -158,27 +156,15 @@ TEST_F(LevelDBPersisterTest, DetectsCorruptedData) {
           }
           fs.close();
         }
+        break;
       }
     }
   }
 
-  // Reopen
+  // Reopen should detect WAL corruption during segment scan
   persister_ = CreateLevelDBPersister();
-  ASSERT_TRUE(persister_->Open(test_dir_).ok());
-
-  // Try to read entries - may get fewer entries due to corruption
-  // or may get errors for corrupted entries
-  result.clear();
-  auto status = persister_->GetEntries(1, 11, &result);
-
-  // The operation might succeed but return fewer entries
-  // or it might fail entirely depending on corruption
-  if (status.ok()) {
-    // If we got entries, verify they're valid
-    for (const auto& entry : result) {
-      EXPECT_EQ(entry.checksum_, 0);  // Corrupted entries won't have checksum
-    }
-  }
+  auto status = persister_->Open(test_dir_);
+  EXPECT_FALSE(status.ok());
 }
 
 TEST_F(LevelDBPersisterTest, StatePersistence) {

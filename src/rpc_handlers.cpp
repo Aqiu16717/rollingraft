@@ -550,7 +550,10 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
       if (!state_machine_->RestoreStream(restore_provider)) {
         LOG_ERROR("Node {} failed to restore from snapshot", server_id_);
-        std::remove(snapshot_temp_path_.c_str());
+        if (std::remove(snapshot_temp_path_.c_str()) != 0) {
+          LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
+                   snapshot_temp_path_);
+        }
         snapshot_temp_path_.clear();
         return;
       }
@@ -634,7 +637,10 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
       // Clean up temp file
       if (!snapshot_temp_path_.empty()) {
-        std::remove(snapshot_temp_path_.c_str());
+        if (std::remove(snapshot_temp_path_.c_str()) != 0) {
+          LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
+                   snapshot_temp_path_);
+        }
         snapshot_temp_path_.clear();
       }
 

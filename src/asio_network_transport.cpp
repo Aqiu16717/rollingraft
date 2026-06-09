@@ -122,9 +122,25 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
     // Drain any queued writes that haven't been dispatched yet.  This
     // prevents messages from lingering in write_queue_ if the connection
-    // is closed before DoWrite() empties it.
+    // is closed before DoWrite() empties it.  Also notify callbacks so
+    // callers don't hang waiting for a response that will never arrive.
     auto self = shared_from_this();
     asio::post(strand_, [self]() {
+      for (const auto& entry : self->write_queue_) {
+        RpcResponseCallback cb;
+        std::shared_ptr<asio::steady_timer> timer;
+        {
+          std::lock_guard<std::mutex> lock(self->mutex_);
+          auto it = self->pending_callbacks_.find(entry.correlation_id);
+          if (it != self->pending_callbacks_.end()) {
+            cb = std::move(it->second.callback);
+            timer = std::move(it->second.timer);
+            self->pending_callbacks_.erase(it);
+          }
+        }
+        if (timer) timer->cancel();
+        if (cb) cb("", false, "Connection closed");
+      }
       self->write_queue_.clear();
       self->write_in_progress_ = false;
     });

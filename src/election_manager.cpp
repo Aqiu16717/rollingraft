@@ -12,10 +12,11 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   leader_id_ = -1;
   leader_addr_.clear();
 
-  // Stop leader timers
+  // Stop leader timers and clear pipeline state
   {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
+    inflight_.clear();
   }
   {
     std::lock_guard<std::mutex> lock_s(snapshot_mtx_);

@@ -326,7 +326,11 @@ void WALPersister::Close() {
   if (active_segment_.fd >= 0) {
     // Write trailer at end_offset before closing
     lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-    WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+    auto status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+    if (!status.ok()) {
+      LOG_WARN("WALPersister::Close() failed to write trailer: {}",
+               status.ToString());
+    }
     close(active_segment_.fd);
     active_segment_ = Segment{};
   }

@@ -87,3 +87,14 @@ Key design choices from T2 review:
 ### Metrics
 
 T3 Phase 3 validation confirmed zero performance regression in the 100B-payload baseline; the architectural benefits dominate at this stage.
+
+---
+
+## 验证结果 (2026-06-09)
+
+| 假设 | 状态 | 数据 |
+|------|------|------|
+| 大 payload WAL 优势 | ❌ 不成立 | 1KB+ 两者持平，disk I/O 瓶颈 |
+| 高并发 LevelDB 瓶颈 | ✅ 成立(小payload) | 100B 并发: Hybrid 3.5× 吞吐, p99 1.6ms vs 66ms |
+
+详细数据见 `docs/benchmark-large-payload.md`。

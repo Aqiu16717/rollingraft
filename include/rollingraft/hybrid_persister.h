@@ -79,4 +79,7 @@ class HybridPersister : public Persister {
   std::unique_ptr<StatePersister> state_;
 };
 
+/** Create a Hybrid persister (WAL + StatePersister). */
+std::unique_ptr<Persister> CreateHybridPersister();
+
 }  // namespace rollingraft

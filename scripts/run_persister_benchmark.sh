@@ -75,8 +75,7 @@ run_backend() {
 
 # Run both backends
 run_backend "leveldb"
-# TODO(T3-Phase3): uncomment when HybridPersister is available
-# run_backend "hybrid"
+run_backend "hybrid"
 
 echo ""
 echo "Benchmark complete."

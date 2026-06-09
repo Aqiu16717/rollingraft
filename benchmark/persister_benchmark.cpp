@@ -28,6 +28,7 @@
 #include <sys/resource.h>
 #include <vector>
 
+#include "rollingraft/hybrid_persister.h"
 #include "rollingraft/persister.h"
 
 using namespace rollingraft;
@@ -56,12 +57,11 @@ static std::string BackendName(Backend b) {
   return "unknown";
 }
 
-// Factory: currently only LevelDBPersister is wired. HybridPersister
-// will be added here once T3 Phase 2 lands.
+// Factory: wires LevelDBPersister or HybridPersister depending on backend.
 static std::unique_ptr<Persister> CreatePersister(Backend backend) {
-  (void)backend;
-  // TODO(T3-Phase3): switch to CreateHybridPersister() when available.
-  // if (backend == Backend::kHybrid) return CreateHybridPersister();
+  if (backend == Backend::kHybrid) {
+    return CreateHybridPersister();
+  }
   return CreateLevelDBPersister();
 }
 

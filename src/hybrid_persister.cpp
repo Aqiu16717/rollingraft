@@ -268,4 +268,8 @@ bool HybridPersister::HasSnapshot() const {
   return state_->HasSnapshot();
 }
 
+std::unique_ptr<Persister> CreateHybridPersister() {
+  return std::make_unique<HybridPersister>();
+}
+
 }  // namespace rollingraft

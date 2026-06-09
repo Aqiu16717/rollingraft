@@ -13,6 +13,7 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -26,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <sys/resource.h>
+#include <thread>
 #include <vector>
 
 #include "rollingraft/hybrid_persister.h"
@@ -75,6 +77,7 @@ struct BenchmarkArgs {
   int payload_bytes = 100;
   std::vector<int> batch_sizes = {1, 10, 100};
   std::vector<int> compression_values = {0, 1};
+  int threads = 1;
   std::string output_path = "persister_benchmark_results.csv";
   std::string data_dir_prefix = "/tmp/rollingraft_persister_bench";
 };
@@ -111,6 +114,8 @@ static BenchmarkArgs ParseArgs(int argc, char** argv) {
       args.output_path = arg.substr(9);
     } else if (arg.rfind("--data-dir=", 0) == 0) {
       args.data_dir_prefix = arg.substr(11);
+    } else if (arg.rfind("--threads=", 0) == 0) {
+      args.threads = std::stoi(arg.substr(10));
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: " << argv[0] << " [options]\n"
                 << "  --backend=NAME        leveldb (default) or hybrid\n"
@@ -118,6 +123,7 @@ static BenchmarkArgs ParseArgs(int argc, char** argv) {
                 << "  --payload=N           payload size in bytes (default 100)\n"
                 << "  --batch=LIST          comma-separated batch sizes (default 1,10,100)\n"
                 << "  --compression=LIST    comma-separated 0/1 values (default 0,1)\n"
+                << "  --threads=N           concurrent writer threads (default 1)\n"
                 << "  --output=PATH         CSV output path (default persister_benchmark_results.csv)\n"
                 << "  --data-dir=PATH       temp directory prefix (default /tmp/rollingraft_persister_bench)\n";
       std::exit(0);
@@ -279,6 +285,133 @@ static AppendResult RunAppendBenchmark(Backend backend,
 }
 
 // ------------------------------------------------------------------
+// Benchmark: Concurrent Append Throughput
+// ------------------------------------------------------------------
+
+struct ConcurrentAppendResult {
+  int threads = 1;
+  int batch_size = 0;
+  Persister::CompressionType compression = Persister::kSnappyCompression;
+  double total_ops_per_second = 0.0;
+  double latency_avg_us = 0.0;
+  double latency_p50_us = 0.0;
+  double latency_p99_us = 0.0;
+  size_t peak_rss_kb = 0;
+  size_t data_dir_size_bytes = 0;
+  std::chrono::milliseconds duration_ms{0};
+};
+
+static ConcurrentAppendResult RunConcurrentAppendBenchmark(
+    Backend backend,
+    const std::string& data_dir_prefix,
+    int total_entries,
+    size_t entry_size,
+    int batch_size,
+    Persister::CompressionType compression,
+    int num_threads) {
+  std::filesystem::remove_all(data_dir_prefix);
+
+  std::string payload;
+  {
+    std::mt19937 rng(42);
+    payload = RandomString(entry_size, rng);
+  }
+
+  int entries_per_thread = total_entries / num_threads;
+  std::atomic<int> remaining{num_threads};
+  std::vector<std::vector<double>> thread_latencies(num_threads);
+  std::vector<std::thread> workers;
+  workers.reserve(num_threads);
+
+  size_t rss_before_kb = GetPeakRssKb();
+  auto t0 = std::chrono::steady_clock::now();
+
+  for (int t = 0; t < num_threads; ++t) {
+    workers.emplace_back([&, t]() {
+      std::string data_dir = data_dir_prefix + "_t" + std::to_string(t);
+      std::filesystem::create_directories(data_dir);
+
+      auto persister = CreatePersister(backend);
+      persister->SetCompressionType(compression);
+      if (!persister->Open(data_dir).ok()) {
+        std::cerr << "Failed to open persister for thread " << t << "\n";
+        remaining.fetch_sub(1);
+        return;
+      }
+
+      std::vector<double>& latencies = thread_latencies[t];
+      latencies.reserve(entries_per_thread / std::max(1, batch_size));
+
+      int start_index = t * entries_per_thread + 1;
+      int end_index = start_index + entries_per_thread;
+      int index = start_index;
+
+      while (index < end_index) {
+        std::vector<RaftLogEntry> batch;
+        batch.reserve(batch_size);
+        for (int i = 0; i < batch_size && index < end_index; ++i, ++index) {
+          batch.push_back(MakeEntry(index, 1, payload));
+        }
+
+        auto t_start = std::chrono::steady_clock::now();
+        auto status = persister->AppendEntries(batch);
+        auto t_end = std::chrono::steady_clock::now();
+
+        if (!status.ok()) {
+          std::cerr << "Append failed at index " << index << ": " << status.ToString() << "\n";
+          break;
+        }
+
+        double us = std::chrono::duration<double, std::micro>(t_end - t_start).count();
+        latencies.push_back(us);
+      }
+
+      persister->Sync();
+      persister->Close();
+      remaining.fetch_sub(1);
+    });
+  }
+
+  for (auto& w : workers) w.join();
+
+  auto t1 = std::chrono::steady_clock::now();
+  auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+
+  size_t rss_after_kb = GetPeakRssKb();
+
+  size_t total_dir_size = 0;
+  for (int t = 0; t < num_threads; ++t) {
+    total_dir_size += GetDirectorySize(data_dir_prefix + "_t" + std::to_string(t));
+  }
+
+  // Merge latencies from all threads
+  std::vector<double> all_latencies;
+  for (auto& vec : thread_latencies) {
+    all_latencies.insert(all_latencies.end(), vec.begin(), vec.end());
+  }
+
+  ConcurrentAppendResult result;
+  result.threads = num_threads;
+  result.batch_size = batch_size;
+  result.compression = compression;
+  result.duration_ms = duration_ms;
+  result.peak_rss_kb = rss_after_kb > rss_before_kb ? rss_after_kb - rss_before_kb : 0;
+  result.data_dir_size_bytes = total_dir_size;
+
+  int actual_ops = static_cast<int>(all_latencies.size());
+  if (actual_ops > 0 && duration_ms.count() > 0) {
+    result.total_ops_per_second = actual_ops * 1000.0 / duration_ms.count();
+    std::sort(all_latencies.begin(), all_latencies.end());
+    result.latency_avg_us = std::accumulate(all_latencies.begin(), all_latencies.end(), 0.0) / actual_ops;
+    result.latency_p50_us = all_latencies[actual_ops * 50 / 100];
+    result.latency_p99_us = all_latencies[std::min(actual_ops * 99 / 100, actual_ops - 1)];
+  }
+
+  std::filesystem::remove_all(data_dir_prefix);
+  return result;
+}
+
+// ------------------------------------------------------------------
 // Benchmark: Recovery Time
 // ------------------------------------------------------------------
 
@@ -416,6 +549,7 @@ struct CsvRow {
   int payload_bytes = 0;
   int batch_size = 0;
   int compression = 0;
+  int threads = 1;
   double ops_per_sec = 0.0;
   double latency_p50_us = 0.0;
   double latency_p99_us = 0.0;
@@ -429,7 +563,7 @@ struct CsvRow {
 };
 
 static void WriteCsvHeader(std::ostream& out) {
-  out << "scenario,backend,entries,payload_bytes,batch_size,compression,"
+  out << "scenario,backend,entries,payload_bytes,batch_size,compression,threads,"
       << "ops_per_sec,latency_p50_us,latency_p99_us,latency_avg_us,"
       << "rss_kb,dir_size_mb,duration_ms,recovery_entries,reopen_ms,create_ms\n";
 }
@@ -441,6 +575,7 @@ static void WriteCsvRow(std::ostream& out, const CsvRow& row) {
       << row.payload_bytes << ","
       << row.batch_size << ","
       << row.compression << ","
+      << row.threads << ","
       << std::fixed << std::setprecision(2) << row.ops_per_sec << ","
       << row.latency_p50_us << ","
       << row.latency_p99_us << ","
@@ -471,12 +606,13 @@ int main(int argc, char** argv) {
   std::cout << "\n";
   std::cout << "Compression modes: ";
   for (auto c : args.compression_values) std::cout << c << " ";
-  std::cout << "\n\n";
+  std::cout << "\n";
+  std::cout << "Threads: " << args.threads << "\n\n";
 
   // ================================================================
-  // 1. Append Throughput
+  // 1. Append Throughput (single-threaded)
   // ================================================================
-  std::cout << "[1/3] Running append throughput benchmarks...\n";
+  std::cout << "[1/4] Running append throughput benchmarks...\n";
   for (int compression_val : args.compression_values) {
     auto compression = (compression_val == 0) ? Persister::kNoCompression
                                               : Persister::kSnappyCompression;
@@ -518,7 +654,7 @@ int main(int argc, char** argv) {
   // ================================================================
   // 2. Recovery Time
   // ================================================================
-  std::cout << "\n[2/3] Running recovery benchmarks...\n";
+  std::cout << "\n[2/4] Running recovery benchmarks...\n";
   std::vector<int> recovery_entry_counts = {1000, 10000, 100000};
   for (int num_entries : recovery_entry_counts) {
     for (int compression_val : args.compression_values) {
@@ -555,7 +691,7 @@ int main(int argc, char** argv) {
   // ================================================================
   // 3. Memory Footprint
   // ================================================================
-  std::cout << "\n[3/3] Running memory benchmarks...\n";
+  std::cout << "\n[3/4] Running memory benchmarks...\n";
   for (int num_entries : recovery_entry_counts) {
     for (int compression_val : args.compression_values) {
       auto compression = (compression_val == 0) ? Persister::kNoCompression
@@ -583,6 +719,56 @@ int main(int argc, char** argv) {
                 << " dir=" << FormatBytes(r.data_dir_size_bytes)
                 << "\n";
     }
+  }
+
+  // ================================================================
+  // 4. Concurrent Append Throughput (multi-threaded)
+  // ================================================================
+  if (args.threads > 1) {
+    std::cout << "\n[4/4] Running concurrent append throughput benchmarks ("
+              << args.threads << " threads)...\n";
+    for (int compression_val : args.compression_values) {
+      auto compression = (compression_val == 0) ? Persister::kNoCompression
+                                                : Persister::kSnappyCompression;
+      for (int batch_size : args.batch_sizes) {
+        std::string data_dir = args.data_dir_prefix + "_concurrent_" +
+                               std::to_string(args.payload_bytes) + "B_" +
+                               std::to_string(batch_size) + "x_" +
+                               std::to_string(compression_val);
+        auto r = RunConcurrentAppendBenchmark(
+            args.backend, data_dir, args.entries,
+            args.payload_bytes, batch_size, compression, args.threads);
+
+        CsvRow row;
+        row.scenario = "concurrent_append";
+        row.backend = BackendName(args.backend);
+        row.entries = args.entries;
+        row.payload_bytes = args.payload_bytes;
+        row.batch_size = batch_size;
+        row.compression = compression_val;
+        row.threads = args.threads;
+        row.ops_per_sec = r.total_ops_per_second;
+        row.latency_p50_us = r.latency_p50_us;
+        row.latency_p99_us = r.latency_p99_us;
+        row.latency_avg_us = r.latency_avg_us;
+        row.rss_kb = r.peak_rss_kb;
+        row.dir_size_mb = r.data_dir_size_bytes / (1024.0 * 1024.0);
+        row.duration_ms = r.duration_ms.count();
+        rows.push_back(row);
+
+        std::cout << "  threads=" << args.threads
+                  << " batch=" << batch_size
+                  << " compression=" << compression_val
+                  << " ops/sec=" << std::fixed << std::setprecision(0) << r.total_ops_per_second
+                  << " p50=" << r.latency_p50_us << "us"
+                  << " p99=" << r.latency_p99_us << "us"
+                  << " rss+=" << r.peak_rss_kb << "KB"
+                  << " dir=" << FormatBytes(r.data_dir_size_bytes)
+                  << "\n";
+      }
+    }
+  } else {
+    std::cout << "\n[4/4] Skipping concurrent benchmark (use --threads=N where N>1)\n";
   }
 
   // ================================================================

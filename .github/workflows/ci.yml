@@ -229,6 +229,44 @@ jobs:
             -exec clang-format --dry-run --Werror --style=file {} +
 
   # ============================================================
+  # Static Analysis — cppcheck (exhaustive, blocks on error/performance)
+  # ============================================================
+  cppcheck:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          cppcheck --version
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --error-exitcode=1 \
+            --enable=warning,performance,portability,information \
+            --check-level=exhaustive \
+            --std=c++20 \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction:tests/ \
+            -I include \
+            src/ tests/ \
+            2>&1 | tee cppcheck.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-cppcheck
+          path: cppcheck.log
+          retention-days: 3
+
+  # ============================================================
   # Docker Integration Test
   # ============================================================
   docker-test:

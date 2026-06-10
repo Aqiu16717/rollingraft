@@ -1,0 +1,31 @@
+# RollingRaft pre-commit hooks
+# Install: pip install pre-commit && pre-commit install
+# Run on all files: pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: clang-format --dry-run --Werror --style=file
+        language: system
+        files: '\.(cpp|h|hpp)$'
+        pass_filenames: true
+        stages: [pre-commit]
+
+      - id: cppcheck-fast
+        name: cppcheck (fast, error-only)
+        entry: cppcheck
+        language: system
+        files: '\.(cpp|h)$'
+        pass_filenames: false
+        stages: [pre-commit]
+        args:
+          - --error-exitcode=1
+          - --enable=error
+          - --std=c++20
+          - --suppress=missingIncludeSystem
+          - -I
+          - include
+          - src/
+          - tests/

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(rollingraft
-  VERSION 0.1.0
+  VERSION 0.3.0
   LANGUAGES C CXX
   DESCRIPTION "A C++20 Raft consensus library based on Asio"
 )

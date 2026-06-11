@@ -109,6 +109,49 @@ endif()
 # OpenSSL
 find_package(OpenSSL REQUIRED)
 
+# Protobuf (optional — for MVP benchmark)
+# Abseil may be needed by protobuf 35+
+find_package(absl CONFIG QUIET)
+find_package(Protobuf QUIET)
+if(Protobuf_FOUND)
+  message(STATUS "Protobuf found: ${Protobuf_VERSION}")
+  
+  # Generate C++ code from .proto files
+  file(GLOB PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/proto/*.proto)
+  if(PROTO_FILES)
+    foreach(proto_file ${PROTO_FILES})
+      get_filename_component(proto_name ${proto_file} NAME_WE)
+      get_filename_component(proto_dir ${proto_file} DIRECTORY)
+      set(proto_src ${CMAKE_CURRENT_BINARY_DIR}/${proto_name}.pb.cc)
+      set(proto_hdr ${CMAKE_CURRENT_BINARY_DIR}/${proto_name}.pb.h)
+      
+      add_custom_command(
+        OUTPUT ${proto_src} ${proto_hdr}
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+          --cpp_out=${CMAKE_CURRENT_BINARY_DIR}
+          -I${proto_dir}
+          ${proto_file}
+        DEPENDS ${proto_file}
+        COMMENT "Generating C++ code from ${proto_name}.proto"
+      )
+      
+      list(APPEND PROTO_SRCS ${proto_src})
+      list(APPEND PROTO_HDRS ${proto_hdr})
+    endforeach()
+    
+    add_library(rollingraft_proto STATIC ${PROTO_SRCS})
+    target_include_directories(rollingraft_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+    target_link_libraries(rollingraft_proto PUBLIC protobuf::libprotobuf)
+    set_target_properties(rollingraft_proto PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Protobuf 35+ depends on abseil — ensure transitive deps propagate
+    if(TARGET absl::base)
+      target_link_libraries(rollingraft_proto PUBLIC absl::log_internal_message absl::log_internal_check_op)
+    endif()
+  endif()
+else()
+  message(STATUS "Protobuf not found — protobuf MVP benchmark disabled")
+endif()
+
 # Link dependencies
 target_link_libraries(rollingraft
   PUBLIC

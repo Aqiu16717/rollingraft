@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package rollingraft;
+
+// RaftLogEntry protobuf representation.
+// Replaces JSON+Base64 serialization in WALPersister.
+// Fields use raw bytes (not Base64) for data and command.
+message RaftLogEntryProto {
+  uint64 index = 1;
+  uint64 term = 2;
+  bytes data = 3;      // raw bytes, replaces Base64-encoded string
+  bytes command = 4;   // raw bytes, replaces Base64-encoded string
+  uint64 checksum = 5;
+}

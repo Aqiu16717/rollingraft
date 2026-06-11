@@ -79,6 +79,26 @@ target_link_libraries(benchmark_runner
     rollingraft
 )
 
+# Protobuf MVP benchmark (optional — requires protobuf)
+if(TARGET rollingraft_proto)
+  add_executable(benchmark_protobuf_mvp
+    protobuf_mvp_benchmark.cpp
+  )
+
+  target_include_directories(benchmark_protobuf_mvp
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/..
+      ${CMAKE_CURRENT_SOURCE_DIR}/../include
+      ${CMAKE_CURRENT_BINARY_DIR}/..
+  )
+
+  target_link_libraries(benchmark_protobuf_mvp
+    PRIVATE
+      rollingraft_proto
+      rollingraft::json
+  )
+endif()
+
 # Install benchmark executables
 install(TARGETS benchmark_client benchmark_latency_curve benchmark_failover benchmark_runner
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}/benchmark

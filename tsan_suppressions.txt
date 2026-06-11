@@ -2,8 +2,12 @@
 #
 # These are known false positives from third-party libraries or
 # OS-level synchronization primitives that TSan cannot instrument.
+# Format: one suppression per line, see:
+#   https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
 
-# ASIO kqueue/epoll reactor false positives
+# ============================================================================
+# ASIO — kqueue/epoll reactor false positives
+# ============================================================================
 # ASIO's reactor uses kernel-level synchronization (kqueue/epoll syscalls)
 # that TSan cannot instrument. Multiple threads calling io_context::run()
 # triggers benign race warnings in the reactor's descriptor state allocation.
@@ -12,3 +16,34 @@ race:asio::detail::kqueue_reactor::run
 race:asio::detail::epoll_reactor::run
 race:asio::detail::allocate_descriptor_state
 race:asio::detail::descriptor_state::do_complete
+
+# ============================================================================
+# Google Test — macro-generated test registration races
+# ============================================================================
+# TEST/TEST_F macros generate static test registration objects. TSan flags
+# races during parallel test discovery because gtest uses lazy singleton
+# initialization without TSan-visible synchronization.
+# These are initialization-order races, not real data races at runtime.
+race:testing::internal::MakeAndRegisterTestInfo
+race:testing::internal::UnitTestImpl
+race:testing::internal::TestInfoImpl
+
+# ============================================================================
+# LevelDB — internal background thread synchronization
+# ============================================================================
+# LevelDB's background compaction and write threads use custom synchronization
+# (port::Mutex, port::CondVar) that may not be fully instrumented by TSan
+# depending on the platform implementation.
+# races:leveldb::port::Mutex
+# races:leveldb::port::CondVar
+# Note: Currently no known LevelDB TSan issues in our test suite.
+# Uncomment above if LevelDB background threads trigger false positives.
+
+# ============================================================================
+# OpenSSL — internal locking primitives
+# ============================================================================
+# OpenSSL 3.x uses its own internal locking (CRYPTO_THREAD_lock) which may
+# not be fully visible to TSan on all platforms.
+# race:CRYPTO_THREAD_
+# Note: Currently no known OpenSSL TSan issues in our test suite.
+# Uncomment above if SSL handshake threads trigger false positives.

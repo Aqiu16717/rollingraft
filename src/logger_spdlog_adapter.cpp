@@ -16,8 +16,8 @@ using namespace rollingraft;
 
 class SpdlogAdapter::Impl {
  public:
-  Impl() {
-    logger_ = spdlog::basic_logger_mt("rollingraft_logger", "rollingraft.log");
+  Impl()
+      : logger_(spdlog::basic_logger_mt("rollingraft_logger", "rollingraft.log")) {
     logger_->set_level(spdlog::level::info);
   }
   ~Impl() { spdlog::drop("rollingraft_logger"); }

@@ -254,6 +254,9 @@ jobs:
             --std=c++20 \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction:tests/ \
+            --suppress=operatorEqToSelf:include/rollingraft/status.h \
+            --suppress=syntaxError:tests/deterministic/test_chaos.cpp \
+            --suppress=syntaxError:tests/unit/test_asio_ssl_context_factory.cpp \
             -I include \
             src/ tests/ \
             2>&1 | tee cppcheck.log

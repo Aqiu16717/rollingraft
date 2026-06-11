@@ -3,8 +3,8 @@
 
 namespace rollingraft {
 
-SimulatedTimerService::SimulatedTimerService(SimulatedClock* clock) {
-  state_ = std::make_shared<State>();
+SimulatedTimerService::SimulatedTimerService(SimulatedClock* clock)
+    : state_(std::make_shared<State>()) {
   state_->clock = clock;
 }
 

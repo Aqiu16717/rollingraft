@@ -9,9 +9,10 @@
 #include "simulated_timer_service.h"
 #include "mock/mock_persister.h"
 namespace rollingraft {
-TestCluster::TestCluster(const Options& options) : options_(options) {
-  clock_ = std::make_unique<SimulatedClock>();
-  network_ = std::make_unique<SimulatedNetwork>(clock_.get(), options.seed);
+TestCluster::TestCluster(const Options& options)
+    : options_(options),
+      clock_(std::make_unique<SimulatedClock>()),
+      network_(std::make_unique<SimulatedNetwork>(clock_.get(), options.seed)) {
   nodes_.resize(options.num_nodes); state_machines_.resize(options.num_nodes); data_dirs_.resize(options.num_nodes);
   for (size_t i = 0; i < options.num_nodes; ++i) {
     state_machines_[i] = std::make_shared<MockStateMachine>();
@@ -50,7 +51,7 @@ void TestCluster::RunUntilLeaderElected() { for (int i = 0; i < 1000; ++i) { Adv
 void TestCluster::RunUntilCommit(Index index) { for (int i = 0; i < 1000; ++i) { AdvanceTime(10); bool ok = true; for (size_t j = 0; j < options_.num_nodes; ++j) if (nodes_[j] && (GetCommitIndex(static_cast<NodeId>(j)) < index || GetLastApplied(static_cast<NodeId>(j)) < index)) { ok = false; break; } if (ok) return; } ADD_FAILURE() << "Index not committed"; }
 void TestCluster::RunFor(uint64_t ms) { uint64_t t = clock_->Now() + ms; while (clock_->Now() < t) AdvanceTime(10); }
 void TestCluster::RunUntilIdle() { clock_->RunUntilIdle(); network_->DeliverAll(); }
-void TestCluster::Partition(std::vector<NodeId> ga, std::vector<NodeId> gb) { for (NodeId a : ga) for (NodeId b : gb) network_->Partition(a, b); }
+void TestCluster::Partition(const std::vector<NodeId>& ga, const std::vector<NodeId>& gb) { for (NodeId a : ga) for (NodeId b : gb) network_->Partition(a, b); }
 void TestCluster::HealAllPartitions() { network_->HealAllPartitions(); }
 void TestCluster::DropMessages(float p) { network_->DropMessages(p); }
 void TestCluster::DelayMessages(uint64_t d) { network_->DelayAll(d); }

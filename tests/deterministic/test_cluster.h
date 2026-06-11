@@ -14,7 +14,7 @@ class TestCluster {
   void StartAll(); void StopAll(); void StartNode(NodeId id); void StopNode(NodeId id);
   void CrashNode(NodeId id); void RestartNode(NodeId id); void AdvanceTime(uint64_t ms);
   void RunUntilLeaderElected(); void RunUntilCommit(Index index); void RunFor(uint64_t ms); void RunUntilIdle();
-  void Partition(std::vector<NodeId> group_a, std::vector<NodeId> group_b);
+  void Partition(const std::vector<NodeId>& group_a, const std::vector<NodeId>& group_b);
   void HealAllPartitions(); void DropMessages(float probability); void DelayMessages(uint64_t delay_ms);
   Status ProposeToLeader(const std::string& command); Status ProposeToNode(NodeId id, const std::string& command);
   void AssertNoLeader() const; void AssertSingleLeader() const; void AssertCommitted(Index index) const; void AssertAllApplied(Index index) const; void AssertStateMachineEqual() const;

@@ -1,18 +1,29 @@
 # Run manually to reformat a file:
-# clang-format -i --style=file <file>
-# find . -iname '*.cc' -o -iname '*.h' -o -iname '*.h.in' | xargs clang-format -i --style=file
+#   clang-format -i --style=file <file>
+# Reformat all source files:
+#   find src tests benchmark example include -type f \
+#     \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) \
+#     -exec clang-format -i --style=file {} +
+
 BasedOnStyle: Google
+ColumnLimit: 100
 DerivePointerAlignment: false
 
-# Public headers are in a different location in the internal Google repository.
-# Order them so that when imported to the authoritative repository they will be
-# in correct alphabetical order.
+# Include ordering for RollingRaft project structure:
+#   1. System headers (<string>, <vector>, etc.)
+#   2. Third-party libraries (<asio.hpp>, <nlohmann/json.hpp>, <gtest/gtest.h>, etc.)
+#   3. Project public API ("rollingraft/...")
+#   4. Project internal headers and mocks
 IncludeCategories:
-  - Regex:           '^(<|"(benchmarks|db|helpers)/)'
+  - Regex:           '^<[a-z_]+>'
     Priority:        1
-  - Regex:           '^"(rollingraft)/'
+    SortPriority:    1
+  - Regex:           '^<[^/]*>'
     Priority:        2
-  - Regex:           '^(<|"(issues|port|third_party|util)/)'
+    SortPriority:    2
+  - Regex:           '^"rollingraft/'
     Priority:        3
+    SortPriority:    3
   - Regex:           '.*'
     Priority:        4
+    SortPriority:    4

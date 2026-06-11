@@ -6,8 +6,8 @@
 namespace rollingraft {
 
 SimulatedNetworkTransport::SimulatedNetworkTransport(
-    NodeId node_id, SimulatedNetwork* network, SimulatedClock* clock) {
-  state_ = std::make_shared<State>();
+    NodeId node_id, SimulatedNetwork* network, SimulatedClock* clock)
+    : state_(std::make_shared<State>()) {
   state_->node_id = node_id;
   state_->network = network;
   state_->clock = clock;

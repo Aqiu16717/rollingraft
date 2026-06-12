@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Atomic snapshot replacement**: `StatePersister::SaveSnapshotStream()` now writes to a temporary file and performs an atomic `rename()` only after successful SHA-256 verification. This eliminates the window where a failed snapshot write leaves the node without a valid snapshot.
+
+## [0.3.1] — 2026-06-12
+
+### Changed
+- **Protobuf WAL serialization**: Migrated `WALPersister` log entry serialization from JSON+Base64 to protobuf with raw `bytes` fields. The segment parser automatically falls back to JSON for existing segments, so no manual migration is required.
+
+### Performance
+- WAL append throughput: **+28%**
+- WAL recovery time: **-80%**
+- WAL on-disk size: **-43%**
+
 ## [0.3.0] — 2026-06-11
 
 ### Safety (P0)

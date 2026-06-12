@@ -357,6 +357,16 @@ Status StatePersister::SaveSnapshotStream(
   }
 
   if (chunk_index == 0) {
+    // Empty snapshot: preserve legacy behavior of removing any existing
+    // snapshot so that HasSnapshot() returns false.
+    leveldb::WriteBatch batch;
+    DeleteSnapshotDataLocked(&batch);
+    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    if (!s.ok()) {
+      return Status::Error("Failed to clear old snapshot: " + s.ToString());
+    }
+    snapshot_last_index_ = 0;
+    snapshot_last_term_ = 0;
     LOG_INFO("Snapshot save skipped: empty data");
     return Status::OK();
   }

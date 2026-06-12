@@ -325,3 +325,23 @@ TEST_F(LevelDBPersisterStreamingTest,
   auto status = persister_->LoadSnapshotStream(consumer, idx, term);
   EXPECT_FALSE(status.ok());
 }
+TEST_F(LevelDBPersisterStreamingTest,
+       SaveSnapshotStream_EmptyData_ClearsExistingSnapshot) {
+  // Save an initial streaming snapshot.
+  std::string data(128, 'A');
+  size_t offset = 0;
+  auto provider = [&](std::string& chunk) -> bool {
+    if (offset >= data.size()) return false;
+    chunk = data.substr(offset, 32);
+    offset += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider, 10, 1).ok());
+  EXPECT_TRUE(persister_->HasSnapshot());
+
+  // Now save an empty streaming snapshot; legacy behavior is to clear
+  // the existing snapshot.
+  auto empty_provider = [&](std::string& /*chunk*/) -> bool { return false; };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(empty_provider, 20, 2).ok());
+  EXPECT_FALSE(persister_->HasSnapshot());
+}

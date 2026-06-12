@@ -174,6 +174,10 @@ class WALPersister {
   static constexpr size_t kTrailerSize = 8;
   static constexpr size_t kMaxRecordSize = 16 * 1024 * 1024;  // 16MB
 
+  // Format version for log entry payload serialization
+  static constexpr uint16_t kFormatVersionJson = 1;      // JSON + Base64
+  static constexpr uint16_t kFormatVersionProtobuf = 2;  // Protobuf + raw bytes
+
   // Segment rotation thresholds
   static constexpr size_t kMaxSegmentEntries = 10000;
   static constexpr size_t kMaxSegmentSize = 64 * 1024 * 1024;  // 64MB
@@ -183,6 +187,7 @@ class WALPersister {
     int fd = -1;
     uint64_t end_offset = 0;
     uint64_t entry_count = 0;
+    uint16_t format_version = kFormatVersionProtobuf;
   };
 
   std::string wal_dir_;
@@ -196,6 +201,9 @@ class WALPersister {
   // In-memory index: log_index -> (segment_id, offset, length)
   std::map<uint64_t, WALIndexEntry> index_;
 
+  // Segment id -> format version (protected by mtx_)
+  std::map<uint64_t, uint16_t> segment_format_versions_;
+
   // Current log range
   uint64_t first_index_ = 0;
   uint64_t last_index_ = 0;
@@ -206,7 +214,8 @@ class WALPersister {
   Status CloseSegment(Segment* seg);
   Status ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
                         RaftLogEntry& entry);
-  Status WriteSegmentHeader(int fd, uint64_t segment_id);
+  Status WriteSegmentHeader(int fd, uint64_t segment_id,
+                            uint16_t format_version = kFormatVersionProtobuf);
   Status WriteRecord(int fd, WALRecordType type, const std::string& payload,
                      uint64_t* out_offset);
   Status WriteTrailer(int fd, uint64_t end_offset);

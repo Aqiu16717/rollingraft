@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "rollingraft/wal_persister.h"
+#include "raft_log_entry.pb.h"
 
 using namespace rollingraft;
 
@@ -103,8 +104,13 @@ TEST_F(WALPersisterTest, AppendAndReplay) {
   EXPECT_EQ(records.size(), 10);
   for (size_t i = 0; i < records.size(); ++i) {
     EXPECT_EQ(records[i].type, WALRecordType::kLogEntry);
-    // Payload is JSON - basic sanity check
-    EXPECT_NE(records[i].payload.find("\"index\":"), std::string::npos);
+    // Payload is protobuf; parse and verify the stored index.
+    RaftLogEntryProto proto;
+    ASSERT_TRUE(proto.ParseFromString(records[i].payload));
+    EXPECT_EQ(proto.index(), i + 1);
+    EXPECT_EQ(proto.term(), 1);
+    EXPECT_EQ(proto.data(), "data" + std::to_string(i + 1));
+    EXPECT_EQ(proto.command(), "cmd" + std::to_string(i + 1));
   }
 
   wal.Close();

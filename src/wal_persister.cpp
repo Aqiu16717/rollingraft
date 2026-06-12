@@ -16,6 +16,7 @@
 #include <set>
 
 #include "rollingraft/logger.h"
+#include "raft_log_entry.pb.h"
 #include <nlohmann/json.hpp>
 
 namespace rollingraft {
@@ -265,6 +266,14 @@ Status WALPersister::Open(const std::string& wal_dir) {
     }
     active_segment_.id = active_id;
 
+    // Set active segment format version
+    auto fmt_it = segment_format_versions_.find(active_id);
+    if (fmt_it != segment_format_versions_.end()) {
+      active_segment_.format_version = fmt_it->second;
+    } else {
+      active_segment_.format_version = kFormatVersionJson;
+    }
+
     // Read trailer to get end offset
     status = ReadTrailer(active_segment_.fd, &active_segment_.end_offset);
     if (!status.ok()) {
@@ -345,14 +354,17 @@ void WALPersister::Close() {
 Status WALPersister::AppendLogEntry(const RaftLogEntry& entry) {
   std::lock_guard<std::mutex> lock(mtx_);
 
-  // Serialize entry
-  json j;
-  j["index"] = static_cast<uint64_t>(entry.index_);
-  j["term"] = static_cast<uint64_t>(entry.term_);
-  j["data"] = Base64Encode(entry.data_);
-  j["command"] = Base64Encode(entry.command_);
-  j["checksum"] = entry.checksum_;
-  std::string payload = j.dump();
+  // Serialize entry using protobuf with raw bytes
+  RaftLogEntryProto proto;
+  proto.set_index(static_cast<uint64_t>(entry.index_));
+  proto.set_term(static_cast<uint64_t>(entry.term_));
+  proto.set_data(entry.data_);
+  proto.set_command(entry.command_);
+  proto.set_checksum(entry.checksum_);
+  std::string payload;
+  if (!proto.SerializeToString(&payload)) {
+    return Status::Error("Failed to serialize log entry to protobuf");
+  }
 
   auto status = RotateSegmentIfNeeded();
   if (!status.ok()) {
@@ -379,6 +391,8 @@ Status WALPersister::AppendLogEntry(const RaftLogEntry& entry) {
 
   if (first_index_ == 0) {
     first_index_ = log_index;
+  } else {
+    first_index_ = std::min(first_index_, log_index);
   }
   last_index_ = std::max(last_index_, log_index);
   active_segment_.entry_count++;
@@ -664,6 +678,79 @@ Status WALPersister::GetEntries(uint64_t start, uint64_t end,
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+static constexpr uint16_t kFormatVersionJsonLiteral = 1;
+static constexpr uint16_t kFormatVersionProtobufLiteral = 2;
+
+// Helper: extract log index from a log entry payload for index reconstruction.
+// Handles both protobuf (format version 2) and JSON+Base64 (format version 1).
+static Status ExtractLogIndexFromPayload(const std::string& payload,
+                                         uint16_t format_version,
+                                         uint64_t& log_index) {
+  if (format_version == kFormatVersionProtobufLiteral) {
+    RaftLogEntryProto proto;
+    if (proto.ParseFromString(payload)) {
+      log_index = proto.index();
+      return Status::OK();
+    }
+    // Fallback to JSON parse for mixed-format segments.
+  }
+
+  try {
+    json j = json::parse(payload);
+    log_index = j["index"].get<uint64_t>();
+    return Status::OK();
+  } catch (const std::exception& e) {
+    return Status::Corruption("Failed to parse log entry: " +
+                              std::string(e.what()));
+  }
+}
+
+// Helper: parse JSON+Base64 payload (legacy format version 1)
+static Status ParseJsonPayload(const std::string& payload, RaftLogEntry& entry,
+                               uint32_t fallback_checksum) {
+  try {
+    json j = json::parse(payload);
+    entry.index_ = j["index"].get<uint64_t>();
+    entry.term_ = j["term"].get<uint64_t>();
+    entry.data_ = Base64Decode(j["data"].get<std::string>());
+    entry.command_ = Base64Decode(j.value("command", std::string()));
+    entry.checksum_ = j.value("checksum", 0);
+  } catch (const std::exception& e) {
+    return Status::Corruption("Failed to parse log entry: " +
+                              std::string(e.what()));
+  }
+
+  // Ensure checksum is non-zero for non-empty payloads to satisfy
+  // Persister interface contract (tests expect checksum_ != 0).
+  if (entry.checksum_ == 0) {
+    entry.checksum_ = fallback_checksum;
+  }
+
+  return Status::OK();
+}
+
+// Helper: parse protobuf payload (format version 2)
+static Status ParseProtobufPayload(const std::string& payload,
+                                   RaftLogEntry& entry,
+                                   uint32_t fallback_checksum) {
+  RaftLogEntryProto proto;
+  if (!proto.ParseFromString(payload)) {
+    return Status::Corruption("Failed to parse protobuf log entry");
+  }
+
+  entry.index_ = proto.index();
+  entry.term_ = proto.term();
+  entry.data_ = proto.data();
+  entry.command_ = proto.command();
+  entry.checksum_ = proto.checksum();
+
+  if (entry.checksum_ == 0) {
+    entry.checksum_ = fallback_checksum;
+  }
+
+  return Status::OK();
+}
+
 Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
                                     RaftLogEntry& entry) {
   int fd = -1;
@@ -727,25 +814,24 @@ Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
     return Status::Error("Not a log entry record");
   }
 
-  try {
-    json j = json::parse(payload);
-    entry.index_ = j["index"].get<uint64_t>();
-    entry.term_ = j["term"].get<uint64_t>();
-    entry.data_ = Base64Decode(j["data"].get<std::string>());
-    entry.command_ = Base64Decode(j.value("command", std::string()));
-    entry.checksum_ = j.value("checksum", 0);
-  } catch (const std::exception& e) {
-    return Status::Corruption("Failed to parse log entry: " +
-                              std::string(e.what()));
+  // Determine format version for this segment
+  uint16_t format_version = kFormatVersionJson;
+  auto it = segment_format_versions_.find(segment_id);
+  if (it != segment_format_versions_.end()) {
+    format_version = it->second;
   }
 
-  // Ensure checksum is non-zero for non-empty payloads to satisfy
-  // Persister interface contract (tests expect checksum_ != 0).
-  if (entry.checksum_ == 0) {
-    entry.checksum_ = computed_crc;
+  if (format_version == kFormatVersionProtobuf) {
+    status = ParseProtobufPayload(payload, entry, computed_crc);
+    if (status.ok()) {
+      return status;
+    }
+    // Fallback to JSON if protobuf parse fails (e.g., mixed-format segment)
+    LOG_WARN("Protobuf parse failed for segment {}, trying JSON fallback",
+             segment_id);
   }
 
-  return Status::OK();
+  return ParseJsonPayload(payload, entry, computed_crc);
 }
 
 Status WALPersister::OpenSegment(uint64_t segment_id, int* fd) {
@@ -765,10 +851,12 @@ Status WALPersister::OpenSegment(uint64_t segment_id, int* fd) {
 
   uint32_t magic;
   uint16_t version;
+  uint16_t format_version;
   uint64_t stored_segment_id;
   memcpy(&magic, header, sizeof(magic));
   memcpy(&version, header + 4, sizeof(version));
-  memcpy(&stored_segment_id, header + 6, sizeof(stored_segment_id));
+  memcpy(&format_version, header + 6, sizeof(format_version));
+  memcpy(&stored_segment_id, header + 8, sizeof(stored_segment_id));
 
   if (magic != kMagic) {
     close(*fd);
@@ -786,6 +874,13 @@ Status WALPersister::OpenSegment(uint64_t segment_id, int* fd) {
     return Status::Corruption("Segment id mismatch: " + path);
   }
 
+  // Store format version for this segment. Default to JSON for old segments
+  // that may not have written a format version (value 0 -> treat as JSON).
+  if (format_version == 0) {
+    format_version = kFormatVersionJson;
+  }
+  segment_format_versions_[segment_id] = format_version;
+
   return Status::OK();
 }
 
@@ -796,7 +891,7 @@ Status WALPersister::CreateSegment(uint64_t segment_id) {
     return Status::Error("Failed to create segment: " + path);
   }
 
-  auto status = WriteSegmentHeader(fd, segment_id);
+  auto status = WriteSegmentHeader(fd, segment_id, kFormatVersionProtobuf);
   if (!status.ok()) {
     close(fd);
     unlink(path.c_str());
@@ -812,18 +907,23 @@ Status WALPersister::CreateSegment(uint64_t segment_id) {
   active_segment_.fd = fd;
   active_segment_.end_offset = kHeaderSize;
   active_segment_.entry_count = 0;
+  active_segment_.format_version = kFormatVersionProtobuf;
+
+  segment_format_versions_[segment_id] = kFormatVersionProtobuf;
 
   return SaveMeta();
 }
 
-Status WALPersister::WriteSegmentHeader(int fd, uint64_t segment_id) {
+Status WALPersister::WriteSegmentHeader(int fd, uint64_t segment_id,
+                                           uint16_t format_version) {
   char header[kHeaderSize];
   memset(header, 0, kHeaderSize);
   uint32_t magic = kMagic;
   uint16_t version = kVersion;
   memcpy(header, &magic, sizeof(magic));
   memcpy(header + 4, &version, sizeof(version));
-  memcpy(header + 6, &segment_id, sizeof(segment_id));
+  memcpy(header + 6, &format_version, sizeof(format_version));
+  memcpy(header + 8, &segment_id, sizeof(segment_id));
 
   if (write(fd, header, kHeaderSize) != kHeaderSize) {
     return Status::Error("Failed to write segment header");
@@ -921,6 +1021,13 @@ Status WALPersister::ScanSegment(
     return status;
   }
 
+  // Determine format version for this segment
+  uint16_t format_version = kFormatVersionJsonLiteral;
+  auto fmt_it = segment_format_versions_.find(segment_id);
+  if (fmt_it != segment_format_versions_.end()) {
+    format_version = fmt_it->second;
+  }
+
   // Scan records
   lseek(fd, kHeaderSize, SEEK_SET);
   uint64_t current_offset = kHeaderSize;
@@ -984,23 +1091,21 @@ Status WALPersister::ScanSegment(
     // Rebuild index for log entries
     WALRecordType type = static_cast<WALRecordType>(type_val);
     if (type == WALRecordType::kLogEntry) {
-      try {
-        json j = json::parse(payload);
-        uint64_t log_index = j["index"].get<uint64_t>();
-        uint64_t record_len = sizeof(uint32_t) + sizeof(uint32_t) +
-                              sizeof(uint16_t) + length;
-        index_[log_index] = WALIndexEntry{segment_id, current_offset,
-                                          record_len};
-        if (first_index_ == 0 || log_index < first_index_) {
-          first_index_ = log_index;
-        }
-        if (log_index > last_index_) {
-          last_index_ = log_index;
-        }
-      } catch (const std::exception& e) {
+      uint64_t log_index = 0;
+      auto parse_status =
+          ExtractLogIndexFromPayload(payload, format_version, log_index);
+      if (!parse_status.ok()) {
         close(fd);
-        return Status::Corruption("Failed to parse log entry: " +
-                                  std::string(e.what()));
+        return parse_status;
+      }
+      uint64_t record_len = sizeof(uint32_t) + sizeof(uint32_t) +
+                            sizeof(uint16_t) + length;
+      index_[log_index] = WALIndexEntry{segment_id, current_offset, record_len};
+      if (first_index_ == 0 || log_index < first_index_) {
+        first_index_ = log_index;
+      }
+      if (log_index > last_index_) {
+        last_index_ = log_index;
       }
     } else if (type == WALRecordType::kTruncatePrefix) {
       try {

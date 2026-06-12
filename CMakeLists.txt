@@ -152,6 +152,13 @@ else()
   message(STATUS "Protobuf not found — protobuf MVP benchmark disabled")
 endif()
 
+# Link rollingraft with protobuf generated code (must be after rollingraft_proto target)
+if(TARGET rollingraft_proto)
+  # PUBLIC so that consumers of rollingraft (tests, examples) can include
+  # raft_log_entry.pb.h and get transitive protobuf linkage.
+  target_link_libraries(rollingraft PUBLIC rollingraft_proto)
+endif()
+
 # Link dependencies
 target_link_libraries(rollingraft
   PUBLIC

@@ -153,6 +153,7 @@ constexpr char kSnapshotDataKey[] = "snapshot:data";
 constexpr char kSnapshotMetaKey[] = "snapshot:meta";
 constexpr char kSnapshotHashKey[] = "snapshot:hash";
 constexpr char kSnapshotChunkPrefix[] = "snapshot:chunk:";
+constexpr char kSnapshotTmpChunkPrefix[] = "snapshot:tmp:chunk:";
 
 StatePersister::StatePersister() = default;
 
@@ -327,23 +328,32 @@ Status StatePersister::SaveSnapshotStream(
     return Status::Error("StatePersister not open");
   }
 
-  DeleteSnapshotDataLocked();
+  // Clean up any stale temp keys left by a previous interrupted attempt.
+  DeleteSnapshotTempDataLocked();
 
   Sha256Context sha_ctx;
   Sha256Init(sha_ctx);
 
   uint32_t chunk_index = 0;
   std::string chunk;
-  while (chunk_provider(chunk)) {
-    if (!chunk.empty()) {
-      std::string key = std::string(kSnapshotChunkPrefix) + std::to_string(chunk_index);
-      leveldb::Status s = db_->Put(leveldb::WriteOptions(), key, chunk);
-      if (!s.ok()) {
-        return Status::Error("Failed to save snapshot chunk: " + s.ToString());
+  try {
+    while (chunk_provider(chunk)) {
+      if (!chunk.empty()) {
+        std::string key =
+            std::string(kSnapshotTmpChunkPrefix) + std::to_string(chunk_index);
+        leveldb::Status s = db_->Put(leveldb::WriteOptions(), key, chunk);
+        if (!s.ok()) {
+          DeleteSnapshotTempDataLocked();
+          return Status::Error("Failed to save snapshot chunk: " + s.ToString());
+        }
+        Sha256Update(sha_ctx, chunk.data(), chunk.size());
+        ++chunk_index;
       }
-      Sha256Update(sha_ctx, chunk.data(), chunk.size());
-      ++chunk_index;
     }
+  } catch (const std::exception& e) {
+    DeleteSnapshotTempDataLocked();
+    return Status::Error("Snapshot chunk provider failed: " +
+                         std::string(e.what()));
   }
 
   if (chunk_index == 0) {
@@ -359,14 +369,38 @@ Status StatePersister::SaveSnapshotStream(
   std::memcpy(meta + 8, &last_term, sizeof(last_term));
   std::memcpy(meta + 16, &chunk_index, sizeof(chunk_index));
 
+  // Build an atomic batch that deletes the old snapshot, copies the temp
+  // chunks to their final keys, deletes the temp keys, and writes the new
+  // metadata/hash. Either the whole batch commits or nothing does, so the
+  // old snapshot remains intact if the swap fails.
   leveldb::WriteBatch batch;
+  DeleteSnapshotDataLocked(&batch);
+
   batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
   batch.Put(kSnapshotHashKey,
             leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
+  for (uint32_t i = 0; i < chunk_index; ++i) {
+    std::string tmp_key =
+        std::string(kSnapshotTmpChunkPrefix) + std::to_string(i);
+    std::string final_key =
+        std::string(kSnapshotChunkPrefix) + std::to_string(i);
+    std::string chunk_data;
+    leveldb::Status s = db_->Get(leveldb::ReadOptions(), tmp_key, &chunk_data);
+    if (!s.ok()) {
+      DeleteSnapshotTempDataLocked();
+      return Status::Error("Failed to read temp snapshot chunk: " + s.ToString());
+    }
+    batch.Put(final_key, chunk_data);
+    batch.Delete(tmp_key);
+  }
+
   leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
   if (!s.ok()) {
-    return Status::Error("Failed to save snapshot metadata: " + s.ToString());
+    // The batch did not commit; old snapshot keys are unchanged. Clean up
+    // temp keys so they do not accumulate.
+    DeleteSnapshotTempDataLocked();
+    return Status::Error("Failed to commit snapshot: " + s.ToString());
   }
 
   snapshot_last_index_ = last_index;
@@ -487,6 +521,28 @@ void StatePersister::DeleteSnapshotDataLocked() {
 
   std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
   std::string prefix(kSnapshotChunkPrefix);
+  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
+       it->Next()) {
+    db_->Delete(leveldb::WriteOptions(), it->key());
+  }
+}
+
+void StatePersister::DeleteSnapshotDataLocked(leveldb::WriteBatch* batch) {
+  batch->Delete(kSnapshotDataKey);
+  batch->Delete(kSnapshotMetaKey);
+  batch->Delete(kSnapshotHashKey);
+
+  std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+  std::string prefix(kSnapshotChunkPrefix);
+  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
+       it->Next()) {
+    batch->Delete(it->key());
+  }
+}
+
+void StatePersister::DeleteSnapshotTempDataLocked() {
+  std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+  std::string prefix(kSnapshotTmpChunkPrefix);
   for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
        it->Next()) {
     db_->Delete(leveldb::WriteOptions(), it->key());

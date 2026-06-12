@@ -31,6 +31,7 @@
 
 namespace leveldb {
 class DB;
+class WriteBatch;
 }
 
 namespace rollingraft {
@@ -93,6 +94,8 @@ class StatePersister {
 
  private:
   void DeleteSnapshotDataLocked();
+  void DeleteSnapshotDataLocked(leveldb::WriteBatch* batch);
+  void DeleteSnapshotTempDataLocked();
   void LoadStateFromDB();
 
   mutable std::recursive_mutex mutex_;

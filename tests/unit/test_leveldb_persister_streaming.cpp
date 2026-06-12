@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <leveldb/db.h>
 
 #include "rollingraft/persister.h"
 
@@ -202,4 +203,125 @@ TEST_F(LevelDBPersisterStreamingTest,
   EXPECT_EQ(loaded, data2);
   EXPECT_EQ(idx, 20);
   EXPECT_EQ(term, 2);
+}
+TEST_F(LevelDBPersisterStreamingTest,
+       SaveSnapshotStream_AtomicReplace_Normal) {
+  // Save an initial streaming snapshot.
+  std::string data_a(128, 'A');
+  size_t offset_a = 0;
+  auto provider_a = [&](std::string& chunk) -> bool {
+    if (offset_a >= data_a.size()) return false;
+    chunk = data_a.substr(offset_a, 32);
+    offset_a += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider_a, 10, 1).ok());
+
+  // Replace it with a new streaming snapshot.
+  std::string data_b(128, 'B');
+  size_t offset_b = 0;
+  auto provider_b = [&](std::string& chunk) -> bool {
+    if (offset_b >= data_b.size()) return false;
+    chunk = data_b.substr(offset_b, 32);
+    offset_b += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider_b, 20, 2).ok());
+
+  // New snapshot must be loadable.
+  std::string loaded;
+  uint64_t idx = 0, term = 0;
+  auto consumer = [&](const std::string& chunk) { loaded += chunk; };
+  ASSERT_TRUE(persister_->LoadSnapshotStream(consumer, idx, term).ok());
+  EXPECT_EQ(loaded, data_b);
+  EXPECT_EQ(idx, 20);
+  EXPECT_EQ(term, 2);
+}
+
+TEST_F(LevelDBPersisterStreamingTest,
+       SaveSnapshotStream_AtomicReplace_PreservesOldOnInterruption) {
+  // Save an initial streaming snapshot.
+  std::string data_a(128, 'A');
+  size_t offset_a = 0;
+  auto provider_a = [&](std::string& chunk) -> bool {
+    if (offset_a >= data_a.size()) return false;
+    chunk = data_a.substr(offset_a, 32);
+    offset_a += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider_a, 10, 1).ok());
+
+  // Attempt to replace it, but the provider throws after two chunks.
+  std::string data_b(128, 'B');
+  size_t offset_b = 0;
+  int calls = 0;
+  auto provider_b = [&](std::string& chunk) -> bool {
+    if (offset_b >= data_b.size()) return false;
+    chunk = data_b.substr(offset_b, 32);
+    offset_b += chunk.size();
+    ++calls;
+    if (calls == 2) {
+      throw std::runtime_error("simulated chunk provider failure");
+    }
+    return true;
+  };
+  auto status = persister_->SaveSnapshotStream(provider_b, 20, 2);
+  EXPECT_FALSE(status.ok());
+
+  // Old snapshot must still be loadable and intact.
+  std::string loaded;
+  uint64_t idx = 0, term = 0;
+  auto consumer = [&](const std::string& chunk) { loaded += chunk; };
+  ASSERT_TRUE(persister_->LoadSnapshotStream(consumer, idx, term).ok());
+  EXPECT_EQ(loaded, data_a);
+  EXPECT_EQ(idx, 10);
+  EXPECT_EQ(term, 1);
+}
+
+TEST_F(LevelDBPersisterStreamingTest,
+       SaveSnapshotStream_AtomicReplace_HashVerificationFailure) {
+  // Save an initial streaming snapshot.
+  std::string data_a(128, 'A');
+  size_t offset_a = 0;
+  auto provider_a = [&](std::string& chunk) -> bool {
+    if (offset_a >= data_a.size()) return false;
+    chunk = data_a.substr(offset_a, 32);
+    offset_a += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider_a, 10, 1).ok());
+
+  // Replace it with a new streaming snapshot.
+  std::string data_b(128, 'B');
+  size_t offset_b = 0;
+  auto provider_b = [&](std::string& chunk) -> bool {
+    if (offset_b >= data_b.size()) return false;
+    chunk = data_b.substr(offset_b, 32);
+    offset_b += chunk.size();
+    return true;
+  };
+  ASSERT_TRUE(persister_->SaveSnapshotStream(provider_b, 20, 2).ok());
+
+  // Close persister so we can open LevelDB directly and corrupt a chunk.
+  persister_->Close();
+  {
+    leveldb::DB* db_ptr = nullptr;
+    leveldb::Options options;
+    leveldb::Status s = leveldb::DB::Open(options, test_dir_, &db_ptr);
+    ASSERT_TRUE(s.ok()) << s.ToString();
+    std::unique_ptr<leveldb::DB> db(db_ptr);
+
+    // Corrupt the first chunk of the new snapshot.
+    std::string corrupted = "corrupted_chunk_data";
+    s = db->Put(leveldb::WriteOptions(), "snapshot:chunk:0", corrupted);
+    ASSERT_TRUE(s.ok()) << s.ToString();
+  }
+
+  // Reopen persister and verify loading fails due to hash mismatch.
+  ASSERT_TRUE(persister_->Open(test_dir_).ok());
+  std::string loaded;
+  uint64_t idx = 0, term = 0;
+  auto consumer = [&](const std::string& chunk) { loaded += chunk; };
+  auto status = persister_->LoadSnapshotStream(consumer, idx, term);
+  EXPECT_FALSE(status.ok());
 }

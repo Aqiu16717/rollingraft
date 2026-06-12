@@ -1,6 +1,6 @@
-# RollingRaft v0.3.2 Release Notes (Draft)
+# RollingRaft v0.3.2 Release Notes (v0.3.2)
 
-> **Tag**: `v0.3.2` (TBD)  
+> **Tag**: `v0.3.2` → `923bb0f`  
 > **Theme**: Snapshot Durability & Atomic Replacement  
 > **Scope**: Single bugfix release closing SR3 from code quality audit.
 

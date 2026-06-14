@@ -62,6 +62,24 @@ target_link_libraries(benchmark_persister
     rollingraft
 )
 
+# Persister-layer micro-benchmarks (protobuf / fsync / LevelDB / snapshot)
+add_executable(benchmark_persister_micro
+  persister_micro_benchmark.cpp
+)
+
+target_include_directories(benchmark_persister_micro
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_BINARY_DIR}/..
+)
+
+target_link_libraries(benchmark_persister_micro
+  PRIVATE
+    rollingraft_proto
+    rollingraft
+)
+
 # Unified benchmark runner
 add_executable(benchmark_runner
   main.cpp

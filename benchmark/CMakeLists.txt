@@ -97,6 +97,16 @@ target_link_libraries(benchmark_runner
     rollingraft
 )
 
+# Group commit benchmark
+add_executable(benchmark_group_commit
+  group_commit_benchmark.cpp
+)
+
+target_link_libraries(benchmark_group_commit
+  PRIVATE
+    rollingraft
+)
+
 # Protobuf MVP benchmark (optional — requires protobuf)
 if(TARGET rollingraft_proto)
   add_executable(benchmark_protobuf_mvp

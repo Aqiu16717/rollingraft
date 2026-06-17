@@ -30,6 +30,7 @@ class MockPersister : public Persister {
   Status LoadState(PersistentState& state) override;
 
   Status AppendEntries(const std::vector<RaftLogEntry>& entries) override;
+  Status Sync() override;
   Status GetEntries(uint64_t start, uint64_t end,
                     std::vector<RaftLogEntry>* out) override;
   Status GetEntry(uint64_t index, RaftLogEntry& entry) override;
@@ -66,6 +67,11 @@ class MockPersister : public Persister {
   size_t GetWriteCount() const { return write_count_; }
 
   /**
+   * Get number of sync operations.
+   */
+  size_t GetSyncCount() const { return sync_count_; }
+
+  /**
    * Reset all data.
    */
   void Reset();
@@ -82,6 +88,7 @@ class MockPersister : public Persister {
 
   std::string failure_msg_;
   size_t write_count_ = 0;
+  size_t sync_count_ = 0;
 };
 
 }  // namespace rollingraft

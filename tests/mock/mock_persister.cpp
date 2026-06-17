@@ -33,6 +33,13 @@ Status MockPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
   return Status::OK();
 }
 
+Status MockPersister::Sync() {
+  if (CheckFailure()) return Status::Error(failure_msg_);
+  std::lock_guard<std::mutex> lock(mutex_);
+  ++sync_count_;
+  return Status::OK();
+}
+
 Status MockPersister::GetEntries(uint64_t start, uint64_t end,
                                  std::vector<RaftLogEntry>* out) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -135,6 +142,7 @@ void MockPersister::Reset() {
   state_ = {0, -1};
   snapshot_data_.clear();
   write_count_ = 0;
+  sync_count_ = 0;
 }
 
 bool MockPersister::CheckFailure() { return !failure_msg_.empty(); }

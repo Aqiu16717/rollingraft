@@ -33,6 +33,7 @@ target_link_libraries(test_mocks
 # Unit tests
 add_executable(unit_tests
   unit/test_asio_ssl_context_factory.cpp
+  unit/test_group_commit_controller.cpp
   unit/test_log_persister.cpp
   unit/test_leveldb_persister.cpp
   unit/test_leveldb_persister_streaming.cpp

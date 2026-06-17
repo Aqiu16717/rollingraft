@@ -27,6 +27,9 @@
 
 namespace rollingraft {
 
+// Forward declaration for private implementation detail.
+class GroupCommitController;
+
 /**
  * Configuration for log persistence behavior.
  *
@@ -39,18 +42,53 @@ struct LogPersistenceConfig {
   /** Maximum time to wait before flushing (milliseconds). */
   uint32_t batch_interval_ms = 10;
 
-  /** Whether to sync on critical operations (leader first log). */
+  /** Whether to sync on critical operations (leader first log).
+   *
+   * Deprecated: use sync_policy instead. When sync_policy is
+   * kSyncEveryWrite this field is effectively true; otherwise it is ignored.
+   */
   bool sync_on_critical = true;
+
+  /**
+   * Group commit / durable sync policy.
+   */
+  enum class SyncPolicy {
+    /** No group commit; Sync() after every AppendEntries(). */
+    kSyncEveryWrite,
+    /** Sync at most every group_commit_interval_ms. */
+    kSyncByInterval,
+    /** Sync when unsynced entries or bytes exceed threshold. */
+    kSyncByBatchSize,
+    /** Sync when interval OR batch-size threshold is reached first. */
+    kSyncAdaptive,
+  };
+
+  /**
+   * Group commit sync policy.
+   *
+   * - kSyncEveryWrite: no group commit; each flush is followed by Sync().
+   * - kSyncByInterval: background sync at fixed interval.
+   * - kSyncByBatchSize: background sync when unsynced data exceeds threshold.
+   * - kSyncAdaptive: interval OR batch-size, whichever fires first.
+   */
+  SyncPolicy sync_policy = SyncPolicy::kSyncAdaptive;
 
   /**
    * Group commit interval (milliseconds).
    *
-   * When > 0, sync_on_critical is ignored and the persister writes
-   * without sync, then explicitly syncs at this interval. This batches
-   * multiple writes into a single fsync, reducing p99 latency.
-   * Set to 0 to disable group commit (sync every batch as before).
+   * Used by kSyncByInterval and kSyncAdaptive. Set to 0 to mean
+   * "as fast as possible" (not recommended for production).
    */
   uint32_t group_commit_interval_ms = 50;
+
+  /** Maximum unsynced entries before forcing fsync (kSyncByBatchSize / adaptive). */
+  size_t group_commit_max_entries = 1000;
+
+  /** Maximum unsynced bytes before forcing fsync (kSyncByBatchSize / adaptive). */
+  size_t group_commit_max_bytes = 4 * 1024 * 1024;
+
+  /** Maximum time a caller may wait for explicit Sync() to complete. */
+  std::chrono::milliseconds sync_timeout = std::chrono::seconds(5);
 
   /** Minimum disk space required (bytes). Default: 100MB. */
   uint64_t min_disk_space_bytes = 100 * 1024 * 1024;
@@ -65,6 +103,15 @@ struct LogPersistenceConfig {
    */
   using Executor = std::function<void(std::function<void()>)>;
   Executor executor;
+
+  /**
+   * Optional executor for durable callbacks.
+   *
+   * When group commit is enabled, callbacks are fired after fsync. If this
+   * executor is set, callback batches are posted to it instead of running
+   * inline on the sync thread. The executor must outlive LogPersister.
+   */
+  Executor durable_callback_executor;
 };
 
 /**
@@ -103,17 +150,19 @@ class LogPersister {
   /** Stop the background thread and flush remaining entries. */
   void Stop();
 
-  /** Callback type invoked when an entry has been durably flushed. */
+  /** Callback type invoked when an entry has been durably synced. */
   using FlushCallback = std::function<void(Status)>;
 
   /**
    * Append a log entry asynchronously.
    *
-   * The entry is buffered and written to disk later by the
-   * background thread or on next batch flush.
+   * The entry is buffered, flushed, and then synced according to the
+   * configured sync policy. The optional callback is invoked when the entry
+   * is guaranteed to be durable (after fsync for group commit, or after
+   * AppendEntries + Sync for kSyncEveryWrite).
    *
    * @param entry The log entry to append
-   * @param callback Optional callback invoked when the entry is flushed
+   * @param callback Optional callback invoked when the entry is durable
    */
   void Append(const RaftLogEntry& entry, FlushCallback callback = nullptr);
 
@@ -188,15 +237,16 @@ class LogPersister {
   std::vector<RaftLogEntry> Restore(uint64_t start_index);
 
   /** Get the number of pending entries in the buffer. */
+  size_t GetPendingCount() const;
+
   /**
    * Explicitly sync all pending writes to durable storage.
    *
-   * Used by group commit to batch fsyncs. No-op if group commit
-   * is not enabled.
+   * Blocks until all flushed-but-not-yet-synced data is durable.
+   * No-op if group commit is not enabled and the persister already
+   * syncs inline.
    */
   Status Sync();
-
-  size_t GetPendingCount() const;
 
   /** Check if the persister is healthy (no disk errors). */
   bool IsHealthy() const;
@@ -241,7 +291,12 @@ class LogPersister {
   std::thread flush_thread_;
   std::thread sync_thread_;  // For group commit
   std::condition_variable flush_cv_;
+  std::condition_variable sync_cv_;
+  mutable std::mutex controller_mutex_;
   bool flush_in_progress_ = false;
+
+  // Group commit controller (null when sync_policy == kSyncEveryWrite)
+  std::unique_ptr<GroupCommitController> group_commit_controller_;
 
   // Error tracking
   std::atomic<bool> healthy_{true};

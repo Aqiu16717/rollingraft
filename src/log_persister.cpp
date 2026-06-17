@@ -13,6 +13,7 @@
 #include <future>
 #include <iterator>
 
+#include "group_commit_controller.h"
 #include "rollingraft/logger.h"
 
 #if defined(__unix__) || defined(__unix) || \
@@ -29,6 +30,10 @@ LogPersister::LogPersister(std::shared_ptr<Persister> persister,
       config_(config),
       async_state_(std::make_shared<AsyncState>()) {
   async_state_->persister = persister_;
+
+  if (config_.sync_policy != LogPersistenceConfig::SyncPolicy::kSyncEveryWrite) {
+    group_commit_controller_ = std::make_unique<GroupCommitController>(config_);
+  }
 }
 
 LogPersister::~LogPersister() {
@@ -56,19 +61,20 @@ void LogPersister::Start() {
   running_ = true;
   healthy_ = true;
 
-  bool group_commit = config_.group_commit_interval_ms > 0;
-  if (persister_ && config_.sync_on_critical && !group_commit) {
-    persister_->SetSyncOnWrite(true);
+  bool group_commit_enabled =
+      config_.sync_policy != LogPersistenceConfig::SyncPolicy::kSyncEveryWrite;
+  if (persister_) {
+    persister_->SetSyncOnWrite(!group_commit_enabled);
   }
 
   flush_thread_ = std::thread(&LogPersister::BackgroundFlushLoop, this);
-  if (group_commit) {
+  if (group_commit_enabled) {
     sync_thread_ = std::thread(&LogPersister::BackgroundSyncLoop, this);
   }
 
-  LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync={}, group_commit={}ms)",
+  LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync_policy={})",
            config_.batch_size, config_.batch_interval_ms,
-           config_.sync_on_critical, config_.group_commit_interval_ms);
+           static_cast<int>(config_.sync_policy));
 }
 
 void LogPersister::Stop() {
@@ -89,12 +95,18 @@ void LogPersister::Stop() {
     sync_thread_.join();
   }
 
-  // Final flush and sync before stopping
+  // Final flush and sync before stopping.
   DoFlush();
-  if (config_.group_commit_interval_ms > 0 && persister_) {
-    auto sync_status = persister_->Sync();
-    if (!sync_status.ok()) {
-      LOG_ERROR("Final group commit sync failed: {}", sync_status.ToString());
+  if (group_commit_controller_ && persister_) {
+    auto range = group_commit_controller_->AcquireSyncRange();
+    if (range) {
+      auto sync_status = persister_->Sync();
+      if (sync_status.ok()) {
+        group_commit_controller_->OnSyncSuccess(range->second);
+      } else {
+        group_commit_controller_->OnSyncFailure(range->second, sync_status);
+        LOG_ERROR("Final group commit sync failed: {}", sync_status.ToString());
+      }
     }
   }
 
@@ -322,7 +334,32 @@ Status LogPersister::Sync() {
   if (!persister_) {
     return Status::OK();
   }
-  return persister_->Sync();
+
+  if (!group_commit_controller_) {
+    return persister_->Sync();
+  }
+
+  // Force the sync thread to wake and sync immediately.
+  group_commit_controller_->RequestSync();
+  sync_cv_.notify_all();
+
+  // Wait until there are no pending unsynced epochs.
+  std::unique_lock<std::mutex> lock(controller_mutex_);
+  bool synced = sync_cv_.wait_for(lock, config_.sync_timeout, [this] {
+    return !running_ || !group_commit_controller_->IsHealthy() ||
+           group_commit_controller_->GetStats().pending_epochs == 0;
+  });
+
+  if (!synced) {
+    return Status::Error("Sync timeout");
+  }
+
+  if (!group_commit_controller_->IsHealthy()) {
+    std::lock_guard<std::mutex> err_lock(error_mutex_);
+    return Status::Error("Sync failed: " + last_error_);
+  }
+
+  return Status::OK();
 }
 
 size_t LogPersister::GetPendingCount() const {
@@ -364,20 +401,49 @@ void LogPersister::BackgroundFlushLoop() {
 void LogPersister::BackgroundSyncLoop() {
   LOG_DEBUG("LogPersister background sync thread started");
 
-  auto interval = std::chrono::milliseconds(config_.group_commit_interval_ms);
   while (running_) {
-    std::this_thread::sleep_for(interval);
+    std::unique_lock<std::mutex> lock(controller_mutex_);
+
+    auto now = std::chrono::steady_clock::now();
+    auto delay = group_commit_controller_->NextSyncDelay(now);
+
+    sync_cv_.wait_for(lock, delay, [this, &now] {
+      now = std::chrono::steady_clock::now();
+      return !running_ || group_commit_controller_->ShouldSyncNow(now);
+    });
+
     if (!running_) break;
 
-    if (persister_) {
-      auto sync_status = persister_->Sync();
-      if (!sync_status.ok()) {
-        LOG_ERROR("LogPersister group commit sync failed: {}",
-                  sync_status.ToString());
-      } else {
-        LOG_DEBUG("LogPersister group commit synced");
-      }
+    auto range = group_commit_controller_->AcquireSyncRange();
+    if (!range) {
+      // Release the controller mutex before looping back to avoid deadlock.
+      lock.unlock();
+      continue;
     }
+
+    // Release lock before issuing the blocking fsync.
+    lock.unlock();
+
+    Status sync_status;
+    if (persister_) {
+      sync_status = persister_->Sync();
+    }
+
+    if (sync_status.ok()) {
+      group_commit_controller_->OnSyncSuccess(range->second);
+    } else {
+      group_commit_controller_->OnSyncFailure(range->second, sync_status);
+      healthy_ = false;
+      {
+        std::lock_guard<std::mutex> err_lock(error_mutex_);
+        last_error_ = sync_status.ToString();
+      }
+      LOG_ERROR("LogPersister group commit sync failed: {}",
+                sync_status.ToString());
+    }
+
+    // Wake any thread waiting for durability (e.g., Sync()).
+    sync_cv_.notify_all();
   }
 
   LOG_DEBUG("LogPersister background sync thread stopped");
@@ -467,12 +533,80 @@ bool LogPersister::DoFlush() {
   total_flushed_ += entries.size();
   ++total_flush_ops_;
 
-  // Notify callbacks of success
-  for (auto& pending : batch) {
-    if (pending.callback) {
-      auto cb = std::move(pending.callback);
-      pending.callback = nullptr;
-      cb(Status::OK());
+  if (group_commit_controller_) {
+    // Hand durable callbacks to the group commit controller.
+    std::vector<GroupCommitController::DurableCallback> durable_callbacks;
+    durable_callbacks.reserve(batch.size());
+    size_t byte_size = 0;
+    auto& executor = config_.durable_callback_executor;
+    for (auto& pending : batch) {
+      auto user_cb = std::move(pending.callback);
+      if (executor && user_cb) {
+        durable_callbacks.push_back(
+            [executor, user_cb](Status s) mutable { executor([user_cb, s]() { user_cb(s); }); });
+      } else {
+        durable_callbacks.push_back(std::move(user_cb));
+      }
+      byte_size += pending.entry.data_.size() + pending.entry.command_.size() +
+                   sizeof(pending.entry.index_) + sizeof(pending.entry.term_);
+    }
+
+    Status register_error;
+    auto epoch = group_commit_controller_->RegisterFlushedBatch(
+        entries.size(), byte_size, durable_callbacks, register_error);
+
+    // Wake sync thread in case thresholds are reached.
+    sync_cv_.notify_all();
+
+    if (epoch == 0) {
+      healthy_ = false;
+      {
+        std::lock_guard<std::mutex> err_lock(error_mutex_);
+        last_error_ = register_error.ToString();
+      }
+
+      // Registration failed; durable_callbacks still holds the callbacks.
+      for (auto& cb : durable_callbacks) {
+        if (cb) {
+          cb(register_error);
+        }
+      }
+    }
+  } else {
+    // kSyncEveryWrite: sync inline before acknowledging durability.
+    if (persister_) {
+      auto sync_status = persister_->Sync();
+      if (!sync_status.ok()) {
+        healthy_ = false;
+        {
+          std::lock_guard<std::mutex> err_lock(error_mutex_);
+          last_error_ = sync_status.ToString();
+        }
+
+        for (auto& pending : batch) {
+          if (pending.callback) {
+            auto cb = std::move(pending.callback);
+            pending.callback = nullptr;
+            cb(sync_status);
+          }
+        }
+
+        {
+          std::lock_guard<std::mutex> lock(buffer_mutex_);
+          flush_in_progress_ = false;
+        }
+        flush_cv_.notify_all();
+        return false;
+      }
+    }
+
+    // Notify callbacks of durability
+    for (auto& pending : batch) {
+      if (pending.callback) {
+        auto cb = std::move(pending.callback);
+        pending.callback = nullptr;
+        cb(Status::OK());
+      }
     }
   }
 

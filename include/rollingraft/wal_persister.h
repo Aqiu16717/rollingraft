@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "rollingraft/raft_log.h"
 #include "rollingraft/status.h"
@@ -182,6 +183,55 @@ class WALPersister {
   static constexpr size_t kMaxSegmentEntries = 10000;
   static constexpr size_t kMaxSegmentSize = 64 * 1024 * 1024;  // 64MB
 
+  // Write buffer threshold. Records are accumulated in memory and flushed
+  // to the active segment in a single syscall when the buffer is full or
+  // when durability/read consistency is required.
+  static constexpr size_t kWriteBufferSize = 1024 * 1024;  // 1MB
+
+  /**
+   * Dense, cache-friendly index for log entry lookups.
+   *
+   * Log indices in Raft are sequential, so a flat vector indexed by
+   * (log_index - first_index_) gives O(1) lookup and contiguous range scans.
+   * Non-sequential inserts fall back to binary-search insertion.
+   */
+  class DenseIndex {
+   public:
+    bool Empty() const { return entries_.empty(); }
+    size_t Size() const { return entries_.size(); }
+    uint64_t FirstIndex() const { return first_index_; }
+    uint64_t LastIndex() const {
+      return entries_.empty() ? 0 : first_index_ + entries_.size() - 1;
+    }
+
+    const WALIndexEntry* Get(uint64_t index) const {
+      if (entries_.empty() || index < first_index_ ||
+          index > LastIndex()) {
+        return nullptr;
+      }
+      const WALIndexEntry* e =
+          &entries_[static_cast<size_t>(index - first_index_)];
+      // segment_id == 0 means a placeholder slot (gap).
+      return e->segment_id == 0 ? nullptr : e;
+    }
+
+    void Put(uint64_t index, WALIndexEntry entry);
+    void TruncatePrefix(uint64_t before_index);
+    void TruncateSuffix(uint64_t from_index);
+    void Clear();
+
+    const WALIndexEntry* begin() const { return entries_.data(); }
+    const WALIndexEntry* end() const {
+      return entries_.data() + entries_.size();
+    }
+
+    const std::vector<WALIndexEntry>& Entries() const { return entries_; }
+
+   private:
+    uint64_t first_index_ = 0;
+    std::vector<WALIndexEntry> entries_;
+  };
+
   struct Segment {
     uint64_t id = 0;
     int fd = -1;
@@ -198,15 +248,15 @@ class WALPersister {
   // Active segment (protected by mtx_)
   Segment active_segment_;
 
-  // In-memory index: log_index -> (segment_id, offset, length)
-  std::map<uint64_t, WALIndexEntry> index_;
+  // In-memory index: dense vector keyed by log_index
+  DenseIndex index_;
 
   // Segment id -> format version (protected by mtx_)
   std::map<uint64_t, uint16_t> segment_format_versions_;
 
-  // Current log range
-  uint64_t first_index_ = 0;
-  uint64_t last_index_ = 0;
+  // Write buffer (protected by mtx_). Records are appended here and flushed
+  // to the active segment in batches.
+  std::string write_buf_;
 
   // Internal helpers
   Status OpenSegment(uint64_t segment_id, int* fd);
@@ -226,6 +276,16 @@ class WALPersister {
   Status LoadMeta();
   Status SaveMeta();
   uint32_t ComputeCRC32(const std::string& data);
+
+  // Buffering helpers (protected by mtx_)
+  Status FlushWriteBufferLocked();
+  Status EnsureBufferFlushedForReadLocked();
+  Status AppendRecordToBufferLocked(WALRecordType type,
+                                    const std::string& payload,
+                                    uint64_t* out_offset,
+                                    uint64_t* out_record_len);
+  Status SyncActiveSegmentLocked();
 };
+
 
 }  // namespace rollingraft

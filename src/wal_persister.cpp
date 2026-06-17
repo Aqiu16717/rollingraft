@@ -23,6 +23,67 @@ namespace rollingraft {
 
 using json = nlohmann::json;
 
+// ==================== WALPersister::DenseIndex ====================
+
+void WALPersister::DenseIndex::Put(uint64_t index, WALIndexEntry entry) {
+  if (entries_.empty()) {
+    first_index_ = index;
+    entries_.push_back(std::move(entry));
+    return;
+  }
+
+  if (index < first_index_) {
+    // Insert before the current range (can happen with concurrent appends).
+    size_t shift = static_cast<size_t>(first_index_ - index);
+    entries_.insert(entries_.begin(), shift, WALIndexEntry{});
+    first_index_ = index;
+  }
+
+  uint64_t last = LastIndex();
+  if (index > last) {
+    // Extend to cover the gap (normal sequential append is index == last + 1).
+    size_t extend = static_cast<size_t>(index - last);
+    entries_.resize(entries_.size() + extend);
+  }
+
+  entries_[static_cast<size_t>(index - first_index_)] = std::move(entry);
+}
+
+void WALPersister::DenseIndex::TruncatePrefix(uint64_t before_index) {
+  if (entries_.empty() || before_index <= first_index_) {
+    return;
+  }
+  if (before_index > LastIndex() + 1) {
+    Clear();
+    return;
+  }
+  size_t remove = static_cast<size_t>(before_index - first_index_);
+  if (remove >= entries_.size()) {
+    Clear();
+    return;
+  }
+  entries_.erase(entries_.begin(), entries_.begin() + remove);
+  first_index_ += remove;
+}
+
+void WALPersister::DenseIndex::TruncateSuffix(uint64_t from_index) {
+  if (entries_.empty() || from_index > LastIndex() + 1) {
+    return;
+  }
+  if (from_index <= first_index_) {
+    Clear();
+    return;
+  }
+  size_t keep = static_cast<size_t>(from_index - first_index_);
+  entries_.resize(keep);
+}
+
+void WALPersister::DenseIndex::Clear() {
+  first_index_ = 0;
+  entries_.clear();
+  entries_.shrink_to_fit();
+}
+
 // ==================== Base64 Helpers ====================
 
 static const char kBase64Chars[] =
@@ -289,31 +350,12 @@ Status WALPersister::Open(const std::string& wal_dir) {
       }
     }
 
-    // Count entries in active segment and seek to end of data
-    lseek(active_segment_.fd, kHeaderSize, SEEK_SET);
+    // Count entries belonging to the active segment from the rebuilt index.
     active_segment_.entry_count = 0;
-    uint64_t current_offset = kHeaderSize;
-    while (current_offset < active_segment_.end_offset) {
-      uint32_t crc32;
-      if (read(active_segment_.fd, &crc32, sizeof(crc32)) != sizeof(crc32)) {
-        break;
+    for (const auto& e : index_.Entries()) {
+      if (e.segment_id == active_segment_.id) {
+        ++active_segment_.entry_count;
       }
-      uint32_t length;
-      if (read(active_segment_.fd, &length, sizeof(length)) != sizeof(length)) {
-        break;
-      }
-      uint16_t type;
-      if (read(active_segment_.fd, &type, sizeof(type)) != sizeof(type)) {
-        break;
-      }
-      if (length > kMaxRecordSize) {
-        break;
-      }
-      if (lseek(active_segment_.fd, length, SEEK_CUR) < 0) {
-        break;
-      }
-      active_segment_.entry_count++;
-      current_offset += sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + length;
     }
 
     // Seek to end of data (before trailer)
@@ -333,11 +375,10 @@ void WALPersister::Close() {
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (active_segment_.fd >= 0) {
-    // Write trailer at end_offset before closing
-    lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-    auto status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+    // Flush any buffered records and write the trailer before closing.
+    auto status = FlushWriteBufferLocked();
     if (!status.ok()) {
-      LOG_WARN("WALPersister::Close() failed to write trailer: {}",
+      LOG_WARN("WALPersister::Close() failed to flush buffer: {}",
                status.ToString());
     }
     close(active_segment_.fd);
@@ -346,9 +387,9 @@ void WALPersister::Close() {
 
   wal_dir_.clear();
   meta_path_.clear();
-  index_.clear();
-  first_index_ = 0;
-  last_index_ = 0;
+  index_.Clear();
+  segment_format_versions_.clear();
+  write_buf_.clear();
 }
 
 Status WALPersister::AppendLogEntry(const RaftLogEntry& entry) {
@@ -371,38 +412,21 @@ Status WALPersister::AppendLogEntry(const RaftLogEntry& entry) {
     return status;
   }
 
-  // Remove old trailer before appending
-  ftruncate(active_segment_.fd, active_segment_.end_offset);
-  lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-
   uint64_t offset = 0;
-  status = WriteRecord(active_segment_.fd, WALRecordType::kLogEntry, payload,
-                       &offset);
+  uint64_t record_len = 0;
+  status = AppendRecordToBufferLocked(WALRecordType::kLogEntry, payload, &offset,
+                                      &record_len);
   if (!status.ok()) {
     return status;
   }
-
-  uint64_t record_len = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) +
-                        payload.size();
 
   // Update index
   uint64_t log_index = static_cast<uint64_t>(entry.index_);
-  index_[log_index] = WALIndexEntry{active_segment_.id, offset, record_len};
+  index_.Put(log_index, WALIndexEntry{active_segment_.id, offset, record_len});
 
-  if (first_index_ == 0) {
-    first_index_ = log_index;
-  } else {
-    first_index_ = std::min(first_index_, log_index);
-  }
-  last_index_ = std::max(last_index_, log_index);
   active_segment_.entry_count++;
-  active_segment_.end_offset = offset + record_len;
-
-  // Update trailer so segment is always valid
-  status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
-  if (!status.ok()) {
-    return status;
-  }
+  // end_offset remains the start of the write buffer; logical end is
+  // end_offset + write_buf_.size().
 
   return Status::OK();
 }
@@ -419,38 +443,16 @@ Status WALPersister::AppendTruncatePrefix(uint64_t before_index) {
     return status;
   }
 
-  // Remove old trailer before appending
-  ftruncate(active_segment_.fd, active_segment_.end_offset);
-  lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-
   uint64_t offset = 0;
-  status = WriteRecord(active_segment_.fd, WALRecordType::kTruncatePrefix,
-                       payload, &offset);
-  if (!status.ok()) {
-    return status;
-  }
-
-  active_segment_.end_offset = offset + sizeof(uint32_t) + sizeof(uint32_t) +
-                               sizeof(uint16_t) + payload.size();
-
-  // Update trailer
-  status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+  uint64_t record_len = 0;
+  status = AppendRecordToBufferLocked(WALRecordType::kTruncatePrefix, payload,
+                                      &offset, &record_len);
   if (!status.ok()) {
     return status;
   }
 
   // Update in-memory index
-  auto it = index_.begin();
-  while (it != index_.end() && it->first < before_index) {
-    it = index_.erase(it);
-  }
-
-  if (!index_.empty()) {
-    first_index_ = index_.begin()->first;
-  } else {
-    first_index_ = 0;
-    last_index_ = 0;
-  }
+  index_.TruncatePrefix(before_index);
 
   return Status::OK();
 }
@@ -467,74 +469,39 @@ Status WALPersister::AppendTruncateSuffix(uint64_t from_index) {
     return status;
   }
 
-  // Remove old trailer before appending
-  ftruncate(active_segment_.fd, active_segment_.end_offset);
-  lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-
   uint64_t offset = 0;
-  status = WriteRecord(active_segment_.fd, WALRecordType::kTruncateSuffix,
-                       payload, &offset);
-  if (!status.ok()) {
-    return status;
-  }
-
-  active_segment_.end_offset = offset + sizeof(uint32_t) + sizeof(uint32_t) +
-                               sizeof(uint16_t) + payload.size();
-
-  // Update trailer
-  status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+  uint64_t record_len = 0;
+  status = AppendRecordToBufferLocked(WALRecordType::kTruncateSuffix, payload,
+                                      &offset, &record_len);
   if (!status.ok()) {
     return status;
   }
 
   // Update in-memory index
-  auto it = index_.lower_bound(from_index);
-  index_.erase(it, index_.end());
-
-  if (!index_.empty()) {
-    last_index_ = index_.rbegin()->first;
-  } else {
-    first_index_ = 0;
-    last_index_ = 0;
-  }
+  index_.TruncateSuffix(from_index);
 
   return Status::OK();
 }
 
 Status WALPersister::Sync() {
   std::lock_guard<std::mutex> lock(mtx_);
-
-  if (active_segment_.fd < 0) {
-    return Status::Error("No active segment");
-  }
-
-  // Write trailer at end_offset and sync
-  lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-  auto status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
-  if (!status.ok()) {
-    return status;
-  }
-
-#ifdef __APPLE__
-  if (fcntl(active_segment_.fd, F_FULLFSYNC, 0) != 0) {
-    return Status::Error("fsync failed");
-  }
-#else
-  if (fdatasync(active_segment_.fd) != 0) {
-    return Status::Error("fdatasync failed");
-  }
-#endif
-
-  return Status::OK();
+  return SyncActiveSegmentLocked();
 }
 
 Status WALPersister::Replay(
     const std::function<bool(const WALRecord&)>& callback) {
   std::lock_guard<std::mutex> lock(mtx_);
 
+  // Make sure any buffered records are visible on disk before replaying.
+  auto status = FlushWriteBufferLocked();
+  if (!status.ok()) {
+    return status;
+  }
+
   // Collect all segment ids
   std::vector<uint64_t> segment_ids;
-  for (const auto& [index, entry] : index_) {
+  for (const auto& entry : index_.Entries()) {
+    if (entry.segment_id == 0) continue;
     if (segment_ids.empty() || segment_ids.back() != entry.segment_id) {
       segment_ids.push_back(entry.segment_id);
     }
@@ -562,9 +529,9 @@ Status WALPersister::Replay(
   }
 
   for (uint64_t seg_id : segment_ids) {
-    auto status = ScanSegment(seg_id, callback);
-    if (!status.ok()) {
-      return status;
+    auto scan_status = ScanSegment(seg_id, callback);
+    if (!scan_status.ok()) {
+      return scan_status;
     }
   }
 
@@ -576,9 +543,13 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
 
   // Find the first segment that contains an entry >= before_log_index
   uint64_t first_segment_to_keep = std::numeric_limits<uint64_t>::max();
-  for (const auto& [log_index, entry] : index_) {
+  const auto& entries = index_.Entries();
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].segment_id == 0) continue;
+    uint64_t log_index = index_.FirstIndex() + i;
     if (log_index >= before_log_index) {
-      first_segment_to_keep = std::min(first_segment_to_keep, entry.segment_id);
+      first_segment_to_keep =
+          std::min(first_segment_to_keep, entries[i].segment_id);
     }
   }
 
@@ -612,22 +583,22 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
     unlink(path.c_str());
   }
 
-  // Remove index entries for deleted segments and update log range
-  auto it = index_.begin();
-  while (it != index_.end()) {
-    if (it->second.segment_id < first_segment_to_keep) {
-      it = index_.erase(it);
-    } else {
-      ++it;
+  // Remove index entries for deleted segments. Keep all entries in the first
+  // retained segment, even if some of them are below before_log_index, because
+  // segment-based GC can only delete whole segment files.
+  uint64_t first_index_to_keep = 0;
+  bool found = false;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].segment_id >= first_segment_to_keep) {
+      first_index_to_keep = index_.FirstIndex() + i;
+      found = true;
+      break;
     }
   }
-
-  if (!index_.empty()) {
-    first_index_ = index_.begin()->first;
-    last_index_ = index_.rbegin()->first;
+  if (found) {
+    index_.TruncatePrefix(first_index_to_keep);
   } else {
-    first_index_ = 0;
-    last_index_ = 0;
+    index_.Clear();
   }
 
   return Status::OK();
@@ -635,18 +606,23 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
 
 std::pair<uint64_t, uint64_t> WALPersister::GetLogRange() const {
   std::lock_guard<std::mutex> lock(mtx_);
-  return {first_index_, last_index_};
+  return {index_.FirstIndex(), index_.LastIndex()};
 }
 
 Status WALPersister::GetEntry(uint64_t index, RaftLogEntry& entry) {
   std::lock_guard<std::mutex> lock(mtx_);
 
-  auto it = index_.find(index);
-  if (it == index_.end()) {
+  auto status = EnsureBufferFlushedForReadLocked();
+  if (!status.ok()) {
+    return status;
+  }
+
+  const WALIndexEntry* idx = index_.Get(index);
+  if (idx == nullptr) {
     return Status::Error("Entry not found");
   }
 
-  return ReadLogEntryAt(it->second.segment_id, it->second.file_offset, entry);
+  return ReadLogEntryAt(idx->segment_id, idx->file_offset, entry);
 }
 
 Status WALPersister::GetEntries(uint64_t start, uint64_t end,
@@ -659,16 +635,29 @@ Status WALPersister::GetEntries(uint64_t start, uint64_t end,
     return Status::OK();
   }
 
-  auto it = index_.lower_bound(start);
-  while (it != index_.end() && it->first < end) {
+  auto status = EnsureBufferFlushedForReadLocked();
+  if (!status.ok()) {
+    return status;
+  }
+
+  uint64_t first = index_.FirstIndex();
+  uint64_t last = index_.LastIndex();
+  if (index_.Empty() || start > last || end <= first) {
+    return Status::OK();
+  }
+
+  uint64_t from = std::max(start, first);
+  uint64_t to = std::min(end, last + 1);
+  const auto& entries = index_.Entries();
+  for (uint64_t idx = from; idx < to; ++idx) {
+    const WALIndexEntry& e = entries[static_cast<size_t>(idx - first)];
+    if (e.segment_id == 0) continue;
     RaftLogEntry entry;
-    auto status = ReadLogEntryAt(it->second.segment_id, it->second.file_offset,
-                                 entry);
+    status = ReadLogEntryAt(e.segment_id, e.file_offset, entry);
     if (!status.ok()) {
       return status;
     }
     out->push_back(std::move(entry));
-    ++it;
   }
 
   return Status::OK();
@@ -1100,27 +1089,12 @@ Status WALPersister::ScanSegment(
       }
       uint64_t record_len = sizeof(uint32_t) + sizeof(uint32_t) +
                             sizeof(uint16_t) + length;
-      index_[log_index] = WALIndexEntry{segment_id, current_offset, record_len};
-      if (first_index_ == 0 || log_index < first_index_) {
-        first_index_ = log_index;
-      }
-      if (log_index > last_index_) {
-        last_index_ = log_index;
-      }
+      index_.Put(log_index, WALIndexEntry{segment_id, current_offset, record_len});
     } else if (type == WALRecordType::kTruncatePrefix) {
       try {
         json j = json::parse(payload);
         uint64_t before_index = j["before_index"].get<uint64_t>();
-        auto it = index_.begin();
-        while (it != index_.end() && it->first < before_index) {
-          it = index_.erase(it);
-        }
-        if (!index_.empty()) {
-          first_index_ = index_.begin()->first;
-        } else {
-          first_index_ = 0;
-          last_index_ = 0;
-        }
+        index_.TruncatePrefix(before_index);
       } catch (const std::exception& e) {
         close(fd);
         return Status::Corruption("Failed to parse truncate prefix: " +
@@ -1130,14 +1104,7 @@ Status WALPersister::ScanSegment(
       try {
         json j = json::parse(payload);
         uint64_t from_index = j["from_index"].get<uint64_t>();
-        auto it = index_.lower_bound(from_index);
-        index_.erase(it, index_.end());
-        if (!index_.empty()) {
-          last_index_ = index_.rbegin()->first;
-        } else {
-          first_index_ = 0;
-          last_index_ = 0;
-        }
+        index_.TruncateSuffix(from_index);
       } catch (const std::exception& e) {
         close(fd);
         return Status::Corruption("Failed to parse truncate suffix: " +
@@ -1169,16 +1136,14 @@ Status WALPersister::RotateSegmentIfNeeded() {
     need_rotation = true;
   }
 
-  // Check size
-  off_t current_size = lseek(active_segment_.fd, 0, SEEK_END);
-  if (current_size >= static_cast<off_t>(kMaxSegmentSize)) {
+  // Check logical size including pending write buffer.
+  if (active_segment_.end_offset + write_buf_.size() >= kMaxSegmentSize) {
     need_rotation = true;
   }
 
   if (need_rotation) {
-    // Write trailer to current segment at end_offset
-    lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
-    auto status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+    // Flush any pending records and write the trailer before closing.
+    auto status = FlushWriteBufferLocked();
     if (!status.ok()) {
       return status;
     }
@@ -1188,6 +1153,104 @@ Status WALPersister::RotateSegmentIfNeeded() {
     // Create new segment
     return CreateSegment(active_segment_.id + 1);
   }
+
+  return Status::OK();
+}
+
+Status WALPersister::FlushWriteBufferLocked() {
+  if (write_buf_.empty()) {
+    return Status::OK();
+  }
+  if (active_segment_.fd < 0) {
+    return Status::Error("No active segment");
+  }
+
+  lseek(active_segment_.fd, active_segment_.end_offset, SEEK_SET);
+  size_t remaining = write_buf_.size();
+  const char* data = write_buf_.data();
+  while (remaining > 0) {
+    ssize_t n = write(active_segment_.fd, data, remaining);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return Status::Error("Failed to write WAL buffer");
+    }
+    data += n;
+    remaining -= static_cast<size_t>(n);
+  }
+
+  active_segment_.end_offset += write_buf_.size();
+  write_buf_.clear();
+
+  // Write trailer so flushed records are discoverable on recovery.
+  auto status = WriteTrailer(active_segment_.fd, active_segment_.end_offset);
+  if (!status.ok()) {
+    return status;
+  }
+
+  return Status::OK();
+}
+
+Status WALPersister::EnsureBufferFlushedForReadLocked() {
+  return FlushWriteBufferLocked();
+}
+
+Status WALPersister::AppendRecordToBufferLocked(WALRecordType type,
+                                                const std::string& payload,
+                                                uint64_t* out_offset,
+                                                uint64_t* out_record_len) {
+  if (payload.size() > kMaxRecordSize) {
+    return Status::Error("Payload too large");
+  }
+
+  *out_offset = active_segment_.end_offset + write_buf_.size();
+
+  uint32_t length = static_cast<uint32_t>(payload.size());
+  uint16_t type_val = static_cast<uint16_t>(type);
+
+  std::string crc_data;
+  crc_data.reserve(sizeof(length) + sizeof(type_val) + payload.size());
+  crc_data.append(reinterpret_cast<const char*>(&length), sizeof(length));
+  crc_data.append(reinterpret_cast<const char*>(&type_val), sizeof(type_val));
+  crc_data += payload;
+  uint32_t crc = ComputeCRC32(crc_data);
+
+  size_t before = write_buf_.size();
+  write_buf_.append(reinterpret_cast<const char*>(&crc), sizeof(crc));
+  write_buf_.append(reinterpret_cast<const char*>(&length), sizeof(length));
+  write_buf_.append(reinterpret_cast<const char*>(&type_val), sizeof(type_val));
+  if (!payload.empty()) {
+    write_buf_.append(payload.data(), payload.size());
+  }
+
+  *out_record_len = write_buf_.size() - before;
+
+  // Flush when the buffer reaches its watermark.
+  if (write_buf_.size() >= kWriteBufferSize) {
+    return FlushWriteBufferLocked();
+  }
+
+  return Status::OK();
+}
+
+Status WALPersister::SyncActiveSegmentLocked() {
+  auto status = FlushWriteBufferLocked();
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (active_segment_.fd < 0) {
+    return Status::Error("No active segment");
+  }
+
+#ifdef __APPLE__
+  if (fcntl(active_segment_.fd, F_FULLFSYNC, 0) != 0) {
+    return Status::Error("fsync failed");
+  }
+#else
+  if (fdatasync(active_segment_.fd) != 0) {
+    return Status::Error("fdatasync failed");
+  }
+#endif
 
   return Status::OK();
 }
@@ -1214,8 +1277,8 @@ Status WALPersister::LoadMeta() {
 Status WALPersister::SaveMeta() {
   json j;
   j["last_segment_id"] = active_segment_.id;
-  j["first_index"] = first_index_;
-  j["last_index"] = last_index_;
+  j["first_index"] = index_.FirstIndex();
+  j["last_index"] = index_.LastIndex();
 
   std::ofstream fs(meta_path_);
   if (!fs.is_open()) {

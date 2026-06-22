@@ -431,3 +431,162 @@ TEST_F(WALPersisterTest, ReopenPreservesData) {
     wal.Close();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Test 11: Checkpoint is created on close and used on reopen
+// ---------------------------------------------------------------------------
+TEST_F(WALPersisterTest, CheckpointCreatedOnCloseAndUsedOnReopen) {
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+    // Append enough entries to create multiple segments.
+    for (uint64_t i = 1; i <= 60000; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+    }
+    ASSERT_TRUE(wal.Sync().ok());
+    wal.Close();
+  }
+
+  // Verify at least one checkpoint file exists.
+  bool found_checkpoint = false;
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+    std::string name = entry.path().filename().string();
+    if (name.rfind("checkpoint.", 0) == 0 &&
+        name.size() > std::string("checkpoint.").size() + 4 &&
+        name.substr(name.size() - 4) == ".idx") {
+      found_checkpoint = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_checkpoint);
+
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+
+    auto range = wal.GetLogRange();
+    EXPECT_EQ(range.first, 1);
+    EXPECT_EQ(range.second, 60000);
+
+    int count = 0;
+    ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
+      count++;
+      return true;
+    }).ok());
+    EXPECT_EQ(count, 60000);
+
+    wal.Close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: Corrupted checkpoint falls back to full segment scan
+// ---------------------------------------------------------------------------
+TEST_F(WALPersisterTest, CorruptedCheckpointFallsBack) {
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+    for (uint64_t i = 1; i <= 60000; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+    }
+    ASSERT_TRUE(wal.Sync().ok());
+    wal.Close();
+  }
+
+  // Corrupt all checkpoint files.
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+    std::string path = entry.path().string();
+    std::string name = entry.path().filename().string();
+    if (name.rfind("checkpoint.", 0) == 0 &&
+        name.substr(name.size() - 4) == ".idx") {
+      std::ofstream fs(path, std::ios::in | std::ios::out | std::ios::binary);
+      ASSERT_TRUE(fs.is_open());
+      fs.seekp(8, std::ios::beg);
+      char garbage = 0xFF;
+      fs.write(&garbage, 1);
+    }
+  }
+
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+
+    auto range = wal.GetLogRange();
+    EXPECT_EQ(range.first, 1);
+    EXPECT_EQ(range.second, 60000);
+
+    int count = 0;
+    ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
+      count++;
+      return true;
+    }).ok());
+    EXPECT_EQ(count, 60000);
+
+    wal.Close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: Garbage collect removes old checkpoints and data remains readable
+// ---------------------------------------------------------------------------
+TEST_F(WALPersisterTest, GarbageCollectRemovesOldCheckpoints) {
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+    // 120k entries -> ~12 segments. Sync periodically to create checkpoints.
+    for (uint64_t i = 1; i <= 120000; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+      if (i == 50000 || i == 100000) {
+        ASSERT_TRUE(wal.Sync().ok());
+      }
+    }
+    ASSERT_TRUE(wal.Sync().ok());
+    wal.Close();
+  }
+
+  size_t checkpoints_before = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+    std::string name = entry.path().filename().string();
+    if (name.rfind("checkpoint.", 0) == 0 &&
+        name.substr(name.size() - 4) == ".idx") {
+      ++checkpoints_before;
+    }
+  }
+  EXPECT_GE(checkpoints_before, 2);
+
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+    // GC before index 80000 to delete segments 1-7 and their checkpoints.
+    ASSERT_TRUE(wal.GarbageCollect(80000).ok());
+    wal.Close();
+  }
+
+  size_t checkpoints_after = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+    std::string name = entry.path().filename().string();
+    if (name.rfind("checkpoint.", 0) == 0 &&
+        name.substr(name.size() - 4) == ".idx") {
+      ++checkpoints_after;
+    }
+  }
+  EXPECT_LT(checkpoints_after, checkpoints_before);
+
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+
+    auto range = wal.GetLogRange();
+    EXPECT_GE(range.first, 70001);  // first retained segment boundary
+    EXPECT_EQ(range.second, 120000);
+
+    int count = 0;
+    ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
+      count++;
+      return true;
+    }).ok());
+    EXPECT_EQ(count, static_cast<int>(range.second - range.first + 1));
+
+    wal.Close();
+  }
+}

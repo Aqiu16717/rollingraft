@@ -188,6 +188,10 @@ class WALPersister {
   // when durability/read consistency is required.
   static constexpr size_t kWriteBufferSize = 1024 * 1024;  // 1MB
 
+  // Checkpoint thresholds
+  static constexpr size_t kCheckpointSegmentInterval = 5;
+  static constexpr size_t kCheckpointEntryInterval = 50000;
+
   /**
    * Dense, cache-friendly index for log entry lookups.
    *
@@ -276,6 +280,15 @@ class WALPersister {
   Status LoadMeta();
   Status SaveMeta();
   uint32_t ComputeCRC32(const std::string& data);
+
+  // Checkpoint helpers
+  Status LoadLatestCheckpointLocked(uint64_t* out_last_covered_segment_id);
+  Status SaveCheckpointLocked();
+  void RemoveOldCheckpointsLocked(uint64_t first_retained_segment_id);
+  std::vector<std::string> ListCheckpointFilesLocked() const;
+  static std::string CheckpointPathFor(const std::string& wal_dir,
+                                       uint64_t segment_id);
+  bool ShouldCreateCheckpointLocked() const;
 
   // Buffering helpers (protected by mtx_)
   Status FlushWriteBufferLocked();

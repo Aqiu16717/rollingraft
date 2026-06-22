@@ -23,6 +23,18 @@ namespace rollingraft {
 
 using json = nlohmann::json;
 
+// ==================== Checkpoint format constants ====================
+
+static constexpr uint32_t kCheckpointMagic = 0x57494458;  // "WIDX"
+static constexpr uint16_t kCheckpointVersion = 1;
+static constexpr size_t kCheckpointHeaderSize = 40;
+static constexpr size_t kCheckpointIndexEntrySize = 24;
+static constexpr size_t kCheckpointFooterSize = 4;
+
+static constexpr const char* kCheckpointPrefix = "checkpoint.";
+static constexpr const char* kCheckpointSuffix = ".idx";
+static constexpr const char* kCheckpointTempSuffix = ".tmp";
+
 // ==================== WALPersister::DenseIndex ====================
 
 void WALPersister::DenseIndex::Put(uint64_t index, WALIndexEntry entry) {
@@ -302,8 +314,30 @@ Status WALPersister::Open(const std::string& wal_dir) {
   std::sort(segment_ids.begin(), segment_ids.end());
 
   if (!segment_ids.empty()) {
-    // Validate and scan all segments, rebuild index
+    // Try to load the latest checkpoint. If successful, only scan segments
+    // written after the checkpoint.
+    uint64_t checkpoint_covered_segment_id = 0;
+    auto ckpt_status = LoadLatestCheckpointLocked(&checkpoint_covered_segment_id);
+    if (!ckpt_status.ok()) {
+      LOG_WARN("Failed to load WAL checkpoint, falling back to full scan: {}",
+               ckpt_status.ToString());
+      index_.Clear();
+      checkpoint_covered_segment_id = 0;
+    }
+
+    // Validate and scan segments. Skip segments already covered by checkpoint.
     for (uint64_t seg_id : segment_ids) {
+      if (seg_id <= checkpoint_covered_segment_id) {
+        // Header validation still needed for format_version tracking.
+        int fd = -1;
+        auto status = OpenSegment(seg_id, &fd);
+        if (fd >= 0) close(fd);
+        if (!status.ok()) {
+          return status;
+        }
+        continue;
+      }
+
       int fd = -1;
       auto status = OpenSegment(seg_id, &fd);
       if (!status.ok()) {
@@ -381,6 +415,18 @@ void WALPersister::Close() {
       LOG_WARN("WALPersister::Close() failed to flush buffer: {}",
                status.ToString());
     }
+
+    // Save a checkpoint on close if thresholds are met so recovery is fast
+    // next time. Small WALs are left without a checkpoint to preserve full
+    // segment scan behavior (useful for corruption detection tests).
+    if (ShouldCreateCheckpointLocked()) {
+      status = SaveCheckpointLocked();
+      if (!status.ok()) {
+        LOG_WARN("WALPersister::Close() failed to save checkpoint: {}",
+                 status.ToString());
+      }
+    }
+
     close(active_segment_.fd);
     active_segment_ = Segment{};
   }
@@ -485,7 +531,20 @@ Status WALPersister::AppendTruncateSuffix(uint64_t from_index) {
 
 Status WALPersister::Sync() {
   std::lock_guard<std::mutex> lock(mtx_);
-  return SyncActiveSegmentLocked();
+  auto status = SyncActiveSegmentLocked();
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (ShouldCreateCheckpointLocked()) {
+    status = SaveCheckpointLocked();
+    if (!status.ok()) {
+      LOG_WARN("Failed to save WAL checkpoint: {}", status.ToString());
+      // Checkpoint failure is not fatal; the WAL is still durable.
+    }
+  }
+
+  return Status::OK();
 }
 
 Status WALPersister::Replay(
@@ -600,6 +659,9 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
   } else {
     index_.Clear();
   }
+
+  // Remove checkpoints that only cover deleted segments.
+  RemoveOldCheckpointsLocked(first_segment_to_keep);
 
   return Status::OK();
 }
@@ -1289,6 +1351,319 @@ Status WALPersister::SaveMeta() {
   fs.close();
 
   return Status::OK();
+}
+
+// ==================== Checkpoint helpers ====================
+
+std::string WALPersister::CheckpointPathFor(const std::string& wal_dir,
+                                            uint64_t segment_id) {
+  return wal_dir + "/" + kCheckpointPrefix + std::to_string(segment_id) +
+         kCheckpointSuffix;
+}
+
+std::vector<std::string> WALPersister::ListCheckpointFilesLocked() const {
+  std::vector<std::string> files;
+  DIR* dir = opendir(wal_dir_.c_str());
+  if (!dir) {
+    return files;
+  }
+
+  std::string prefix = kCheckpointPrefix;
+  std::string suffix = kCheckpointSuffix;
+  struct dirent* entry = nullptr;
+  while ((entry = readdir(dir)) != nullptr) {
+    std::string name(entry->d_name);
+    if (name.size() > prefix.size() + suffix.size() &&
+        name.substr(0, prefix.size()) == prefix &&
+        name.substr(name.size() - suffix.size()) == suffix) {
+      files.push_back(wal_dir_ + "/" + name);
+    }
+  }
+  closedir(dir);
+  return files;
+}
+
+Status WALPersister::LoadLatestCheckpointLocked(
+    uint64_t* out_last_covered_segment_id) {
+  *out_last_covered_segment_id = 0;
+
+  auto files = ListCheckpointFilesLocked();
+  if (files.empty()) {
+    return Status::OK();  // No checkpoint; caller will full scan
+  }
+
+  // Parse segment id from filename and pick the largest that has a corresponding
+  // segment file.
+  std::string prefix = kCheckpointPrefix;
+  std::string suffix = kCheckpointSuffix;
+  std::string best_path;
+  uint64_t best_segment_id = 0;
+  for (const auto& path : files) {
+    size_t start = path.rfind('/') + 1 + prefix.size();
+    size_t end = path.size() - suffix.size();
+    try {
+      uint64_t seg_id = std::stoull(path.substr(start, end - start));
+      std::string seg_path = wal_dir_ + "/" + std::to_string(seg_id) + ".wal";
+      if (seg_id > best_segment_id && access(seg_path.c_str(), F_OK) == 0) {
+        best_segment_id = seg_id;
+        best_path = path;
+      }
+    } catch (const std::exception&) {
+      continue;
+    }
+  }
+
+  if (best_segment_id == 0) {
+    return Status::OK();
+  }
+
+  // Read checkpoint file.
+  int fd = open(best_path.c_str(), O_RDONLY);
+  if (fd < 0) {
+    return Status::Error("Failed to open checkpoint: " + best_path);
+  }
+
+  auto cleanup = [fd]() { close(fd); };
+
+  struct stat st;
+  if (fstat(fd, &st) != 0) {
+    cleanup();
+    return Status::Error("Failed to stat checkpoint: " + best_path);
+  }
+
+  size_t file_size = static_cast<size_t>(st.st_size);
+  if (file_size < kCheckpointHeaderSize + kCheckpointFooterSize) {
+    cleanup();
+    return Status::Corruption("Checkpoint file too small");
+  }
+
+  std::vector<char> buf(file_size);
+  ssize_t n = read(fd, buf.data(), file_size);
+  cleanup();
+  if (n != static_cast<ssize_t>(file_size)) {
+    return Status::Error("Failed to read checkpoint");
+  }
+
+  const char* p = buf.data();
+  uint32_t magic;
+  uint16_t version;
+  uint16_t reserved;
+  uint64_t first_index;
+  uint64_t last_index;
+  uint64_t entry_count;
+  uint64_t last_covered_segment_id;
+
+  memcpy(&magic, p, sizeof(magic));
+  memcpy(&version, p + 4, sizeof(version));
+  memcpy(&reserved, p + 6, sizeof(reserved));
+  memcpy(&first_index, p + 8, sizeof(first_index));
+  memcpy(&last_index, p + 16, sizeof(last_index));
+  memcpy(&entry_count, p + 24, sizeof(entry_count));
+  memcpy(&last_covered_segment_id, p + 32, sizeof(last_covered_segment_id));
+
+  if (magic != kCheckpointMagic) {
+    return Status::Corruption("Invalid checkpoint magic");
+  }
+  if (version != kCheckpointVersion) {
+    return Status::Corruption("Unsupported checkpoint version");
+  }
+
+  size_t expected_size = kCheckpointHeaderSize +
+                         entry_count * kCheckpointIndexEntrySize +
+                         kCheckpointFooterSize;
+  if (file_size != expected_size) {
+    return Status::Corruption("Checkpoint size mismatch");
+  }
+
+  // Verify CRC32 of header + body.
+  uint32_t stored_crc;
+  memcpy(&stored_crc, p + file_size - kCheckpointFooterSize, sizeof(stored_crc));
+  uint32_t computed_crc = ComputeCRC32(
+      std::string(p, file_size - kCheckpointFooterSize));
+  if (computed_crc != stored_crc) {
+    return Status::Corruption("Checkpoint CRC mismatch");
+  }
+
+  // Populate DenseIndex.
+  index_.Clear();
+  const char* entries_ptr = p + kCheckpointHeaderSize;
+  for (uint64_t i = 0; i < entry_count; ++i) {
+    uint64_t segment_id;
+    uint64_t file_offset;
+    uint64_t length;
+    const char* ep = entries_ptr + i * kCheckpointIndexEntrySize;
+    memcpy(&segment_id, ep, sizeof(segment_id));
+    memcpy(&file_offset, ep + 8, sizeof(file_offset));
+    memcpy(&length, ep + 16, sizeof(length));
+    index_.Put(first_index + i,
+               WALIndexEntry{segment_id, file_offset, length});
+  }
+
+  *out_last_covered_segment_id = last_covered_segment_id;
+  LOG_INFO("Loaded WAL checkpoint {} (indices {}-{}, {} entries)",
+           best_path, first_index, last_index, entry_count);
+  return Status::OK();
+}
+
+bool WALPersister::ShouldCreateCheckpointLocked() const {
+  if (index_.Empty()) {
+    return false;
+  }
+
+  auto files = const_cast<WALPersister*>(this)->ListCheckpointFilesLocked();
+  uint64_t last_checkpoint_segment_id = 0;
+  std::string prefix = kCheckpointPrefix;
+  std::string suffix = kCheckpointSuffix;
+  for (const auto& path : files) {
+    size_t start = path.rfind('/') + prefix.size();
+    size_t end = path.size() - suffix.size();
+    try {
+      uint64_t seg_id = std::stoull(path.substr(start, end - start));
+      last_checkpoint_segment_id = std::max(last_checkpoint_segment_id, seg_id);
+    } catch (const std::exception&) {
+      continue;
+    }
+  }
+
+  size_t segments_since_checkpoint =
+      static_cast<size_t>(active_segment_.id - last_checkpoint_segment_id);
+  if (segments_since_checkpoint >= kCheckpointSegmentInterval) {
+    return true;
+  }
+
+  if (last_checkpoint_segment_id == 0) {
+    return index_.Size() >= kCheckpointEntryInterval;
+  }
+
+  // Rough estimate of entries written after the last checkpoint.
+  size_t entries_after_checkpoint = 0;
+  const auto& entries = index_.Entries();
+  for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+    if (it->segment_id <= last_checkpoint_segment_id) {
+      break;
+    }
+    ++entries_after_checkpoint;
+  }
+  return entries_after_checkpoint >= kCheckpointEntryInterval;
+}
+
+Status WALPersister::SaveCheckpointLocked() {
+  if (index_.Empty()) {
+    return Status::OK();
+  }
+
+  uint64_t last_covered_segment_id = active_segment_.id;
+  std::string path = CheckpointPathFor(wal_dir_, last_covered_segment_id);
+  std::string temp_path = path + kCheckpointTempSuffix;
+
+  int fd = open(temp_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) {
+    return Status::Error("Failed to create checkpoint temp file");
+  }
+
+  uint64_t first_index = index_.FirstIndex();
+  uint64_t last_index = index_.LastIndex();
+  uint64_t entry_count = index_.Size();
+
+  std::string data;
+  data.reserve(kCheckpointHeaderSize + entry_count * kCheckpointIndexEntrySize +
+               kCheckpointFooterSize);
+  data.resize(kCheckpointHeaderSize);
+
+  char* p = data.data();
+  uint32_t magic = kCheckpointMagic;
+  uint16_t version = kCheckpointVersion;
+  uint16_t reserved = 0;
+  memcpy(p, &magic, sizeof(magic));
+  memcpy(p + 4, &version, sizeof(version));
+  memcpy(p + 6, &reserved, sizeof(reserved));
+  memcpy(p + 8, &first_index, sizeof(first_index));
+  memcpy(p + 16, &last_index, sizeof(last_index));
+  memcpy(p + 24, &entry_count, sizeof(entry_count));
+  memcpy(p + 32, &last_covered_segment_id, sizeof(last_covered_segment_id));
+
+  const auto& entries = index_.Entries();
+  for (const auto& e : entries) {
+    char entry_buf[kCheckpointIndexEntrySize];
+    memcpy(entry_buf, &e.segment_id, sizeof(e.segment_id));
+    memcpy(entry_buf + 8, &e.file_offset, sizeof(e.file_offset));
+    memcpy(entry_buf + 16, &e.length, sizeof(e.length));
+    data.append(entry_buf, sizeof(entry_buf));
+  }
+
+  uint32_t crc = ComputeCRC32(data);
+  char crc_buf[sizeof(crc)];
+  memcpy(crc_buf, &crc, sizeof(crc));
+  data.append(crc_buf, sizeof(crc_buf));
+
+  size_t remaining = data.size();
+  const char* write_ptr = data.data();
+  while (remaining > 0) {
+    ssize_t n = write(fd, write_ptr, remaining);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      close(fd);
+      unlink(temp_path.c_str());
+      return Status::Error("Failed to write checkpoint");
+    }
+    write_ptr += n;
+    remaining -= static_cast<size_t>(n);
+  }
+
+#ifdef __APPLE__
+  if (fcntl(fd, F_FULLFSYNC, 0) != 0) {
+    close(fd);
+    unlink(temp_path.c_str());
+    return Status::Error("Failed to fsync checkpoint");
+  }
+#else
+  if (fdatasync(fd) != 0) {
+    close(fd);
+    unlink(temp_path.c_str());
+    return Status::Error("Failed to fdatasync checkpoint");
+  }
+#endif
+
+  close(fd);
+
+  if (rename(temp_path.c_str(), path.c_str()) != 0) {
+    unlink(temp_path.c_str());
+    return Status::Error("Failed to rename checkpoint");
+  }
+
+  // fsync directory to ensure rename is durable.
+  int dir_fd = open(wal_dir_.c_str(), O_RDONLY);
+  if (dir_fd >= 0) {
+#ifdef __APPLE__
+    fcntl(dir_fd, F_FULLFSYNC, 0);
+#else
+    fdatasync(dir_fd);
+#endif
+    close(dir_fd);
+  }
+
+  LOG_INFO("Saved WAL checkpoint {} (indices {}-{}, {} entries)", path,
+           first_index, last_index, entry_count);
+  return Status::OK();
+}
+
+void WALPersister::RemoveOldCheckpointsLocked(
+    uint64_t first_retained_segment_id) {
+  auto files = ListCheckpointFilesLocked();
+  std::string prefix = kCheckpointPrefix;
+  std::string suffix = kCheckpointSuffix;
+  for (const auto& path : files) {
+    size_t start = path.rfind('/') + 1 + prefix.size();
+    size_t end = path.size() - suffix.size();
+    try {
+      uint64_t seg_id = std::stoull(path.substr(start, end - start));
+      if (seg_id < first_retained_segment_id) {
+        unlink(path.c_str());
+      }
+    } catch (const std::exception&) {
+      continue;
+    }
+  }
 }
 
 }  // namespace rollingraft

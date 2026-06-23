@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-06-23
+
+### Performance
+- **WAL write optimization**: `WALPersister` now batches records in a 1 MB in-memory buffer and flushes with a single `write()` syscall. The per-entry `ftruncate()` call was removed; the segment trailer is written lazily at `Sync()`, `Close()`, or rotation. The `std::map` index was replaced with a cache-friendly `DenseIndex` (vector-backed, O(1) lookup).
+  - WAL append throughput (128 B, nosync): **~20× improvement** (3.87 MB/s → ~81 MB/s).
+- **Group commit / async WAL sync**: `LogPersister` now decouples flush from durable sync via `GroupCommitController`. Four sync policies are supported: every-write, by-interval, by-batch-size, and adaptive. Multiple flushed batches are acknowledged with a single `fsync`, reducing durable latency under load.
+  - Durable throughput (100 entries, 3.7 ms simulated fsync): **~108× improvement** over sync-every-write.
+- **WAL index checkpoint**: `WALPersister::Open()` can now load a persisted `DenseIndex` checkpoint and scan only segments written after the checkpoint, reducing recovery time from O(N) to O(delta).
+  - WAL recovery time (100 k entries, 128 B): **~27× improvement** (~161 ms → ~5.9 ms).
+
+### Added
+- `benchmark/persister_micro_benchmark.cpp`: micro-benchmarks for protobuf serialization, raw write/fsync, WAL append/recovery, LevelDB batching, and snapshot streaming.
+- `docs/perf-profiling-2026-06.md`: profiling report identifying the top 3 persister-layer bottlenecks and optimization priorities.
+- `docs/design-group-commit.md`: architecture spec for group commit / async WAL sync.
+- `docs/design-wal-checkpoint.md`: design document for the WAL index checkpoint format and recovery flow.
+
+### Fixed
+- **Group commit deadlock**: Fixed a potential deadlock in `LogPersister::BackgroundSyncLoop()` when `GroupCommitController::AcquireSyncRange()` returned `std::nullopt`.
+
+### Infrastructure
+- Test baseline: **354/354 tests pass** (321 unit + 27 integration + 6 deterministic).
+
 ## [0.3.3] — 2026-06-12
 
 ### Fixed

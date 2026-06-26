@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
 #include "simulated_clock.h"
 #include "simulated_network.h"
 #include "test_cluster.h"
+#include <gtest/gtest.h>
 
 namespace rollingraft {
 
@@ -75,8 +75,7 @@ TEST(ChaosTest, DuplicateAndReorder) {
 
   for (int i = 0; i < 10; ++i) {
     auto status = cluster.ProposeToLeader("dup_cmd" + std::to_string(i));
-    ASSERT_TRUE(status.ok()) << "Propose failed at cmd " << i << ": "
-                             << status.GetMessage();
+    ASSERT_TRUE(status.ok()) << "Propose failed at cmd " << i << ": " << status.GetMessage();
   }
 
   cluster.GetNetwork()->DuplicateMessages(0.0f);

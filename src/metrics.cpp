@@ -4,8 +4,8 @@
 
 namespace rollingraft {
 
-Counter& MetricsRegistry::GetCounter(
-    const std::string& name, const std::map<std::string, std::string>& labels) {
+Counter& MetricsRegistry::GetCounter(const std::string& name,
+                                     const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   MetricKey key{name, labels};
   auto it = counters_.find(key);
@@ -18,8 +18,8 @@ Counter& MetricsRegistry::GetCounter(
   return ref;
 }
 
-Gauge& MetricsRegistry::GetGauge(
-    const std::string& name, const std::map<std::string, std::string>& labels) {
+Gauge& MetricsRegistry::GetGauge(const std::string& name,
+                                 const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   MetricKey key{name, labels};
   auto it = gauges_.find(key);
@@ -32,9 +32,9 @@ Gauge& MetricsRegistry::GetGauge(
   return ref;
 }
 
-Histogram& MetricsRegistry::GetHistogram(
-    const std::string& name, const std::vector<double>& buckets,
-    const std::map<std::string, std::string>& labels) {
+Histogram& MetricsRegistry::GetHistogram(const std::string& name,
+                                         const std::vector<double>& buckets,
+                                         const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   MetricKey key{name, labels};
   auto it = histograms_.find(key);
@@ -47,29 +47,25 @@ Histogram& MetricsRegistry::GetHistogram(
   return ref;
 }
 
-void MetricsRegistry::RemoveCounter(
-    const std::string& name,
-    const std::map<std::string, std::string>& labels) {
+void MetricsRegistry::RemoveCounter(const std::string& name,
+                                    const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   counters_.erase(MetricKey{name, labels});
 }
 
-void MetricsRegistry::RemoveGauge(
-    const std::string& name,
-    const std::map<std::string, std::string>& labels) {
+void MetricsRegistry::RemoveGauge(const std::string& name,
+                                  const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   gauges_.erase(MetricKey{name, labels});
 }
 
-void MetricsRegistry::RemoveHistogram(
-    const std::string& name,
-    const std::map<std::string, std::string>& labels) {
+void MetricsRegistry::RemoveHistogram(const std::string& name,
+                                      const std::map<std::string, std::string>& labels) {
   std::lock_guard<std::mutex> lock(mtx_);
   histograms_.erase(MetricKey{name, labels});
 }
 
-static std::string FormatLabels(
-    const std::map<std::string, std::string>& labels) {
+static std::string FormatLabels(const std::map<std::string, std::string>& labels) {
   if (labels.empty()) return "";
   std::ostringstream oss;
   oss << "{";
@@ -89,14 +85,12 @@ std::string MetricsRegistry::FormatPrometheus() const {
 
   for (const auto& [key, counter] : counters_) {
     oss << "# TYPE " << key.name << " counter\n";
-    oss << key.name << FormatLabels(key.labels) << " " << counter->GetValue()
-        << "\n";
+    oss << key.name << FormatLabels(key.labels) << " " << counter->GetValue() << "\n";
   }
 
   for (const auto& [key, gauge] : gauges_) {
     oss << "# TYPE " << key.name << " gauge\n";
-    oss << key.name << FormatLabels(key.labels) << " " << gauge->GetValue()
-        << "\n";
+    oss << key.name << FormatLabels(key.labels) << " " << gauge->GetValue() << "\n";
   }
 
   for (const auto& [key, hist] : histograms_) {

@@ -9,9 +9,10 @@
 
 #pragma once
 
-#include <asio.hpp>
 #include <string>
 #include <vector>
+
+#include <asio.hpp>
 
 namespace rollingraft {
 
@@ -34,8 +35,7 @@ inline std::vector<uint16_t> AllocateEphemeralPorts(size_t count) {
     asio::ip::tcp::acceptor acceptor(io);
     acceptor.open(asio::ip::tcp::v4());
     acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
-    acceptor.bind(
-        asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
     ports.push_back(acceptor.local_endpoint().port());
     acceptor.close();
   }
@@ -46,8 +46,7 @@ inline std::vector<uint16_t> AllocateEphemeralPorts(size_t count) {
 /**
  * Format a vector of ports into "127.0.0.1:<port>" strings.
  */
-inline std::vector<std::string> FormatAddrs(
-    const std::vector<uint16_t>& ports) {
+inline std::vector<std::string> FormatAddrs(const std::vector<uint16_t>& ports) {
   std::vector<std::string> addrs;
   addrs.reserve(ports.size());
   for (uint16_t port : ports) {

@@ -10,12 +10,12 @@
 #include <thread>
 #include <vector>
 
-#include "group_commit_controller.h"
-#include <gtest/gtest.h>
-
 #include "rollingraft/log_persister.h"
 #include "rollingraft/metrics.h"
 #include "rollingraft/status.h"
+
+#include "group_commit_controller.h"
+#include <gtest/gtest.h>
 
 namespace rollingraft {
 
@@ -25,11 +25,8 @@ using std::chrono::steady_clock;
 class GroupCommitControllerTest : public ::testing::Test {
  protected:
   LogPersistenceConfig MakeConfig(
-      LogPersistenceConfig::SyncPolicy policy =
-          LogPersistenceConfig::SyncPolicy::kSyncAdaptive,
-      uint32_t interval_ms = 50,
-      size_t max_entries = 1000,
-      size_t max_bytes = 4 * 1024 * 1024) {
+      LogPersistenceConfig::SyncPolicy policy = LogPersistenceConfig::SyncPolicy::kSyncAdaptive,
+      uint32_t interval_ms = 50, size_t max_entries = 1000, size_t max_bytes = 4 * 1024 * 1024) {
     LogPersistenceConfig config;
     config.sync_policy = policy;
     config.group_commit_interval_ms = interval_ms;
@@ -124,11 +121,10 @@ TEST_F(GroupCommitControllerTest, CallbacksFireOnSuccess) {
 
   int fired = 0;
   Status received;
-  GroupCommitController::DurableCallback cb =
-      [&fired, &received](Status s) {
-        ++fired;
-        received = s;
-      };
+  GroupCommitController::DurableCallback cb = [&fired, &received](Status s) {
+    ++fired;
+    received = s;
+  };
 
   Status error;
   std::vector<GroupCommitController::DurableCallback> callbacks{cb};
@@ -171,11 +167,10 @@ TEST_F(GroupCommitControllerTest, OnSyncFailureFailsAllPending) {
   GroupCommitController controller(config);
 
   int fired = 0;
-  GroupCommitController::DurableCallback cb =
-      [&fired](Status s) {
-        ++fired;
-        EXPECT_FALSE(s.ok());
-      };
+  GroupCommitController::DurableCallback cb = [&fired](Status s) {
+    ++fired;
+    EXPECT_FALSE(s.ok());
+  };
 
   Status error;
   std::vector<GroupCommitController::DurableCallback> callbacks1{cb};
@@ -213,8 +208,8 @@ TEST_F(GroupCommitControllerTest, UnhealthyControllerRejectsNewBatches) {
 }
 
 TEST_F(GroupCommitControllerTest, ShouldSyncNowByInterval) {
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByInterval,
-                           10, 1000, 1024 * 1024);
+  auto config =
+      MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByInterval, 10, 1000, 1024 * 1024);
   GroupCommitController controller(config);
 
   Status error;
@@ -229,8 +224,8 @@ TEST_F(GroupCommitControllerTest, ShouldSyncNowByInterval) {
 }
 
 TEST_F(GroupCommitControllerTest, ShouldSyncNowByBatchSizeEntries) {
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByBatchSize,
-                           1000, 5, 1024 * 1024);
+  auto config =
+      MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByBatchSize, 1000, 5, 1024 * 1024);
   GroupCommitController controller(config);
 
   Status error;
@@ -244,8 +239,7 @@ TEST_F(GroupCommitControllerTest, ShouldSyncNowByBatchSizeEntries) {
 }
 
 TEST_F(GroupCommitControllerTest, ShouldSyncNowByBatchSizeBytes) {
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByBatchSize,
-                           1000, 1000, 100);
+  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByBatchSize, 1000, 1000, 100);
   GroupCommitController controller(config);
 
   Status error;
@@ -259,8 +253,7 @@ TEST_F(GroupCommitControllerTest, ShouldSyncNowByBatchSizeBytes) {
 }
 
 TEST_F(GroupCommitControllerTest, ShouldSyncNowAdaptiveUsesEitherThreshold) {
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncAdaptive,
-                           1000, 100, 1024 * 1024);
+  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncAdaptive, 1000, 100, 1024 * 1024);
   GroupCommitController controller(config);
 
   Status error;
@@ -286,8 +279,8 @@ TEST_F(GroupCommitControllerTest, ShouldSyncNowAdaptiveUsesEitherThreshold) {
 }
 
 TEST_F(GroupCommitControllerTest, RequestSyncForcesSync) {
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByInterval,
-                           1000, 1000, 1024 * 1024);
+  auto config =
+      MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncByInterval, 1000, 1000, 1024 * 1024);
   GroupCommitController controller(config);
 
   Status error;
@@ -315,8 +308,8 @@ TEST_F(GroupCommitControllerTest, SyncEveryWriteNeverBackgroundSyncs) {
 
 TEST_F(GroupCommitControllerTest, MetricsExposePendingAndUnsynced) {
   MetricsRegistry metrics;
-  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncAdaptive,
-                           1000, 1000, 1024 * 1024);
+  auto config =
+      MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncAdaptive, 1000, 1000, 1024 * 1024);
   GroupCommitController controller(config, &metrics);
 
   Status error;
@@ -325,10 +318,8 @@ TEST_F(GroupCommitControllerTest, MetricsExposePendingAndUnsynced) {
   controller.RegisterFlushedBatch(3, 567, callbacks, error);
 
   auto output = metrics.FormatPrometheus();
-  EXPECT_NE(output.find("raft_group_commit_pending_epochs"), std::string::npos)
-      << output;
-  EXPECT_NE(output.find("raft_group_commit_unsynced_entries"), std::string::npos)
-      << output;
+  EXPECT_NE(output.find("raft_group_commit_pending_epochs"), std::string::npos) << output;
+  EXPECT_NE(output.find("raft_group_commit_unsynced_entries"), std::string::npos) << output;
 
   // Acquire the full range and complete the sync.
   auto range = controller.AcquireSyncRange();
@@ -336,9 +327,7 @@ TEST_F(GroupCommitControllerTest, MetricsExposePendingAndUnsynced) {
   controller.OnSyncSuccess(range->second);
 
   output = metrics.FormatPrometheus();
-  EXPECT_NE(output.find("raft_group_commit_unsynced_entries 0"),
-            std::string::npos)
-      << output;
+  EXPECT_NE(output.find("raft_group_commit_unsynced_entries 0"), std::string::npos) << output;
 }
 
 }  // namespace rollingraft

@@ -6,13 +6,14 @@
 #include "rollingraft/client.h"
 
 #include <algorithm>
-#include <assert.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <queue>
 #include <random>
 #include <thread>
+
+#include <assert.h>
 
 #include "rollingraft/rpc.h"
 
@@ -59,18 +60,15 @@ class Client::Impl {
   Impl(const std::vector<std::string>& servers, const ClientOptions& options)
       : servers_(servers),
         options_(options),
-        client_id_(options.client_id == 0 ? GenerateClientId()
-                                          : options.client_id),
+        client_id_(options.client_id == 0 ? GenerateClientId() : options.client_id),
         leader_tracker_(options.leader_cache_ttl),
-        retry_policy_(options.max_retries, options.initial_retry_delay,
-                      options.max_retry_delay,
+        retry_policy_(options.max_retries, options.initial_retry_delay, options.max_retry_delay,
                       options.retry_backoff_multiplier),
         connection_pool_(options.connect_timeout),
         seq_counter_(0),
         shutdown_(false) {
     // Start worker threads for async operations
-    size_t num_workers =
-        std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
+    size_t num_workers = std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
     if (num_workers < 1) num_workers = 1;
 
     for (size_t i = 0; i < num_workers; ++i) {
@@ -94,14 +92,11 @@ class Client::Impl {
     }
   }
 
-  ClientResult Execute(const std::string& command,
-                       std::chrono::milliseconds timeout);
+  ClientResult Execute(const std::string& command, std::chrono::milliseconds timeout);
 
-  ClientResult Query(const std::string& query,
-                     std::chrono::milliseconds timeout);
+  ClientResult Query(const std::string& query, std::chrono::milliseconds timeout);
 
-  void ExecuteAsync(const std::string& command,
-                    std::function<void(ClientResult)> callback,
+  void ExecuteAsync(const std::string& command, std::function<void(ClientResult)> callback,
                     std::chrono::milliseconds timeout);
 
   void RefreshLeader() { leader_tracker_.ClearLeader(); }
@@ -134,8 +129,7 @@ class Client::Impl {
   ClientResult DoExecute(const std::string& command, bool read_only,
                          std::chrono::milliseconds timeout);
 
-  ClientResult TryExecuteOnServer(const std::string& server,
-                                  const ClientRequest& req,
+  ClientResult TryExecuteOnServer(const std::string& server, const ClientRequest& req,
                                   std::chrono::milliseconds timeout);
 
   static uint64_t GenerateClientId() {
@@ -164,13 +158,11 @@ class Client::Impl {
   std::vector<std::thread> worker_threads_;
 };
 
-ClientResult Client::Impl::Execute(const std::string& command,
-                                   std::chrono::milliseconds timeout) {
+ClientResult Client::Impl::Execute(const std::string& command, std::chrono::milliseconds timeout) {
   return DoExecute(command, false, timeout);
 }
 
-ClientResult Client::Impl::Query(const std::string& query,
-                                 std::chrono::milliseconds timeout) {
+ClientResult Client::Impl::Query(const std::string& query, std::chrono::milliseconds timeout) {
   return DoExecute(query, true, timeout);
 }
 
@@ -256,9 +248,8 @@ ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
   return ClientResult(Status::Error("Max retries exceeded"));
 }
 
-ClientResult Client::Impl::TryExecuteOnServer(
-    const std::string& server, const ClientRequest& req,
-    std::chrono::milliseconds timeout) {
+ClientResult Client::Impl::TryExecuteOnServer(const std::string& server, const ClientRequest& req,
+                                              std::chrono::milliseconds timeout) {
   // Use RpcCall (synchronous) with configurable timeout
   ClientResponse resp;
   auto status = RpcCall(server, req, resp, timeout);
@@ -304,8 +295,7 @@ void Client::Impl::WorkerLoop() {
         auto result = Execute(task.command, task.timeout);
         task.callback(std::move(result));
       } catch (const std::exception& e) {
-        task.callback(ClientResult(
-            Status::Error(std::string("Execute exception: ") + e.what())));
+        task.callback(ClientResult(Status::Error(std::string("Execute exception: ") + e.what())));
       } catch (...) {
         task.callback(ClientResult(Status::Error("Execute unknown exception")));
       }
@@ -323,8 +313,7 @@ void Client::Impl::ExecuteAsync(const std::string& command,
       return;
     }
     // Check queue size limit
-    if (options_.max_async_queue_size > 0 &&
-        task_queue_.size() >= options_.max_async_queue_size) {
+    if (options_.max_async_queue_size > 0 && task_queue_.size() >= options_.max_async_queue_size) {
       callback(ClientResult(Status::Error("Client async queue full")));
       return;
     }
@@ -335,11 +324,9 @@ void Client::Impl::ExecuteAsync(const std::string& command,
 
 // ========== Client Public API ==========
 
-Client::Client(const std::vector<std::string>& servers)
-    : Client(servers, ClientOptions{}) {}
+Client::Client(const std::vector<std::string>& servers) : Client(servers, ClientOptions{}) {}
 
-Client::Client(const std::vector<std::string>& servers,
-               const ClientOptions& options)
+Client::Client(const std::vector<std::string>& servers, const ClientOptions& options)
     : impl_(std::make_unique<Impl>(servers, options)) {}
 
 Client::~Client() = default;
@@ -347,8 +334,7 @@ Client::~Client() = default;
 Client::Client(Client&&) noexcept = default;
 Client& Client::operator=(Client&&) noexcept = default;
 
-ClientResult Client::Execute(const std::string& command,
-                             std::chrono::milliseconds timeout) {
+ClientResult Client::Execute(const std::string& command, std::chrono::milliseconds timeout) {
   return impl_->Execute(command, timeout);
 }
 
@@ -356,8 +342,7 @@ ClientResult Client::Execute(const std::string& command) {
   return Execute(command, std::chrono::milliseconds(5000));
 }
 
-ClientResult Client::Query(const std::string& query,
-                           std::chrono::milliseconds timeout) {
+ClientResult Client::Query(const std::string& query, std::chrono::milliseconds timeout) {
   return impl_->Query(query, timeout);
 }
 
@@ -365,14 +350,12 @@ ClientResult Client::Query(const std::string& query) {
   return Query(query, std::chrono::milliseconds(5000));
 }
 
-void Client::ExecuteAsync(const std::string& command,
-                          std::function<void(ClientResult)> callback,
+void Client::ExecuteAsync(const std::string& command, std::function<void(ClientResult)> callback,
                           std::chrono::milliseconds timeout) {
   impl_->ExecuteAsync(command, std::move(callback), timeout);
 }
 
-void Client::ExecuteAsync(const std::string& command,
-                          std::function<void(ClientResult)> callback) {
+void Client::ExecuteAsync(const std::string& command, std::function<void(ClientResult)> callback) {
   ExecuteAsync(command, std::move(callback), std::chrono::milliseconds(5000));
 }
 

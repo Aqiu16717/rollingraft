@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/metrics.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

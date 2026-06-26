@@ -31,8 +31,7 @@ class MockPersister : public Persister {
 
   Status AppendEntries(const std::vector<RaftLogEntry>& entries) override;
   Status Sync() override;
-  Status GetEntries(uint64_t start, uint64_t end,
-                    std::vector<RaftLogEntry>* out) override;
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override;
   Status GetEntry(uint64_t index, RaftLogEntry& entry) override;
   Status TruncateSuffix(uint64_t from_index) override;
   Status TruncatePrefix(uint64_t before_index) override;

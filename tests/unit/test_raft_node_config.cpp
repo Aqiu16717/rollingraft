@@ -3,9 +3,9 @@
  * @brief Unit tests for RaftNodeConfig::Validate()
  */
 
-#include <gtest/gtest.h>
-
 #include "rollingraft/raft_node.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -233,17 +233,13 @@ TEST_F(RaftNodeConfigValidateTest, ShutdownTimeoutValid) {
 TEST_F(RaftNodeConfigValidateTest, RaftNodeConstructorThrowsOnInvalidConfig) {
   auto config = MakeValidConfig();
   config.listen_addr = "";
-  EXPECT_THROW({
-    RaftNode node(config, nullptr);
-  }, std::invalid_argument);
+  EXPECT_THROW({ RaftNode node(config, nullptr); }, std::invalid_argument);
 }
 
 TEST_F(RaftNodeConfigValidateTest, RaftNodeConstructorThrowsOnNullStateMachine) {
   auto config = MakeValidConfig();
   // Validation passes, but RaftNodeImpl will throw for null state_machine
-  EXPECT_THROW({
-    RaftNode node(config, nullptr);
-  }, std::invalid_argument);
+  EXPECT_THROW({ RaftNode node(config, nullptr); }, std::invalid_argument);
 }
 
 TEST_F(RaftNodeConfigValidateTest, DeadNodeTimeoutDisabled) {

@@ -14,11 +14,11 @@
 #include <future>
 #include <iterator>
 
-#include "group_commit_controller.h"
 #include "rollingraft/logger.h"
 
-#if defined(__unix__) || defined(__unix) || \
-    (defined(__APPLE__) && defined(__MACH__))
+#include "group_commit_controller.h"
+
+#if defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__))
 #define ROLLINGRAFT_POSIX
 #include <sys/statvfs.h>
 #endif
@@ -27,12 +27,11 @@ namespace rollingraft {
 
 namespace {
 // Histogram buckets for fsync latency, in milliseconds.
-constexpr std::array<double, 13> kSyncLatencyBucketsMs = {
-    0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000};
+constexpr std::array<double, 13> kSyncLatencyBucketsMs = {0.5, 1,   2,   5,    10,   25,  50,
+                                                          100, 250, 500, 1000, 2500, 5000};
 }  // namespace
 
-LogPersister::LogPersister(std::shared_ptr<Persister> persister,
-                           LogPersistenceConfig config,
+LogPersister::LogPersister(std::shared_ptr<Persister> persister, LogPersistenceConfig config,
                            MetricsRegistry* metrics)
     : persister_(std::move(persister)),
       config_(config),
@@ -41,8 +40,7 @@ LogPersister::LogPersister(std::shared_ptr<Persister> persister,
   async_state_->persister = persister_;
 
   if (config_.sync_policy != LogPersistenceConfig::SyncPolicy::kSyncEveryWrite) {
-    group_commit_controller_ =
-        std::make_unique<GroupCommitController>(config_, metrics_);
+    group_commit_controller_ = std::make_unique<GroupCommitController>(config_, metrics_);
   }
 }
 
@@ -57,9 +55,8 @@ LogPersister::~LogPersister() {
   // AsyncState holds a shared_ptr<Persister>, so the Persister object
   // stays alive until the last executor lambda releases its reference.
   std::unique_lock<std::mutex> lock(async_state_->cv_mutex);
-  async_state_->cv.wait(lock, [this] {
-    return async_state_->pending_count.load(std::memory_order_acquire) == 0;
-  });
+  async_state_->cv.wait(
+      lock, [this] { return async_state_->pending_count.load(std::memory_order_acquire) == 0; });
 }
 
 void LogPersister::Start() {
@@ -83,8 +80,7 @@ void LogPersister::Start() {
   }
 
   LOG_INFO("LogPersister started (batch_size={}, interval={}ms, sync_policy={})",
-           config_.batch_size, config_.batch_interval_ms,
-           static_cast<int>(config_.sync_policy));
+           config_.batch_size, config_.batch_interval_ms, static_cast<int>(config_.sync_policy));
 }
 
 void LogPersister::Stop() {
@@ -120,8 +116,8 @@ void LogPersister::Stop() {
     }
   }
 
-  LOG_INFO("LogPersister stopped (total_flushed={}, total_ops={})",
-           total_flushed_.load(), total_flush_ops_.load());
+  LOG_INFO("LogPersister stopped (total_flushed={}, total_ops={})", total_flushed_.load(),
+           total_flush_ops_.load());
 }
 
 void LogPersister::Append(const RaftLogEntry& entry, FlushCallback callback) {
@@ -138,8 +134,7 @@ void LogPersister::Append(const RaftLogEntry& entry, FlushCallback callback) {
       }
       LOG_INFO("LogPersister recovered from disk-full state");
     } else {
-      LOG_WARN("LogPersister is unhealthy, dropping append for index {}",
-               entry.index_);
+      LOG_WARN("LogPersister is unhealthy, dropping append for index {}", entry.index_);
       std::string error;
       {
         std::lock_guard<std::mutex> err_lock(error_mutex_);
@@ -165,8 +160,7 @@ void LogPersister::Append(const RaftLogEntry& entry, FlushCallback callback) {
   }
 }
 
-Status LogPersister::AppendSync(const RaftLogEntry& entry,
-                                std::chrono::milliseconds timeout) {
+Status LogPersister::AppendSync(const RaftLogEntry& entry, std::chrono::milliseconds timeout) {
   auto shared_promise = std::make_shared<std::promise<Status>>();
   auto future = shared_promise->get_future();
 
@@ -187,9 +181,8 @@ Status LogPersister::FlushSync(std::chrono::milliseconds timeout) {
 
   // Wait for flush to complete (with timeout)
   std::unique_lock<std::mutex> lock(buffer_mutex_);
-  bool flushed = flush_cv_.wait_for(lock, timeout, [this] {
-    return (buffer_.empty() && !flush_in_progress_) || !healthy_;
-  });
+  bool flushed = flush_cv_.wait_for(
+      lock, timeout, [this] { return (buffer_.empty() && !flush_in_progress_) || !healthy_; });
 
   if (!flushed) {
     return Status::Error("Flush timeout");
@@ -223,8 +216,7 @@ Status LogPersister::TruncatePrefix(uint64_t before_index) {
   return persister_->TruncatePrefix(before_index);
 }
 
-void LogPersister::TruncatePrefixAsync(uint64_t before_index,
-                                       TruncateCallback callback) {
+void LogPersister::TruncatePrefixAsync(uint64_t before_index, TruncateCallback callback) {
   // 1. Check shutdown
   if (async_state_->shutdown.load(std::memory_order_acquire)) {
     if (callback) {
@@ -310,8 +302,8 @@ std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
 
   // Get last log info from persister
   auto [last_index, last_term] = persister_->GetLastLogInfo();
-  LOG_INFO("Restoring logs from {} to {} (last_index={}, last_term={})",
-           start_index, last_index, last_index, last_term);
+  LOG_INFO("Restoring logs from {} to {} (last_index={}, last_term={})", start_index, last_index,
+           last_index, last_term);
 
   if (last_index < start_index) {
     // Nothing to restore
@@ -320,16 +312,14 @@ std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
 
   // Read entries in batches to avoid memory issues
   const size_t kBatchSize = 1000;
-  for (uint64_t batch_start = start_index; batch_start <= last_index;
-       batch_start += kBatchSize) {
+  for (uint64_t batch_start = start_index; batch_start <= last_index; batch_start += kBatchSize) {
     uint64_t batch_end = std::min(batch_start + kBatchSize, last_index + 1);
 
     std::vector<RaftLogEntry> batch;
     auto status = persister_->GetEntries(batch_start, batch_end, &batch);
 
     if (!status.ok()) {
-      LOG_ERROR("Failed to restore entries [{}-{}): {}", batch_start, batch_end,
-                status.ToString());
+      LOG_ERROR("Failed to restore entries [{}-{}): {}", batch_start, batch_end, status.ToString());
       break;
     }
 
@@ -392,9 +382,8 @@ void LogPersister::BackgroundFlushLoop() {
 
     // Wait until we need to flush (timeout or notification)
     auto timeout = std::chrono::milliseconds(config_.batch_interval_ms);
-    flush_cv_.wait_for(lock, timeout, [this] {
-      return !running_ || buffer_.size() >= config_.batch_size;
-    });
+    flush_cv_.wait_for(lock, timeout,
+                       [this] { return !running_ || buffer_.size() >= config_.batch_size; });
 
     // Release lock before flushing
     lock.unlock();
@@ -440,14 +429,11 @@ void LogPersister::BackgroundSyncLoop() {
       sync_status = persister_->Sync();
       auto t1 = std::chrono::steady_clock::now();
       if (metrics_) {
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-                              t1 - t0)
-                              .count() /
-                          1000.0;
+        auto elapsed_ms =
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
         metrics_
             ->GetHistogram("raft_log_persister_sync_latency_ms",
-                           {kSyncLatencyBucketsMs.begin(),
-                            kSyncLatencyBucketsMs.end()})
+                           {kSyncLatencyBucketsMs.begin(), kSyncLatencyBucketsMs.end()})
             .Observe(elapsed_ms);
       }
     }
@@ -461,8 +447,7 @@ void LogPersister::BackgroundSyncLoop() {
         std::lock_guard<std::mutex> err_lock(error_mutex_);
         last_error_ = sync_status.ToString();
       }
-      LOG_ERROR("LogPersister group commit sync failed: {}",
-                sync_status.ToString());
+      LOG_ERROR("LogPersister group commit sync failed: {}", sync_status.ToString());
     }
 
     // Wake any thread waiting for durability (e.g., Sync()).
@@ -524,8 +509,7 @@ bool LogPersister::DoFlush() {
   // Write to storage
   auto status = WriteBatch(entries);
   if (!status.ok()) {
-    LOG_ERROR("Failed to flush {} entries: {}", entries.size(),
-              status.ToString());
+    LOG_ERROR("Failed to flush {} entries: {}", entries.size(), status.ToString());
     {
       std::lock_guard<std::mutex> err_lock(error_mutex_);
       last_error_ = status.ToString();
@@ -575,8 +559,8 @@ bool LogPersister::DoFlush() {
     }
 
     Status register_error;
-    auto epoch = group_commit_controller_->RegisterFlushedBatch(
-        entries.size(), byte_size, durable_callbacks, register_error);
+    auto epoch = group_commit_controller_->RegisterFlushedBatch(entries.size(), byte_size,
+                                                                durable_callbacks, register_error);
 
     // Wake sync thread in case thresholds are reached.
     sync_cv_.notify_all();
@@ -602,14 +586,11 @@ bool LogPersister::DoFlush() {
       auto sync_status = persister_->Sync();
       auto t1 = std::chrono::steady_clock::now();
       if (metrics_) {
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-                              t1 - t0)
-                              .count() /
-                          1000.0;
+        auto elapsed_ms =
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
         metrics_
             ->GetHistogram("raft_log_persister_sync_latency_ms",
-                           {kSyncLatencyBucketsMs.begin(),
-                            kSyncLatencyBucketsMs.end()})
+                           {kSyncLatencyBucketsMs.begin(), kSyncLatencyBucketsMs.end()})
             .Observe(elapsed_ms);
       }
       if (!sync_status.ok()) {
@@ -651,8 +632,7 @@ bool LogPersister::DoFlush() {
     flush_in_progress_ = false;
   }
 
-  LOG_DEBUG("Flushed {} log entries (total_flushed={})", entries.size(),
-            total_flushed_.load());
+  LOG_DEBUG("Flushed {} log entries (total_flushed={})", entries.size(), total_flushed_.load());
 
   // Wake up any threads waiting for buffer to drain (e.g. FlushSync)
   flush_cv_.notify_all();
@@ -683,12 +663,10 @@ Status LogPersister::CheckDiskSpace() {
     return Status::Error("Cannot check disk space for " + config_.data_dir);
   }
 
-  uint64_t available =
-      static_cast<uint64_t>(buf.f_bavail) * static_cast<uint64_t>(buf.f_frsize);
+  uint64_t available = static_cast<uint64_t>(buf.f_bavail) * static_cast<uint64_t>(buf.f_frsize);
   if (available < config_.min_disk_space_bytes) {
-    return Status::Error(
-        "Insufficient disk space: available=" + std::to_string(available) +
-        " required=" + std::to_string(config_.min_disk_space_bytes));
+    return Status::Error("Insufficient disk space: available=" + std::to_string(available) +
+                         " required=" + std::to_string(config_.min_disk_space_bytes));
   }
 #endif
   return Status::OK();

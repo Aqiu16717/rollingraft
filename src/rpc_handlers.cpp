@@ -1,13 +1,12 @@
+#include <fstream>
+
 #include "json_protocol.h"
 #include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
-#include <fstream>
-
 using namespace rollingraft;
 
-void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
-                                               const std::string& data,
+void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::string& data,
                                                std::string& response) {
   // First, peek at the message type to dispatch to the correct handler
   // We need to deserialize based on the type field in the JSON
@@ -27,8 +26,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         RequestVoteRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize RequestVoteRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize RequestVoteRequest: {}", status.ToString());
           return;
         }
         RequestVoteResponse resp;
@@ -36,8 +34,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandleRequestVote(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize RequestVoteResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize RequestVoteResponse: {}", status.ToString());
           return;
         }
         break;
@@ -47,8 +44,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         AppendEntriesRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize AppendEntriesRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize AppendEntriesRequest: {}", status.ToString());
           return;
         }
         AppendEntriesResponse resp;
@@ -56,8 +52,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandleAppendEntries(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize AppendEntriesResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize AppendEntriesResponse: {}", status.ToString());
           return;
         }
         break;
@@ -67,8 +62,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         InstallSnapshotRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize InstallSnapshotRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize InstallSnapshotRequest: {}", status.ToString());
           return;
         }
         InstallSnapshotResponse resp;
@@ -76,8 +70,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandleInstallSnapshot(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize InstallSnapshotResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize InstallSnapshotResponse: {}", status.ToString());
           return;
         }
         break;
@@ -87,8 +80,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         ClientRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize ClientRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize ClientRequest: {}", status.ToString());
           return;
         }
         ClientResponse resp;
@@ -96,8 +88,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandleClientRequest(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize ClientResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize ClientResponse: {}", status.ToString());
           return;
         }
         break;
@@ -107,8 +98,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         PreVoteRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize PreVoteRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize PreVoteRequest: {}", status.ToString());
           return;
         }
         PreVoteResponse resp;
@@ -116,8 +106,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandlePreVote(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize PreVoteResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize PreVoteResponse: {}", status.ToString());
           return;
         }
         break;
@@ -127,8 +116,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         ReadIndexRequest req;
         auto status = protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
-          LOG_ERROR("Failed to deserialize ReadIndexRequest: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to deserialize ReadIndexRequest: {}", status.ToString());
           return;
         }
         ReadIndexResponse resp;
@@ -136,8 +124,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/,
         HandleReadIndexRequest(req, resp);
         status = protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
-          LOG_ERROR("Failed to serialize ReadIndexResponse: {}",
-                    status.ToString());
+          LOG_ERROR("Failed to serialize ReadIndexResponse: {}", status.ToString());
           return;
         }
         break;
@@ -162,8 +149,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_requestvote_received_total",
-                     {{"node_id", std::to_string(server_id_)}})
+        ->GetCounter("raft_requestvote_received_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -175,8 +161,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
   // Reject stale term requests
   if (req.term_ < current_term_) {
-    LOG_DEBUG("Node {} reject vote: req.term {} < {}", server_id_, req.term_,
-              current_term_);
+    LOG_DEBUG("Node {} reject vote: req.term {} < {}", server_id_, req.term_, current_term_);
     return;
   }
 
@@ -184,8 +169,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   {
     std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
     if (!cluster_config_.IsVoter(req.candidate_id_)) {
-      LOG_DEBUG("Node {} reject vote: candidate {} is not a voter",
-                server_id_, req.candidate_id_);
+      LOG_DEBUG("Node {} reject vote: candidate {} is not a voter", server_id_, req.candidate_id_);
       return;
     }
   }
@@ -193,9 +177,8 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   // Check if log is at least as up-to-date
   auto [last_index, last_term] = log_.GetLastLogInfo();
 
-  bool log_is_up_to_date =
-      (req.last_log_term_ > last_term) ||
-      (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
+  bool log_is_up_to_date = (req.last_log_term_ > last_term) ||
+                           (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
 
   if (!log_is_up_to_date) {
     LOG_DEBUG("Node {} reject vote: candidate log not up-to-date", server_id_);
@@ -207,13 +190,12 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   // This prevents disruptive nodes from triggering unnecessary elections.
   if (check_quorum_enabled_) {
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - last_leader_contact_).count();
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_leader_contact_).count();
     auto cfg = runtime_config_->Get();
-    if (elapsed >= 0 &&
-        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
-      LOG_INFO("Node {} reject vote: leader contact {}ms ago (< {}ms)",
-               server_id_, elapsed, cfg.election_timeout_ms);
+    if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+      LOG_INFO("Node {} reject vote: leader contact {}ms ago (< {}ms)", server_id_, elapsed,
+               cfg.election_timeout_ms);
       return;
     }
   }
@@ -222,9 +204,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_votes_granted_total",
-                       {{"node_id", std::to_string(server_id_)}})
+      metrics_->GetCounter("raft_votes_granted_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
     resp.vote_granted_ = true;
@@ -236,20 +216,17 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     if (persister_) {
       auto persist_status = persister_->SaveState({current_term_, voted_for_});
       if (!persist_status.ok()) {
-        LOG_ERROR("Node {} failed to persist vote: {}", server_id_,
-                  persist_status.GetMessage());
+        LOG_ERROR("Node {} failed to persist vote: {}", server_id_, persist_status.GetMessage());
         resp.vote_granted_ = false;
         return;
       }
     }
 
-    LOG_INFO("Node {} voted for {} at term {}", server_id_, req.candidate_id_,
-             current_term_);
+    LOG_INFO("Node {} voted for {} at term {}", server_id_, req.candidate_id_, current_term_);
   }
 }
 
-void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
-                                           PreVoteResponse& resp) {
+void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req, PreVoteResponse& resp) {
   std::lock_guard<std::mutex> lock(election_mtx_);
 
   resp.term_ = current_term_;
@@ -263,8 +240,7 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
   // - Otherwise grants pre-vote (does NOT modify voted_for or persist)
 
   if (req.term_ <= current_term_) {
-    LOG_DEBUG("Node {} reject PreVote: req.term {} <= {}", server_id_,
-              req.term_, current_term_);
+    LOG_DEBUG("Node {} reject PreVote: req.term {} <= {}", server_id_, req.term_, current_term_);
     return;
   }
 
@@ -272,8 +248,8 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
   {
     std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
     if (!cluster_config_.IsVoter(req.candidate_id_)) {
-      LOG_DEBUG("Node {} reject PreVote: candidate {} is not a voter",
-                server_id_, req.candidate_id_);
+      LOG_DEBUG("Node {} reject PreVote: candidate {} is not a voter", server_id_,
+                req.candidate_id_);
       return;
     }
   }
@@ -281,13 +257,11 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
   // Check if log is at least as up-to-date
   auto [last_index, last_term] = log_.GetLastLogInfo();
 
-  bool log_is_up_to_date =
-      (req.last_log_term_ > last_term) ||
-      (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
+  bool log_is_up_to_date = (req.last_log_term_ > last_term) ||
+                           (req.last_log_term_ == last_term && req.last_log_index_ >= last_index);
 
   if (!log_is_up_to_date) {
-    LOG_DEBUG("Node {} reject PreVote: candidate log not up-to-date",
-              server_id_);
+    LOG_DEBUG("Node {} reject PreVote: candidate log not up-to-date", server_id_);
     return;
   }
 
@@ -295,24 +269,23 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req,
   // timeout, reject pre-vote (even though req.term > current_term).
   if (check_quorum_enabled_) {
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - last_leader_contact_).count();
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_leader_contact_).count();
     auto cfg = runtime_config_->Get();
-    if (elapsed >= 0 &&
-        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
-      LOG_INFO("Node {} reject PreVote: leader contact {}ms ago (< {}ms)",
-               server_id_, elapsed, cfg.election_timeout_ms);
+    if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+      LOG_INFO("Node {} reject PreVote: leader contact {}ms ago (< {}ms)", server_id_, elapsed,
+               cfg.election_timeout_ms);
       return;
     }
   }
 
   resp.vote_granted_ = true;
-  LOG_INFO("Node {} granted PreVote to {} at term {} (req_term={})",
-           server_id_, req.candidate_id_, current_term_, req.term_);
+  LOG_INFO("Node {} granted PreVote to {} at term {} (req_term={})", server_id_, req.candidate_id_,
+           current_term_, req.term_);
 }
 
-void RaftNode::RaftNodeImpl::HandleAppendEntries(
-    const AppendEntriesRequest& req, AppendEntriesResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req,
+                                                 AppendEntriesResponse& resp) {
   // Phase 1: Election state check under election_mtx_ only.
   {
     std::lock_guard<std::mutex> lock_e(election_mtx_);
@@ -339,8 +312,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
 
     // Reject stale term leader
     if (req.term_ < current_term_) {
-      LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_,
-                req.term_, current_term_);
+      LOG_DEBUG("Node {} reject AppendEntries: req.term {} < {}", server_id_, req.term_,
+                current_term_);
       return;
     }
 
@@ -371,9 +344,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
     if (req.prev_log_index_ > 0) {
       Term prev_term = GetLogTermLocked(req.prev_log_index_);
       if (prev_term != req.prev_log_term_) {
-        LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}",
-                  server_id_, req.prev_log_index_, prev_term,
-                  req.prev_log_term_);
+        LOG_DEBUG("Node {} log mismatch at index {}: local={}, remote={}", server_id_,
+                  req.prev_log_index_, prev_term, req.prev_log_term_);
         resp.conflict_index_ = req.prev_log_index_;
         return;
       }
@@ -385,8 +357,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
       for (const auto& entry : req.entries_) {
         Term existing_term = GetLogTermLocked(entry.index_);
         if (existing_term != 0 && existing_term != entry.term_) {
-          LOG_INFO("Node {} truncating log from index {}", server_id_,
-                   entry.index_);
+          LOG_INFO("Node {} truncating log from index {}", server_id_, entry.index_);
           log_.TruncateSuffix(entry.index_);
           break;
         }
@@ -401,8 +372,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
         auto [idx, status] = log_.Append(entry.term_, entry.data_);
         (void)idx;
         if (!status.ok()) {
-          LOG_ERROR("Node {} failed to append entry: {}", server_id_,
-                    status.ToString());
+          LOG_ERROR("Node {} failed to append entry: {}", server_id_, status.ToString());
           return;
         }
 
@@ -426,8 +396,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(
   }
 }
 
-void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
-    const InstallSnapshotRequest& req, InstallSnapshotResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest& req,
+                                                   InstallSnapshotResponse& resp) {
   // Phase 1: Election state check under election_mtx_ only.
   {
     std::lock_guard<std::mutex> lock_e(election_mtx_);
@@ -436,15 +406,14 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
     // Term check: reject stale leader
     if (req.term_ < current_term_) {
-      LOG_DEBUG("Node {} reject InstallSnapshot: req.term {} < {}", server_id_,
-                req.term_, current_term_);
+      LOG_DEBUG("Node {} reject InstallSnapshot: req.term {} < {}", server_id_, req.term_,
+                current_term_);
       return;
     }
 
     // Higher term: revert to follower
     if (req.term_ > current_term_) {
-      LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_,
-               current_term_, req.term_);
+      LOG_INFO("Node {} term {} < {}, reverting to Follower", server_id_, current_term_, req.term_);
       BecomeFollowerLocked(req.term_);
       resp.term_ = current_term_;
     }
@@ -464,8 +433,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
 
     if (metrics_) {
       metrics_
-          ->GetCounter("raft_snapshots_received_total",
-                       {{"node_id", std::to_string(server_id_)}})
+          ->GetCounter("raft_snapshots_received_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
   }
@@ -480,52 +448,44 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
     // snapshots (P0 Phase 2 streaming fix).
     if (req.offset_ == 0) {
       // New snapshot transfer: create temp file
-      snapshot_temp_path_ = "/tmp/rollingraft_snapshot_" +
-                            std::to_string(server_id_) + "_" +
+      snapshot_temp_path_ = "/tmp/rollingraft_snapshot_" + std::to_string(server_id_) + "_" +
                             std::to_string(req.last_included_index_) + "_" +
                             std::to_string(req.last_included_term_);
-      std::ofstream ofs(snapshot_temp_path_,
-                        std::ios::binary | std::ios::trunc);
+      std::ofstream ofs(snapshot_temp_path_, std::ios::binary | std::ios::trunc);
       if (!ofs) {
-        LOG_ERROR("Node {} failed to create snapshot temp file: {}",
-                  server_id_, snapshot_temp_path_);
+        LOG_ERROR("Node {} failed to create snapshot temp file: {}", server_id_,
+                  snapshot_temp_path_);
         return;
       }
-      LOG_INFO("Node {} starting snapshot receive: index={}, term={}",
-               server_id_, req.last_included_index_, req.last_included_term_);
+      LOG_INFO("Node {} starting snapshot receive: index={}, term={}", server_id_,
+               req.last_included_index_, req.last_included_term_);
     }
 
     // Append chunk to temp file
     {
-      std::ofstream ofs(snapshot_temp_path_,
-                        std::ios::binary | std::ios::app);
+      std::ofstream ofs(snapshot_temp_path_, std::ios::binary | std::ios::app);
       if (!ofs) {
-        LOG_ERROR("Node {} failed to open snapshot temp file: {}",
-                  server_id_, snapshot_temp_path_);
+        LOG_ERROR("Node {} failed to open snapshot temp file: {}", server_id_, snapshot_temp_path_);
         return;
       }
       ofs.write(req.data_.data(), req.data_.size());
       if (!ofs) {
-        LOG_ERROR("Node {} failed to write snapshot chunk to temp file",
-                  server_id_);
+        LOG_ERROR("Node {} failed to write snapshot chunk to temp file", server_id_);
         return;
       }
     }
-    LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}",
-              server_id_, req.offset_, req.data_.size(), req.done_);
+    LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}", server_id_,
+              req.offset_, req.data_.size(), req.done_);
 
     // Final chunk: restore state machine and persist
     if (req.done_) {
       try {
         // Get file size for logging
-        std::ifstream ifs_size(snapshot_temp_path_,
-                               std::ios::binary | std::ios::ate);
+        std::ifstream ifs_size(snapshot_temp_path_, std::ios::binary | std::ios::ate);
         auto file_size = static_cast<int64_t>(ifs_size.tellg());
 
-        LOG_INFO(
-            "Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-            server_id_, file_size, req.last_included_index_,
-            req.last_included_term_);
+        LOG_INFO("Node {} restoring from snapshot: {} bytes, up to index {} term {}", server_id_,
+                 file_size, req.last_included_index_, req.last_included_term_);
 
         // Restore state machine via streaming interface
         auto restore_ifs = std::make_shared<std::ifstream>();
@@ -559,99 +519,94 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
           return;
         }
 
-      // Update log: discard all entries covered by snapshot
-      uint64_t old_first_index = log_.GetFirstIndex();
-      log_.SetStartIndex(req.last_included_index_ + 1);
-      last_snapshot_index_ = req.last_included_index_;
+        // Update log: discard all entries covered by snapshot
+        uint64_t old_first_index = log_.GetFirstIndex();
+        log_.SetStartIndex(req.last_included_index_ + 1);
+        last_snapshot_index_ = req.last_included_index_;
 
-      // Schedule async truncation of persisted log after releasing locks.
-      // TruncatePrefix I/O can be slow; performing it asynchronously prevents
-      // blocking the Raft event loop while holding manager locks.
-      if (log_persister_) {
-        NodeId my_id = server_id_;
-        log_persister_->TruncatePrefixAsync(
-            req.last_included_index_ + 1, [my_id](Status status) {
-              if (!status.ok()) {
-                LOG_WARN("Node {} async truncate failed after snapshot: {}",
-                         my_id, status.ToString());
-              }
-            });
-      }
+        // Schedule async truncation of persisted log after releasing locks.
+        // TruncatePrefix I/O can be slow; performing it asynchronously prevents
+        // blocking the Raft event loop while holding manager locks.
+        if (log_persister_) {
+          NodeId my_id = server_id_;
+          log_persister_->TruncatePrefixAsync(req.last_included_index_ + 1, [my_id](Status status) {
+            if (!status.ok()) {
+              LOG_WARN("Node {} async truncate failed after snapshot: {}", my_id,
+                       status.ToString());
+            }
+          });
+        }
 
-      if (metrics_) {
-        metrics_
-            ->GetCounter("raft_log_compactions_total",
-                         {{"node_id", std::to_string(server_id_)},
-                          {"trigger", "snapshot"}})
-            .Increment();
-        if (req.last_included_index_ >= old_first_index) {
-          uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+        if (metrics_) {
           metrics_
-              ->GetCounter("raft_log_entries_compacted_total",
-                           {{"node_id", std::to_string(server_id_)}})
-              .Increment(compacted);
-        }
-      }
-
-      // Update indices
-      last_applied_.store(req.last_included_index_, std::memory_order_release);
-      commit_index_ = req.last_included_index_;
-
-      // Clear async apply queue — entries covered by snapshot are obsolete
-      {
-        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
-        apply_queue_.clear();
-        last_enqueued_ = req.last_included_index_;
-      }
-
-      // Persist snapshot if persister available
-      if (persister_) {
-        auto persist_ifs = std::make_shared<std::ifstream>();
-        auto persist_initialized = std::make_shared<bool>(false);
-        auto persist_provider = [&](std::string& chunk) -> bool {
-          if (!*persist_initialized) {
-            persist_ifs->open(snapshot_temp_path_, std::ios::binary);
-            *persist_initialized = true;
+              ->GetCounter("raft_log_compactions_total",
+                           {{"node_id", std::to_string(server_id_)}, {"trigger", "snapshot"}})
+              .Increment();
+          if (req.last_included_index_ >= old_first_index) {
+            uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+            metrics_
+                ->GetCounter("raft_log_entries_compacted_total",
+                             {{"node_id", std::to_string(server_id_)}})
+                .Increment(compacted);
           }
-          if (!*persist_ifs) return false;
-          constexpr size_t kChunkSize = 64 * 1024;
-          chunk.resize(kChunkSize);
-          persist_ifs->read(chunk.data(), kChunkSize);
-          auto bytes_read = persist_ifs->gcount();
-          if (bytes_read <= 0) {
-            persist_ifs->close();
-            *persist_initialized = false;
-            return false;
+        }
+
+        // Update indices
+        last_applied_.store(req.last_included_index_, std::memory_order_release);
+        commit_index_ = req.last_included_index_;
+
+        // Clear async apply queue — entries covered by snapshot are obsolete
+        {
+          std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+          apply_queue_.clear();
+          last_enqueued_ = req.last_included_index_;
+        }
+
+        // Persist snapshot if persister available
+        if (persister_) {
+          auto persist_ifs = std::make_shared<std::ifstream>();
+          auto persist_initialized = std::make_shared<bool>(false);
+          auto persist_provider = [&](std::string& chunk) -> bool {
+            if (!*persist_initialized) {
+              persist_ifs->open(snapshot_temp_path_, std::ios::binary);
+              *persist_initialized = true;
+            }
+            if (!*persist_ifs) return false;
+            constexpr size_t kChunkSize = 64 * 1024;
+            chunk.resize(kChunkSize);
+            persist_ifs->read(chunk.data(), kChunkSize);
+            auto bytes_read = persist_ifs->gcount();
+            if (bytes_read <= 0) {
+              persist_ifs->close();
+              *persist_initialized = false;
+              return false;
+            }
+            chunk.resize(bytes_read);
+            return true;
+          };
+          auto status = persister_->SaveSnapshotStream(persist_provider, req.last_included_index_,
+                                                       req.last_included_term_);
+          if (!status.ok()) {
+            LOG_WARN("Node {} failed to persist snapshot: {}", server_id_, status.ToString());
+            // Non-fatal: we can continue, snapshot will be resent if needed
           }
-          chunk.resize(bytes_read);
-          return true;
-        };
-        auto status = persister_->SaveSnapshotStream(
-            persist_provider, req.last_included_index_,
-            req.last_included_term_);
-        if (!status.ok()) {
-          LOG_WARN("Node {} failed to persist snapshot: {}", server_id_,
-                   status.ToString());
-          // Non-fatal: we can continue, snapshot will be resent if needed
         }
-      }
 
-      // Clean up temp file
-      if (!snapshot_temp_path_.empty()) {
-        if (std::remove(snapshot_temp_path_.c_str()) != 0) {
-          LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
-                   snapshot_temp_path_);
+        // Clean up temp file
+        if (!snapshot_temp_path_.empty()) {
+          if (std::remove(snapshot_temp_path_.c_str()) != 0) {
+            LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
+                     snapshot_temp_path_);
+          }
+          snapshot_temp_path_.clear();
         }
-        snapshot_temp_path_.clear();
-      }
 
-      LOG_INFO(
-          "Node {} successfully restored from snapshot, log start={}, "
-          "commit_index={}",
-          server_id_, log_.GetFirstIndex(), commit_index_);
+        LOG_INFO(
+            "Node {} successfully restored from snapshot, log start={}, "
+            "commit_index={}",
+            server_id_, log_.GetFirstIndex(), commit_index_);
       } catch (const std::exception& e) {
-        LOG_ERROR("Node {} exception during snapshot restore: {}", server_id_,
-                  e.what());
+        LOG_ERROR("Node {} exception during snapshot restore: {}", server_id_, e.what());
         if (!snapshot_temp_path_.empty()) {
           if (std::remove(snapshot_temp_path_.c_str()) != 0) {
             LOG_WARN("Node {} failed to remove temp snapshot file: {}", server_id_,
@@ -665,8 +620,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(
   }
 }
 
-void RaftNode::RaftNodeImpl::HandleReadIndexRequest(
-    const ReadIndexRequest& /*req*/, ReadIndexResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleReadIndexRequest(const ReadIndexRequest& /*req*/,
+                                                    ReadIndexResponse& resp) {
   std::lock_guard<std::mutex> lock_e(election_mtx_);
 
   RecordActivityLocked();
@@ -685,8 +640,7 @@ void RaftNode::RaftNodeImpl::HandleReadIndexRequest(
   }
 }
 
-void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
-                                                 ClientResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req, ClientResponse& resp) {
   // Bridge pattern: election_mtx_ -> replication_mtx_
   std::unique_lock<std::mutex> lock_e(election_mtx_);
   std::unique_lock<std::mutex> lock_r(replication_mtx_);
@@ -712,9 +666,7 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     std::promise<void> read_promise;
     auto future = read_promise.get_future();
 
-    auto status = ReadIndex([&read_promise]() {
-      read_promise.set_value();
-    });
+    auto status = ReadIndex([&read_promise]() { read_promise.set_value(); });
 
     if (!status.ok()) {
       lock_e.lock();
@@ -729,8 +681,8 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     }
 
     // Wait for ReadIndex with timeout (use rpc_timeout_ms)
-    auto wait_status = future.wait_for(
-        std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
+    auto wait_status =
+        future.wait_for(std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
 
     lock_e.lock();
     lock_r.lock();
@@ -742,10 +694,8 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     }
 
     // ReadIndex completed: commit_index has been applied, safe to query.
-    auto query_result = state_machine_->Query(
-        std::span<const uint8_t>(
-            reinterpret_cast<const uint8_t*>(req.command.data()),
-            req.command.size()));
+    auto query_result = state_machine_->Query(std::span<const uint8_t>(
+        reinterpret_cast<const uint8_t*>(req.command.data()), req.command.size()));
 
     resp.success = query_result.success;
     resp.response = query_result.response;
@@ -767,8 +717,8 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.last_applied_index = session.last_index;
     resp.leader_id = server_id_;
     resp.leader_addr = config_.listen_addr;
-    LOG_INFO("Client {} seq {} is old (last={}), returning cached result",
-             req.client_id, req.seq, session.last_seq);
+    LOG_INFO("Client {} seq {} is old (last={}), returning cached result", req.client_id, req.seq,
+             session.last_seq);
     return;
   }
 
@@ -779,8 +729,7 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req,
     resp.last_applied_index = session.last_index;
     resp.leader_id = server_id_;
     resp.leader_addr = config_.listen_addr;
-    LOG_INFO("Client {} seq {} is duplicate, returning cached result",
-             req.client_id, req.seq);
+    LOG_INFO("Client {} seq {} is duplicate, returning cached result", req.client_id, req.seq);
     return;
   }
 

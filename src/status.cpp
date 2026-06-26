@@ -78,8 +78,7 @@ std::string Status::ToString() const {
         type = "NotLeader: ";
         break;
       default:
-        std::snprintf(tmp, sizeof(tmp),
-                      "Unknown code(%d): ", static_cast<int>(code()));
+        std::snprintf(tmp, sizeof(tmp), "Unknown code(%d): ", static_cast<int>(code()));
         type = tmp;
         break;
     }

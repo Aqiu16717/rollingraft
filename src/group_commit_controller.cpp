@@ -21,44 +21,36 @@ using std::chrono::steady_clock;
 }  // namespace
 
 GroupCommitController::GroupCommitController(
-    const LogPersistenceConfig& config,
-    MetricsRegistry* metrics,
+    const LogPersistenceConfig& config, MetricsRegistry* metrics,
     const std::map<std::string, std::string>& metric_labels)
     : config_(config),
       metrics_(metrics),
       metric_labels_(metric_labels),
       last_sync_time_(steady_clock::now()) {}
 
-uint64_t GroupCommitController::RegisterFlushedBatch(
-    size_t entry_count,
-    size_t byte_size,
-    std::vector<DurableCallback>& callbacks,
-    Status& error) {
+uint64_t GroupCommitController::RegisterFlushedBatch(size_t entry_count, size_t byte_size,
+                                                     std::vector<DurableCallback>& callbacks,
+                                                     Status& error) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!healthy_) {
-    error = last_error_.ok() ? Status::Error("Group commit controller is unhealthy")
-                             : last_error_;
+    error = last_error_.ok() ? Status::Error("Group commit controller is unhealthy") : last_error_;
     return 0;
   }
 
   uint64_t epoch = next_epoch_++;
-  pending_.push_back(PendingEpoch{epoch,
-                                  entry_count,
-                                  byte_size,
-                                  steady_clock::now(),
-                                  std::move(callbacks)});
+  pending_.push_back(
+      PendingEpoch{epoch, entry_count, byte_size, steady_clock::now(), std::move(callbacks)});
 
   UpdateMetricsLocked();
 
-  LOG_DEBUG("GroupCommit: registered epoch={}, entries={}, bytes={}, pending={}",
-            epoch, entry_count, byte_size, pending_.size());
+  LOG_DEBUG("GroupCommit: registered epoch={}, entries={}, bytes={}, pending={}", epoch,
+            entry_count, byte_size, pending_.size());
 
   return epoch;
 }
 
-std::optional<std::pair<uint64_t, uint64_t>>
-GroupCommitController::AcquireSyncRange() {
+std::optional<std::pair<uint64_t, uint64_t>> GroupCommitController::AcquireSyncRange() {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!healthy_) {
@@ -89,8 +81,8 @@ void GroupCommitController::OnSyncSuccess(uint64_t end_epoch) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (sync_in_progress_end_ == 0 || end_epoch != sync_in_progress_end_) {
-      LOG_WARN("GroupCommit: unexpected OnSyncSuccess({}), in_progress_end={}",
-               end_epoch, sync_in_progress_end_);
+      LOG_WARN("GroupCommit: unexpected OnSyncSuccess({}), in_progress_end={}", end_epoch,
+               sync_in_progress_end_);
       return;
     }
 
@@ -114,8 +106,8 @@ void GroupCommitController::OnSyncSuccess(uint64_t end_epoch) {
 
     UpdateMetricsLocked();
 
-    LOG_DEBUG("GroupCommit: sync success up to epoch={}, durable_epoch={}",
-              end_epoch, durable_epoch_);
+    LOG_DEBUG("GroupCommit: sync success up to epoch={}, durable_epoch={}", end_epoch,
+              durable_epoch_);
   }
 
   for (auto& [callbacks, status] : to_fire) {
@@ -134,8 +126,8 @@ void GroupCommitController::OnSyncFailure(uint64_t end_epoch, Status error) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (sync_in_progress_end_ == 0 || end_epoch != sync_in_progress_end_) {
-      LOG_WARN("GroupCommit: unexpected OnSyncFailure({}), in_progress_end={}",
-               end_epoch, sync_in_progress_end_);
+      LOG_WARN("GroupCommit: unexpected OnSyncFailure({}), in_progress_end={}", end_epoch,
+               sync_in_progress_end_);
       return;
     }
 
@@ -144,8 +136,7 @@ void GroupCommitController::OnSyncFailure(uint64_t end_epoch, Status error) {
     sync_in_progress_end_ = 0;
     sync_requested_ = false;
 
-    LOG_ERROR("GroupCommit: sync failed at epoch={}, error={}", end_epoch,
-              error.ToString());
+    LOG_ERROR("GroupCommit: sync failed at epoch={}, error={}", end_epoch, error.ToString());
 
     while (!pending_.empty()) {
       auto& front = pending_.front();
@@ -165,8 +156,7 @@ void GroupCommitController::OnSyncFailure(uint64_t end_epoch, Status error) {
   }
 }
 
-bool GroupCommitController::ShouldSyncNow(
-    std::chrono::steady_clock::time_point now) const {
+bool GroupCommitController::ShouldSyncNow(std::chrono::steady_clock::time_point now) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!healthy_ || pending_.empty() || sync_in_progress_end_ != 0) {
@@ -220,8 +210,7 @@ std::chrono::milliseconds GroupCommitController::NextSyncDelay(
   }
 
   auto elapsed = duration_cast<milliseconds>(now - last_sync_time_).count();
-  int64_t remaining =
-      static_cast<int64_t>(config_.group_commit_interval_ms) - elapsed;
+  int64_t remaining = static_cast<int64_t>(config_.group_commit_interval_ms) - elapsed;
   if (remaining <= 0) {
     return std::chrono::milliseconds(0);
   }

@@ -164,8 +164,7 @@ class WALPersister {
    * @param out Output vector for entries
    * @return Status::OK() on success
    */
-  Status GetEntries(uint64_t start, uint64_t end,
-                    std::vector<RaftLogEntry>* out);
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out);
 
  private:
   // Segment file format constants
@@ -204,17 +203,13 @@ class WALPersister {
     bool Empty() const { return entries_.empty(); }
     size_t Size() const { return entries_.size(); }
     uint64_t FirstIndex() const { return first_index_; }
-    uint64_t LastIndex() const {
-      return entries_.empty() ? 0 : first_index_ + entries_.size() - 1;
-    }
+    uint64_t LastIndex() const { return entries_.empty() ? 0 : first_index_ + entries_.size() - 1; }
 
     const WALIndexEntry* Get(uint64_t index) const {
-      if (entries_.empty() || index < first_index_ ||
-          index > LastIndex()) {
+      if (entries_.empty() || index < first_index_ || index > LastIndex()) {
         return nullptr;
       }
-      const WALIndexEntry* e =
-          &entries_[static_cast<size_t>(index - first_index_)];
+      const WALIndexEntry* e = &entries_[static_cast<size_t>(index - first_index_)];
       // segment_id == 0 means a placeholder slot (gap).
       return e->segment_id == 0 ? nullptr : e;
     }
@@ -225,9 +220,7 @@ class WALPersister {
     void Clear();
 
     const WALIndexEntry* begin() const { return entries_.data(); }
-    const WALIndexEntry* end() const {
-      return entries_.data() + entries_.size();
-    }
+    const WALIndexEntry* end() const { return entries_.data() + entries_.size(); }
 
     const std::vector<WALIndexEntry>& Entries() const { return entries_; }
 
@@ -266,16 +259,13 @@ class WALPersister {
   Status OpenSegment(uint64_t segment_id, int* fd);
   Status CreateSegment(uint64_t segment_id);
   Status CloseSegment(Segment* seg);
-  Status ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
-                        RaftLogEntry& entry);
+  Status ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset, RaftLogEntry& entry);
   Status WriteSegmentHeader(int fd, uint64_t segment_id,
                             uint16_t format_version = kFormatVersionProtobuf);
-  Status WriteRecord(int fd, WALRecordType type, const std::string& payload,
-                     uint64_t* out_offset);
+  Status WriteRecord(int fd, WALRecordType type, const std::string& payload, uint64_t* out_offset);
   Status WriteTrailer(int fd, uint64_t end_offset);
   Status ReadTrailer(int fd, uint64_t* end_offset);
-  Status ScanSegment(uint64_t segment_id,
-                     const std::function<bool(const WALRecord&)>& callback);
+  Status ScanSegment(uint64_t segment_id, const std::function<bool(const WALRecord&)>& callback);
   Status RotateSegmentIfNeeded();
   Status LoadMeta();
   Status SaveMeta();
@@ -286,19 +276,15 @@ class WALPersister {
   Status SaveCheckpointLocked();
   void RemoveOldCheckpointsLocked(uint64_t first_retained_segment_id);
   std::vector<std::string> ListCheckpointFilesLocked() const;
-  static std::string CheckpointPathFor(const std::string& wal_dir,
-                                       uint64_t segment_id);
+  static std::string CheckpointPathFor(const std::string& wal_dir, uint64_t segment_id);
   bool ShouldCreateCheckpointLocked() const;
 
   // Buffering helpers (protected by mtx_)
   Status FlushWriteBufferLocked();
   Status EnsureBufferFlushedForReadLocked();
-  Status AppendRecordToBufferLocked(WALRecordType type,
-                                    const std::string& payload,
-                                    uint64_t* out_offset,
-                                    uint64_t* out_record_len);
+  Status AppendRecordToBufferLocked(WALRecordType type, const std::string& payload,
+                                    uint64_t* out_offset, uint64_t* out_record_len);
   Status SyncActiveSegmentLocked();
 };
-
 
 }  // namespace rollingraft

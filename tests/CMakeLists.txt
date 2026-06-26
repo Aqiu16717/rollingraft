@@ -69,6 +69,7 @@ target_include_directories(unit_tests
   PRIVATE
     ${GTEST_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/third_party/leveldb/include
 )
 if(OpenSSL_FOUND)
   target_include_directories(unit_tests PRIVATE ${OPENSSL_INCLUDE_DIR})

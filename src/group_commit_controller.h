@@ -38,10 +38,9 @@ class GroupCommitController {
  public:
   using DurableCallback = std::function<void(Status)>;
 
-  explicit GroupCommitController(
-      const LogPersistenceConfig& config,
-      MetricsRegistry* metrics = nullptr,
-      const std::map<std::string, std::string>& metric_labels = {});
+  explicit GroupCommitController(const LogPersistenceConfig& config,
+                                 MetricsRegistry* metrics = nullptr,
+                                 const std::map<std::string, std::string>& metric_labels = {});
 
   /**
    * Register a newly flushed batch.
@@ -56,10 +55,8 @@ class GroupCommitController {
    * @param error       Output error if controller is unhealthy
    * @return Assigned epoch, or 0 on error
    */
-  uint64_t RegisterFlushedBatch(size_t entry_count,
-                                size_t byte_size,
-                                std::vector<DurableCallback>& callbacks,
-                                Status& error);
+  uint64_t RegisterFlushedBatch(size_t entry_count, size_t byte_size,
+                                std::vector<DurableCallback>& callbacks, Status& error);
 
   /**
    * Acquire the inclusive epoch range that the next sync must cover.
@@ -91,8 +88,7 @@ class GroupCommitController {
    *
    * @param now Current time point
    */
-  std::chrono::milliseconds NextSyncDelay(
-      std::chrono::steady_clock::time_point now) const;
+  std::chrono::milliseconds NextSyncDelay(std::chrono::steady_clock::time_point now) const;
 
   /** Current controller statistics. */
   struct Stats {

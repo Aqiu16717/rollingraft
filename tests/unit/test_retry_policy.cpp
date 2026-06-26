@@ -4,11 +4,11 @@
  */
 
 #include <chrono>
-#include <gtest/gtest.h>
 
 #include "rollingraft/status.h"
 
 #include "client/retry_policy.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -22,9 +22,8 @@ class RetryPolicyTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // Default: 3 retries, 100ms initial, 1000ms max, 2x multiplier
-    policy_ =
-        std::make_unique<RetryPolicy>(3, std::chrono::milliseconds(100),
-                                      std::chrono::milliseconds(1000), 2.0);
+    policy_ = std::make_unique<RetryPolicy>(3, std::chrono::milliseconds(100),
+                                            std::chrono::milliseconds(1000), 2.0);
   }
 
   std::unique_ptr<RetryPolicy> policy_;
@@ -162,16 +161,14 @@ TEST_F(RetryPolicyTest, IsRetryableError_OK_ReturnsFalse) {
 // ========== Different Configurations ==========
 
 TEST(RetryPolicyConfigTest, ZeroMaxRetries_NeverRetries) {
-  RetryPolicy policy(0, std::chrono::milliseconds(100),
-                     std::chrono::milliseconds(1000), 2.0);
+  RetryPolicy policy(0, std::chrono::milliseconds(100), std::chrono::milliseconds(1000), 2.0);
 
   EXPECT_FALSE(policy.ShouldRetry(0));
   EXPECT_FALSE(policy.ShouldRetry(1));
 }
 
 TEST(RetryPolicyConfigTest, LinearBackoff_1xMultiplier) {
-  RetryPolicy policy(3, std::chrono::milliseconds(100),
-                     std::chrono::milliseconds(1000), 1.0);
+  RetryPolicy policy(3, std::chrono::milliseconds(100), std::chrono::milliseconds(1000), 1.0);
 
   // With 1x multiplier, delay should always be 100ms + jitter
   for (int attempt = 0; attempt < 5; ++attempt) {
@@ -182,8 +179,7 @@ TEST(RetryPolicyConfigTest, LinearBackoff_1xMultiplier) {
 }
 
 TEST(RetryPolicyConfigTest, AggressiveBackoff_3xMultiplier) {
-  RetryPolicy policy(5, std::chrono::milliseconds(10),
-                     std::chrono::milliseconds(10000), 3.0);
+  RetryPolicy policy(5, std::chrono::milliseconds(10), std::chrono::milliseconds(10000), 3.0);
 
   // 10ms, 30ms, 90ms, 270ms, 810ms...
   auto d0 = policy.GetDelay(0);

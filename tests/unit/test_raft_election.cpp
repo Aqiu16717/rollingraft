@@ -1,5 +1,4 @@
 #include <chrono>
-#include <gtest/gtest.h>
 #include <memory>
 
 #include "rollingraft/raft_node.h"
@@ -7,6 +6,7 @@
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
 #include "test_port.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

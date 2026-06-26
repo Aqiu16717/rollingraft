@@ -1,20 +1,21 @@
 #include "metrics_http_server.h"
 
-#include <asio.hpp>
 #include <sstream>
 #include <type_traits>
 
-#include "nlohmann/json.hpp"
+#include <asio.hpp>
+
 #include "rollingraft/logger.h"
 #include "rollingraft/metrics.h"
+
+#include "nlohmann/json.hpp"
 #include "sse_connection.h"
 
 namespace rollingraft {
 
 namespace {
 
-std::shared_ptr<asio::ssl::context> CreateSslContext(
-    const MetricsHttpServer::TlsConfig& config) {
+std::shared_ptr<asio::ssl::context> CreateSslContext(const MetricsHttpServer::TlsConfig& config) {
   auto ctx = std::make_shared<asio::ssl::context>(asio::ssl::context::tls_server);
 
   try {
@@ -23,8 +24,7 @@ std::shared_ptr<asio::ssl::context> CreateSslContext(
 
     if (!config.ca_file.empty()) {
       ctx->load_verify_file(config.ca_file);
-      ctx->set_verify_mode(asio::ssl::verify_peer |
-                           asio::ssl::verify_fail_if_no_peer_cert);
+      ctx->set_verify_mode(asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert);
     } else {
       ctx->set_verify_mode(asio::ssl::verify_none);
     }
@@ -83,11 +83,11 @@ bool IsAdminEndpoint(const std::string& path, const std::string& method) {
 
 }  // namespace
 
-MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr,
-                                     MetricsRegistry* registry,
-                                     const TlsConfig& tls_config,
-                                     const std::string& admin_token)
-    : bind_addr_(bind_addr), registry_(registry), tls_config_(tls_config),
+MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry,
+                                     const TlsConfig& tls_config, const std::string& admin_token)
+    : bind_addr_(bind_addr),
+      registry_(registry),
+      tls_config_(tls_config),
       admin_token_(admin_token) {
   if (tls_config_.enabled) {
     ssl_ctx_ = CreateSslContext(tls_config_);
@@ -179,35 +179,30 @@ void MetricsHttpServer::DoAccept() {
   if (!running_) return;
 
   if (tls_config_.enabled && ssl_ctx_) {
-    acceptor_->async_accept(
-        [this](std::error_code ec, asio::ip::tcp::socket socket) {
-          if (!ec && running_) {
-            auto ssl_socket =
-                std::make_shared<asio::ssl::stream<asio::ip::tcp::socket>>(
-                    std::move(socket), *ssl_ctx_);
-            ssl_socket->async_handshake(
-                asio::ssl::stream_base::server,
-                [this, ssl_socket](std::error_code handshake_ec) {
-                  if (!handshake_ec) {
-                    HandleConnection(std::move(*ssl_socket));
-                  } else {
-                    LOG_WARN("TLS handshake failed: {}",
-                             handshake_ec.message());
-                    std::error_code close_ec;
-                    ssl_socket->next_layer().close(close_ec);
-                  }
-                });
-          }
-          if (running_) DoAccept();
-        });
+    acceptor_->async_accept([this](std::error_code ec, asio::ip::tcp::socket socket) {
+      if (!ec && running_) {
+        auto ssl_socket = std::make_shared<asio::ssl::stream<asio::ip::tcp::socket>>(
+            std::move(socket), *ssl_ctx_);
+        ssl_socket->async_handshake(
+            asio::ssl::stream_base::server, [this, ssl_socket](std::error_code handshake_ec) {
+              if (!handshake_ec) {
+                HandleConnection(std::move(*ssl_socket));
+              } else {
+                LOG_WARN("TLS handshake failed: {}", handshake_ec.message());
+                std::error_code close_ec;
+                ssl_socket->next_layer().close(close_ec);
+              }
+            });
+      }
+      if (running_) DoAccept();
+    });
   } else {
-    acceptor_->async_accept(
-        [this](std::error_code ec, asio::ip::tcp::socket socket) {
-          if (!ec && running_) {
-            HandleConnection(std::move(socket));
-          }
-          if (running_) DoAccept();
-        });
+    acceptor_->async_accept([this](std::error_code ec, asio::ip::tcp::socket socket) {
+      if (!ec && running_) {
+        HandleConnection(std::move(socket));
+      }
+      if (running_) DoAccept();
+    });
   }
 }
 
@@ -220,12 +215,10 @@ void MetricsHttpServer::SetAddMemberHandler(AddMemberHandler handler) {
 void MetricsHttpServer::SetRemoveMemberHandler(RemoveMemberHandler handler) {
   remove_member_handler_ = std::move(handler);
 }
-void MetricsHttpServer::SetTriggerSnapshotHandler(
-    TriggerSnapshotHandler handler) {
+void MetricsHttpServer::SetTriggerSnapshotHandler(TriggerSnapshotHandler handler) {
   trigger_snapshot_handler_ = std::move(handler);
 }
-void MetricsHttpServer::SetTransferLeadershipHandler(
-    TransferLeadershipHandler handler) {
+void MetricsHttpServer::SetTransferLeadershipHandler(TransferLeadershipHandler handler) {
   transfer_leadership_handler_ = std::move(handler);
 }
 void MetricsHttpServer::SetConfigProvider(ConfigProvider provider) {
@@ -257,10 +250,9 @@ void MetricsHttpServer::BroadcastEvent(const std::string& json_event) {
 }
 
 void MetricsHttpServer::RemoveDeadSseConnections() {
-  sse_connections_.erase(
-      std::remove_if(sse_connections_.begin(), sse_connections_.end(),
-                     [](const auto& w) { return w.expired(); }),
-      sse_connections_.end());
+  sse_connections_.erase(std::remove_if(sse_connections_.begin(), sse_connections_.end(),
+                                        [](const auto& w) { return w.expired(); }),
+                         sse_connections_.end());
 }
 
 void MetricsHttpServer::ScheduleHeartbeat() {
@@ -303,8 +295,8 @@ std::string ExtractMethod(const std::string& request) {
   return request.substr(0, end);
 }
 
-std::tuple<std::string, std::string, std::string, bool>
-MetricsHttpServer::BuildResponse(const std::string& request) {
+std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::BuildResponse(
+    const std::string& request) {
   std::string path = ExtractPath(request);
   std::string body = ExtractBody(request);
   std::string method = ExtractMethod(request);
@@ -318,10 +310,10 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
   if (!admin_token_.empty() && IsAdminEndpoint(path, method)) {
     std::string token = ExtractAuthToken(request);
     if (!TimingSafeEqual(token, admin_token_)) {
-      response_body = nlohmann::json{{"error", "UNAUTHORIZED"},
-                                      {"message", "Invalid or missing admin token"}}
-                          .dump() +
-                      "\n";
+      response_body =
+          nlohmann::json{{"error", "UNAUTHORIZED"}, {"message", "Invalid or missing admin token"}}
+              .dump() +
+          "\n";
       status_line = "HTTP/1.1 401 Unauthorized\r\n";
       return {response_body, status_line, content_type, is_sse};
     }
@@ -341,8 +333,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
         bool ready = false;
         if (j.contains("role") && j["role"] == "Leader") {
           ready = true;
-        } else if (j.contains("leader_id") && !j["leader_id"].is_null() &&
-                   j["leader_id"] != -1) {
+        } else if (j.contains("leader_id") && !j["leader_id"].is_null() && j["leader_id"] != -1) {
           ready = true;
         }
         if (ready) {
@@ -352,10 +343,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
           status_line = "HTTP/1.1 503 Service Unavailable\r\n";
         }
       } catch (const std::exception& e) {
-        response_body = nlohmann::json{{"status", "error"},
-                                        {"message", e.what()}}
-                            .dump() +
-                        "\n";
+        response_body = nlohmann::json{{"status", "error"}, {"message", e.what()}}.dump() + "\n";
         status_line = "HTTP/1.1 500 Internal Server Error\r\n";
       }
     } else {
@@ -369,8 +357,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
       response_body = "{\"error\":\"status_provider_not_set\"}\n";
     }
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/members" && request.starts_with("POST") &&
-             add_member_handler_) {
+  } else if (path == "/v1/members" && request.starts_with("POST") && add_member_handler_) {
     int32_t node_id = -1;
     std::string addr;
     try {
@@ -378,10 +365,7 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
       if (j.contains("node_id")) node_id = j["node_id"];
       if (j.contains("addr")) addr = j["addr"];
     } catch (const std::exception& e) {
-      response_body = nlohmann::json{{"error", "BAD_REQUEST"},
-                                      {"message", e.what()}}
-                          .dump() +
-                      "\n";
+      response_body = nlohmann::json{{"error", "BAD_REQUEST"}, {"message", e.what()}}.dump() + "\n";
       status_line = "HTTP/1.1 400 Bad Request\r\n";
     }
     if (status_line == "HTTP/1.1 404 Not Found\r\n") {
@@ -401,29 +385,24 @@ MetricsHttpServer::BuildResponse(const std::string& request) {
              trigger_snapshot_handler_) {
     response_body = trigger_snapshot_handler_();
     status_line = "HTTP/1.1 202 Accepted\r\n";
-  } else if (path == "/v1/leadership/transfer" &&
-             request.starts_with("POST") && transfer_leadership_handler_) {
+  } else if (path == "/v1/leadership/transfer" && request.starts_with("POST") &&
+             transfer_leadership_handler_) {
     int32_t target_id = -1;
     try {
       auto j = nlohmann::json::parse(body);
       if (j.contains("target_node_id")) target_id = j["target_node_id"];
     } catch (const std::exception& e) {
-      response_body = nlohmann::json{{"error", "BAD_REQUEST"},
-                                      {"message", e.what()}}
-                          .dump() +
-                      "\n";
+      response_body = nlohmann::json{{"error", "BAD_REQUEST"}, {"message", e.what()}}.dump() + "\n";
       status_line = "HTTP/1.1 400 Bad Request\r\n";
     }
     if (status_line == "HTTP/1.1 404 Not Found\r\n") {
       response_body = transfer_leadership_handler_(target_id);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
-  } else if (path == "/v1/config" && request.starts_with("GET") &&
-             config_provider_) {
+  } else if (path == "/v1/config" && request.starts_with("GET") && config_provider_) {
     response_body = config_provider_();
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/config" && request.starts_with("PATCH") &&
-             config_updater_) {
+  } else if (path == "/v1/config" && request.starts_with("PATCH") && config_updater_) {
     response_body = config_updater_(body);
     status_line = "HTTP/1.1 200 OK\r\n";
   } else if (path == "/v1/events") {
@@ -439,8 +418,7 @@ bool MetricsHttpServer::CheckRateLimit(const std::string& client_ip) {
   auto& timestamps = rate_limit_[client_ip];
 
   // Remove timestamps outside the window
-  while (!timestamps.empty() &&
-         timestamps.front() + kRateLimitWindow < now) {
+  while (!timestamps.empty() && timestamps.front() + kRateLimitWindow < now) {
     timestamps.pop_front();
   }
 
@@ -457,8 +435,7 @@ void MetricsHttpServer::CleanupRateLimit() {
   auto now = std::chrono::steady_clock::now();
   for (auto it = rate_limit_.begin(); it != rate_limit_.end();) {
     auto& timestamps = it->second;
-    while (!timestamps.empty() &&
-           timestamps.front() + kRateLimitWindow < now) {
+    while (!timestamps.empty() && timestamps.front() + kRateLimitWindow < now) {
       timestamps.pop_front();
     }
     if (timestamps.empty()) {
@@ -476,95 +453,77 @@ void MetricsHttpServer::HandleConnection(SocketVariant socket) {
         using SocketType = std::decay_t<decltype(socket_ref)>;
         auto socket_ptr = std::make_shared<SocketType>(std::move(socket_ref));
 
-        socket_ptr->async_read_some(
-            asio::buffer(*buffer),
-            [this, buffer, socket_ptr](std::error_code ec,
-                                       std::size_t bytes) mutable {
-              if (ec) return;
+        socket_ptr->async_read_some(asio::buffer(*buffer), [this, buffer, socket_ptr](
+                                                               std::error_code ec,
+                                                               std::size_t bytes) mutable {
+          if (ec) return;
 
-              // Get client IP for rate limiting
-              std::string client_ip;
-              try {
-                if constexpr (std::is_same_v<
-                                  SocketType,
-                                  asio::ssl::stream<
-                                      asio::ip::tcp::socket>>) {
-                  client_ip = socket_ptr->next_layer()
-                                  .remote_endpoint()
-                                  .address()
-                                  .to_string();
+          // Get client IP for rate limiting
+          std::string client_ip;
+          try {
+            if constexpr (std::is_same_v<SocketType, asio::ssl::stream<asio::ip::tcp::socket>>) {
+              client_ip = socket_ptr->next_layer().remote_endpoint().address().to_string();
+            } else {
+              client_ip = socket_ptr->remote_endpoint().address().to_string();
+            }
+          } catch (...) {
+            client_ip = "unknown";
+          }
+
+          // Check rate limit
+          if (!CheckRateLimit(client_ip)) {
+            std::string response =
+                "HTTP/1.1 429 Too Many Requests\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 47\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"error\":\"RATE_LIMITED\",\"message\":"
+                "\"Too many requests\"}\n";
+            auto resp_str = std::make_shared<std::string>(response);
+            asio::async_write(*socket_ptr, asio::buffer(*resp_str),
+                              [resp_str, socket_ptr](std::error_code, std::size_t) {});
+            return;
+          }
+
+          std::string request(buffer->data(), bytes);
+          auto [response_body, status_line, content_type, is_sse] = BuildResponse(request);
+
+          if (is_sse) {
+            auto conn = std::make_shared<SseConnection>(std::move(*socket_ptr),
+                                                        asio::io_context::strand(*io_ctx_));
+            {
+              std::lock_guard<std::mutex> lock(sse_mutex_);
+              RemoveDeadSseConnections();
+              sse_connections_.push_back(conn);
+            }
+            conn->Start();
+            return;
+          }
+
+          std::ostringstream response;
+          response << status_line;
+          response << "Content-Type: " << content_type;
+          response << "Content-Length: " << response_body.size() << "\r\n";
+          response << "Connection: close\r\n";
+          response << "\r\n";
+          response << response_body;
+
+          auto resp_str = std::make_shared<std::string>(response.str());
+          asio::async_write(
+              *socket_ptr, asio::buffer(*resp_str),
+              [resp_str, socket_ptr](std::error_code, std::size_t) {
+                std::error_code close_ec;
+                if constexpr (std::is_same_v<SocketType,
+                                             asio::ssl::stream<asio::ip::tcp::socket>>) {
+                  socket_ptr->next_layer().shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                  socket_ptr->next_layer().close(close_ec);
                 } else {
-                  client_ip =
-                      socket_ptr->remote_endpoint().address().to_string();
+                  socket_ptr->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                  socket_ptr->close(close_ec);
                 }
-              } catch (...) {
-                client_ip = "unknown";
-              }
-
-              // Check rate limit
-              if (!CheckRateLimit(client_ip)) {
-                std::string response =
-                    "HTTP/1.1 429 Too Many Requests\r\n"
-                    "Content-Type: application/json\r\n"
-                    "Content-Length: 47\r\n"
-                    "Connection: close\r\n"
-                    "\r\n"
-                    "{\"error\":\"RATE_LIMITED\",\"message\":"
-                    "\"Too many requests\"}\n";
-                auto resp_str = std::make_shared<std::string>(response);
-                asio::async_write(
-                    *socket_ptr, asio::buffer(*resp_str),
-                    [resp_str, socket_ptr](std::error_code,
-                                           std::size_t) {});
-                return;
-              }
-
-              std::string request(buffer->data(), bytes);
-              auto [response_body, status_line, content_type, is_sse] =
-                  BuildResponse(request);
-
-              if (is_sse) {
-                auto conn = std::make_shared<SseConnection>(
-                    std::move(*socket_ptr),
-                    asio::io_context::strand(*io_ctx_));
-                {
-                  std::lock_guard<std::mutex> lock(sse_mutex_);
-                  RemoveDeadSseConnections();
-                  sse_connections_.push_back(conn);
-                }
-                conn->Start();
-                return;
-              }
-
-              std::ostringstream response;
-              response << status_line;
-              response << "Content-Type: " << content_type;
-              response << "Content-Length: " << response_body.size()
-                       << "\r\n";
-              response << "Connection: close\r\n";
-              response << "\r\n";
-              response << response_body;
-
-              auto resp_str = std::make_shared<std::string>(response.str());
-              asio::async_write(
-                  *socket_ptr, asio::buffer(*resp_str),
-                  [resp_str, socket_ptr](std::error_code,
-                                         std::size_t) {
-                    std::error_code close_ec;
-                    if constexpr (std::is_same_v<
-                                      SocketType,
-                                      asio::ssl::stream<
-                                          asio::ip::tcp::socket>>) {
-                      socket_ptr->next_layer().shutdown(
-                          asio::ip::tcp::socket::shutdown_both, close_ec);
-                      socket_ptr->next_layer().close(close_ec);
-                    } else {
-                      socket_ptr->shutdown(
-                          asio::ip::tcp::socket::shutdown_both, close_ec);
-                      socket_ptr->close(close_ec);
-                    }
-                  });
-            });
+              });
+        });
       },
       std::move(socket));
 }

@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include <asio.hpp>
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -13,6 +12,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+
+#include <asio.hpp>
 
 namespace rollingraft {
 
@@ -48,8 +49,7 @@ class ConnectionPool {
   bool IsHealthy(const std::string& addr) const;
 
  private:
-  std::shared_ptr<asio::ip::tcp::socket> CreateConnection(
-      const std::string& addr);
+  std::shared_ptr<asio::ip::tcp::socket> CreateConnection(const std::string& addr);
 
   asio::io_context io_context_;
   asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
@@ -58,8 +58,7 @@ class ConnectionPool {
   std::chrono::milliseconds connect_timeout_;
 
   mutable std::mutex mutex_;
-  std::unordered_map<std::string, std::weak_ptr<asio::ip::tcp::socket>>
-      connections_;
+  std::unordered_map<std::string, std::weak_ptr<asio::ip::tcp::socket>> connections_;
 };
 
 }  // namespace rollingraft

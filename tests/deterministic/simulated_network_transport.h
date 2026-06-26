@@ -21,21 +21,18 @@ class SimulatedNetwork;
  */
 class SimulatedNetworkTransport : public NetworkTransport {
  public:
-  SimulatedNetworkTransport(NodeId node_id, SimulatedNetwork* network,
-                            SimulatedClock* clock);
+  SimulatedNetworkTransport(NodeId node_id, SimulatedNetwork* network, SimulatedClock* clock);
   ~SimulatedNetworkTransport() override;
 
-  Status Initialize(const NodeAddr& listen_addr,
-                    RpcRequestHandler handler) override;
+  Status Initialize(const NodeAddr& listen_addr, RpcRequestHandler handler) override;
 
   void SetConnectionCallback(ConnectionCallback callback) override;
 
   Status Start() override;
   Status Stop() override;
 
-  void SendRpc(NodeId to, const NodeAddr& addr,
-               const std::string& request_data, uint64_t correlation_id,
-               std::chrono::milliseconds timeout,
+  void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
+               uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override;
 
  private:

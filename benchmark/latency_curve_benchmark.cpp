@@ -41,19 +41,18 @@ OperationResult DoOperation() {
 }
 
 void PrintUsage(const char* program) {
-  std::cout
-      << "Usage: " << program << " [options] <server1> <server2> ...\n"
-      << "\n"
-      << "Options:\n"
-      << "  -d, --duration <seconds>  Duration per throughput level (default: "
-         "5)\n"
-      << "  -s, --size <bytes>        Payload size (default: 100)\n"
-      << "  -h, --help                Show this help\n"
-      << "\n"
-      << "Measures latency (P50, P99, P999) at increasing throughput levels.\n"
-      << "\n"
-      << "Example:\n"
-      << "  " << program << " 127.0.0.1:8001 127.0.0.1:8002\n";
+  std::cout << "Usage: " << program << " [options] <server1> <server2> ...\n"
+            << "\n"
+            << "Options:\n"
+            << "  -d, --duration <seconds>  Duration per throughput level (default: "
+               "5)\n"
+            << "  -s, --size <bytes>        Payload size (default: 100)\n"
+            << "  -h, --help                Show this help\n"
+            << "\n"
+            << "Measures latency (P50, P99, P999) at increasing throughput levels.\n"
+            << "\n"
+            << "Example:\n"
+            << "  " << program << " 127.0.0.1:8001 127.0.0.1:8002\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -91,8 +90,7 @@ int main(int argc, char* argv[]) {
     std::cout << s << " ";
   }
   std::cout << std::endl;
-  std::cout << "Duration per level: " << duration_per_level << " seconds"
-            << std::endl;
+  std::cout << "Duration per level: " << duration_per_level << " seconds" << std::endl;
   std::cout << "Payload size: " << payload_size << " bytes" << std::endl;
   std::cout << "==============================================" << std::endl;
 
@@ -107,18 +105,16 @@ int main(int argc, char* argv[]) {
   if (!g_client->IsHealthy()) {
     std::cout << "Warning: Could not connect to cluster." << std::endl;
   } else {
-    std::cout << "Connected. Leader: " << g_client->GetLeaderAddr()
-              << std::endl;
+    std::cout << "Connected. Leader: " << g_client->GetLeaderAddr() << std::endl;
   }
 
   // Throughput levels to test
   std::vector<int> throughput_levels = {100, 200, 500, 1000, 2000, 5000};
 
   std::cout << "\n========== Latency Curve Results ==========" << std::endl;
-  std::cout << std::left << std::setw(15) << "Target (ops/s)" << std::setw(15)
-            << "Actual (ops/s)" << std::setw(12) << "Success%" << std::setw(12)
-            << "P50 (us)" << std::setw(12) << "P99 (us)" << std::setw(12)
-            << "P999 (us)" << std::endl;
+  std::cout << std::left << std::setw(15) << "Target (ops/s)" << std::setw(15) << "Actual (ops/s)"
+            << std::setw(12) << "Success%" << std::setw(12) << "P50 (us)" << std::setw(12)
+            << "P99 (us)" << std::setw(12) << "P999 (us)" << std::endl;
   std::cout << std::string(78, '-') << std::endl;
 
   // Test at each throughput level
@@ -131,8 +127,7 @@ int main(int argc, char* argv[]) {
     auto delay_between_ops = std::chrono::microseconds(1000000 / target);
     auto last_op_time = std::chrono::steady_clock::now();
 
-    auto rate_limited_op = [delay_between_ops,
-                            &last_op_time]() -> OperationResult {
+    auto rate_limited_op = [delay_between_ops, &last_op_time]() -> OperationResult {
       auto now = std::chrono::steady_clock::now();
       auto elapsed = now - last_op_time;
       if (elapsed < delay_between_ops) {
@@ -146,9 +141,8 @@ int main(int argc, char* argv[]) {
     auto stats = benchmark.Run();
 
     std::cout << std::left << std::setw(15) << target << std::setw(15)
-              << static_cast<int>(stats.operations_per_second) << std::setw(12)
-              << std::fixed << std::setprecision(1)
-              << (stats.success_rate * 100) << std::setw(12)
+              << static_cast<int>(stats.operations_per_second) << std::setw(12) << std::fixed
+              << std::setprecision(1) << (stats.success_rate * 100) << std::setw(12)
               << static_cast<int>(stats.latency_p50_us) << std::setw(12)
               << static_cast<int>(stats.latency_p99_us) << std::setw(12)
               << static_cast<int>(stats.latency_p999_us) << std::endl;

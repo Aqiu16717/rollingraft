@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "rollingraft/client_session_manager.h"
 #include "rollingraft/event.h"
 #include "rollingraft/log_persister.h"
 #include "rollingraft/logger.h"
@@ -25,13 +26,12 @@
 #include "rollingraft/raft_log.h"
 #include "rollingraft/raft_node.h"
 #include "rollingraft/rpc.h"
+#include "rollingraft/runtime_config.h"
 #include "rollingraft/state_machine.h"
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
-#include "rollingraft/client_session_manager.h"
-#include "rollingraft/runtime_config.h"
 
 namespace rollingraft {
 
@@ -63,22 +63,19 @@ struct SnapshotSendState {
 
 // ========== Pending ReadIndex Request ==========
 struct PendingReadIndex {
-  Index read_index;                // The commit index to wait for
-  std::function<void()> callback;  // Completion callback
+  Index read_index;                                  // The commit index to wait for
+  std::function<void()> callback;                    // Completion callback
   std::chrono::steady_clock::time_point start_time;  // Request timestamp
   std::set<NodeId> acks;                             // Nodes that acknowledged
-  bool heartbeats_sent = false;  // Whether heartbeats were sent
+  bool heartbeats_sent = false;                      // Whether heartbeats were sent
 };
 
 // ========== RaftNode Implementation ==========
 class RaftNode::RaftNodeImpl {
  public:
-  RaftNodeImpl(const RaftNodeConfig& config,
-               std::shared_ptr<StateMachine> state_machine,
-               std::unique_ptr<NetworkTransport> network,
-               std::unique_ptr<TimerService> timer,
-               std::shared_ptr<Persister> persister,
-               std::unique_ptr<Protocol> protocol);
+  RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
+               std::unique_ptr<NetworkTransport> network, std::unique_ptr<TimerService> timer,
+               std::shared_ptr<Persister> persister, std::unique_ptr<Protocol> protocol);
   ~RaftNodeImpl();
 
   Status Start();
@@ -100,13 +97,10 @@ class RaftNode::RaftNodeImpl {
   void SetRoleChangeCallback(std::function<void(RaftNodeRole, uint64_t)> cb);
   void SetLeaderChangeCallback(std::function<void(NodeId, std::string)> cb);
 
-  Status Propose(const std::string& command,
-                 std::function<void(const ApplyResult&)> callback,
-                 uint64_t session_id = 0,
-                 uint64_t seq_num = 0);
-  Status ProposeBatch(
-      const std::vector<std::string>& commands,
-      std::function<void(const std::vector<ApplyResult>& results)> callback);
+  Status Propose(const std::string& command, std::function<void(const ApplyResult&)> callback,
+                 uint64_t session_id = 0, uint64_t seq_num = 0);
+  Status ProposeBatch(const std::vector<std::string>& commands,
+                      std::function<void(const std::vector<ApplyResult>& results)> callback);
   ApplyResult ProposeAndWaitLocked(const std::string& command,
                                    std::unique_lock<std::mutex>& lock_r);
   Status ReadIndex(std::function<void()> callback);
@@ -126,8 +120,7 @@ class RaftNode::RaftNodeImpl {
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   void HandlePreVote(const PreVoteRequest&, PreVoteResponse&);
   void HandleAppendEntries(const AppendEntriesRequest&, AppendEntriesResponse&);
-  void HandleInstallSnapshot(const InstallSnapshotRequest&,
-                             InstallSnapshotResponse&);
+  void HandleInstallSnapshot(const InstallSnapshotRequest&, InstallSnapshotResponse&);
   void HandleClientRequest(const ClientRequest&, ClientResponse&);
   void HandleReadIndexRequest(const ReadIndexRequest&, ReadIndexResponse&);
 
@@ -158,24 +151,19 @@ class RaftNode::RaftNodeImpl {
   // Election related
   void BroadcastRequestVoteLocked();
   void SendRequestVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
-  void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp,
-                                 Term original_term);
+  void HandleRequestVoteResponse(NodeId from, const RequestVoteResponse& resp, Term original_term);
   void BroadcastPreVoteLocked();
   void SendPreVoteToPeerLocked(NodeId peer_id, const NodeAddr& addr);
-  void HandlePreVoteResponse(NodeId from, const PreVoteResponse& resp,
-                             Term original_term);
+  void HandlePreVoteResponse(NodeId from, const PreVoteResponse& resp, Term original_term);
 
   // Log replication related
   void BroadcastAppendEntriesLocked();
   void SendAppendEntriesToPeerLocked(NodeId peer_id);
-  void HandleAppendEntriesResponse(NodeId from,
-                                   const AppendEntriesResponse& resp);
-  void HandleHeartbeatResponse(NodeId from,
-                               const AppendEntriesResponse& resp);
+  void HandleAppendEntriesResponse(NodeId from, const AppendEntriesResponse& resp);
+  void HandleHeartbeatResponse(NodeId from, const AppendEntriesResponse& resp);
   void ScheduleAppendEntriesRetry(NodeId peer_id, bool is_heartbeat = false);
-  void ScheduleAppendEntriesRetryLocked(
-      NodeId peer_id);  // Precondition: caller holds election_mtx_ +
-                        // replication_mtx_
+  void ScheduleAppendEntriesRetryLocked(NodeId peer_id);  // Precondition: caller holds
+                                                          // election_mtx_ + replication_mtx_
 
   // CheckQuorum: leader steps down if it hasn't received quorum acks
   void CheckQuorumLocked();  // Precondition: caller holds election_mtx_
@@ -191,8 +179,7 @@ class RaftNode::RaftNodeImpl {
   // Snapshot related
   void SendInstallSnapshotToPeerLocked(NodeId peer_id);
   void SendNextSnapshotChunkLocked(NodeId peer_id);
-  void HandleInstallSnapshotResponse(NodeId from,
-                                     const InstallSnapshotResponse& resp,
+  void HandleInstallSnapshotResponse(NodeId from, const InstallSnapshotResponse& resp,
                                      bool rpc_success);
 
   // Commit and apply
@@ -216,8 +203,7 @@ class RaftNode::RaftNodeImpl {
   void OnHeartbeatTimeout();
 
   // RPC entry point
-  void HandleIncomingRpc(NodeId from, const std::string& data,
-                         std::string& response);
+  void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
 
   // State check
   bool IsRunning() const { return state_ == NodeState::kRunning; }
@@ -269,8 +255,7 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, std::deque<InflightEntry>> inflight_;
 
   // Heartbeat coalescing: track last heartbeat sent to each peer.
-  std::unordered_map<NodeId, std::chrono::steady_clock::time_point>
-      last_heartbeat_sent_;
+  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> last_heartbeat_sent_;
 
   // Leader lease: expiry timestamp for local reads without heartbeat broadcast.
   // Updated when leader receives majority acks from voters.
@@ -323,12 +308,7 @@ class RaftNode::RaftNodeImpl {
   std::unique_ptr<Protocol> protocol_;
 
   // ========== Runtime State ==========
-  enum class NodeState {
-    kInitialized = 0,
-    kRunning = 1,
-    kStopping = 2,
-    kStopped = 3
-  };
+  enum class NodeState { kInitialized = 0, kRunning = 1, kStopping = 2, kStopped = 3 };
   std::atomic<NodeState> state_{NodeState::kInitialized};
   std::atomic<uint64_t> next_correlation_id_{1};
 

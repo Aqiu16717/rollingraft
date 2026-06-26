@@ -5,17 +5,16 @@
 
 #include "rollingraft/hybrid_persister.h"
 
-#include <sys/stat.h>
-
 #include <filesystem>
 
 #include "rollingraft/logger.h"
 
+#include <sys/stat.h>
+
 namespace rollingraft {
 
 HybridPersister::HybridPersister()
-    : wal_(std::make_unique<WALPersister>()),
-      state_(std::make_unique<StatePersister>()) {}
+    : wal_(std::make_unique<WALPersister>()), state_(std::make_unique<StatePersister>()) {}
 
 HybridPersister::~HybridPersister() { Close(); }
 
@@ -139,8 +138,7 @@ Status HybridPersister::Sync() {
   return wal_->Sync();
 }
 
-Status HybridPersister::GetEntries(uint64_t start, uint64_t end,
-                                   std::vector<RaftLogEntry>* out) {
+Status HybridPersister::GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) {
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!opened_) {
@@ -210,8 +208,7 @@ std::pair<uint64_t, uint64_t> HybridPersister::GetLastLogInfo() {
   return {last_index, static_cast<uint64_t>(entry.term_)};
 }
 
-Status HybridPersister::SaveSnapshot(const std::string& snapshot_data,
-                                     uint64_t last_index,
+Status HybridPersister::SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
                                      uint64_t last_term) {
   std::lock_guard<std::mutex> lock(mtx_);
 
@@ -222,8 +219,7 @@ Status HybridPersister::SaveSnapshot(const std::string& snapshot_data,
   return state_->SaveSnapshot(snapshot_data, last_index, last_term);
 }
 
-Status HybridPersister::LoadSnapshot(std::string& snapshot_data,
-                                     uint64_t& last_index,
+Status HybridPersister::LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
                                      uint64_t& last_term) {
   std::lock_guard<std::mutex> lock(mtx_);
 
@@ -235,8 +231,8 @@ Status HybridPersister::LoadSnapshot(std::string& snapshot_data,
 }
 
 Status HybridPersister::SaveSnapshotStream(
-    const std::function<bool(std::string& chunk)>& chunk_provider,
-    uint64_t last_index, uint64_t last_term) {
+    const std::function<bool(std::string& chunk)>& chunk_provider, uint64_t last_index,
+    uint64_t last_term) {
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!opened_) {
@@ -247,8 +243,8 @@ Status HybridPersister::SaveSnapshotStream(
 }
 
 Status HybridPersister::LoadSnapshotStream(
-    const std::function<void(const std::string& chunk)>& chunk_consumer,
-    uint64_t& last_index, uint64_t& last_term) {
+    const std::function<void(const std::string& chunk)>& chunk_consumer, uint64_t& last_index,
+    uint64_t& last_term) {
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!opened_) {
@@ -268,8 +264,6 @@ bool HybridPersister::HasSnapshot() const {
   return state_->HasSnapshot();
 }
 
-std::unique_ptr<Persister> CreateHybridPersister() {
-  return std::make_unique<HybridPersister>();
-}
+std::unique_ptr<Persister> CreateHybridPersister() { return std::make_unique<HybridPersister>(); }
 
 }  // namespace rollingraft

@@ -26,49 +26,45 @@ struct FailoverResult {
 };
 
 void PrintUsage(const char* program) {
-  std::cout
-      << "Usage: " << program << " [options] <server1> <server2> ...\n"
-      << "\n"
-      << "Options:\n"
-      << "  -k, --kill <command>     Shell command to kill leader (required)\n"
-      << "  -c, --check <command>    Shell command to check if new leader "
-         "elected\n"
-      << "  -r, --rate <ops/sec>     Operation rate during test (default: "
-         "100)\n"
-      << "  -w, --warmup <seconds>   Warmup duration (default: 5)\n"
-      << "  -h, --help               Show this help\n"
-      << "\n"
-      << "Measures cluster recovery time after leader failure.\n"
-      << "\n"
-      << "Example:\n"
-      << "  " << program << " -k 'pkill -f counter_server.*:8001' \\\n"
-      << "           -c 'curl -s http://localhost:8002/status' \\\n"
-      << "           127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n";
+  std::cout << "Usage: " << program << " [options] <server1> <server2> ...\n"
+            << "\n"
+            << "Options:\n"
+            << "  -k, --kill <command>     Shell command to kill leader (required)\n"
+            << "  -c, --check <command>    Shell command to check if new leader "
+               "elected\n"
+            << "  -r, --rate <ops/sec>     Operation rate during test (default: "
+               "100)\n"
+            << "  -w, --warmup <seconds>   Warmup duration (default: 5)\n"
+            << "  -h, --help               Show this help\n"
+            << "\n"
+            << "Measures cluster recovery time after leader failure.\n"
+            << "\n"
+            << "Example:\n"
+            << "  " << program << " -k 'pkill -f counter_server.*:8001' \\\n"
+            << "           -c 'curl -s http://localhost:8002/status' \\\n"
+            << "           127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n";
 }
 
 // Execute shell command and return exit code
 int ExecuteCommand(const std::string& cmd) { return std::system(cmd.c_str()); }
 
-FailoverResult RunFailoverBenchmark(Client* client,
-                                    const std::string& kill_command,
-                                    const std::string& check_command,
-                                    int ops_per_second, int warmup_seconds) {
+FailoverResult RunFailoverBenchmark(Client* client, const std::string& kill_command,
+                                    const std::string& check_command, int ops_per_second,
+                                    int warmup_seconds) {
   FailoverResult result;
 
-  std::cout << "\n=== Warmup Phase (" << warmup_seconds
-            << " seconds) ===" << std::endl;
+  std::cout << "\n=== Warmup Phase (" << warmup_seconds << " seconds) ===" << std::endl;
   auto warmup_start = std::chrono::steady_clock::now();
   uint64_t warmup_ops = 0;
 
-  while (std::chrono::duration_cast<std::chrono::seconds>(
-             std::chrono::steady_clock::now() - warmup_start)
+  while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
+                                                          warmup_start)
              .count() < warmup_seconds) {
     auto r = client->Execute("inc");
     if (r.ok()) {
       ++warmup_ops;
     }
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(1000 / ops_per_second));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / ops_per_second));
   }
 
   std::cout << "Warmup complete: " << warmup_ops << " operations" << std::endl;
@@ -88,8 +84,7 @@ FailoverResult RunFailoverBenchmark(Client* client,
       } else {
         ++steady_failed;
       }
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(1000 / ops_per_second));
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000 / ops_per_second));
     }
   });
 
@@ -102,8 +97,7 @@ FailoverResult RunFailoverBenchmark(Client* client,
 
   int kill_result = ExecuteCommand(kill_command);
   if (kill_result != 0) {
-    std::cerr << "Warning: Kill command failed with exit code " << kill_result
-              << std::endl;
+    std::cerr << "Warning: Kill command failed with exit code " << kill_result << std::endl;
   }
 
   // Measure detection and recovery
@@ -132,14 +126,11 @@ FailoverResult RunFailoverBenchmark(Client* client,
         }
 
         result.detection_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                detection_time - kill_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(detection_time - kill_time);
         result.election_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                recovery_time - detection_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - detection_time);
         result.recovery_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                recovery_time - kill_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - kill_time);
 
         recovered = true;
         break;
@@ -156,8 +147,8 @@ FailoverResult RunFailoverBenchmark(Client* client,
         detection_time = std::chrono::steady_clock::now();
         detected = true;
         std::cout << "\nFailure detected after "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(
-                         detection_time - kill_time)
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(detection_time -
+                                                                           kill_time)
                          .count()
                   << " ms" << std::endl;
       }
@@ -166,14 +157,11 @@ FailoverResult RunFailoverBenchmark(Client* client,
       auto recovery_time = std::chrono::steady_clock::now();
 
       result.detection_time =
-          std::chrono::duration_cast<std::chrono::milliseconds>(detection_time -
-                                                                kill_time);
+          std::chrono::duration_cast<std::chrono::milliseconds>(detection_time - kill_time);
       result.election_time =
-          std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time -
-                                                                detection_time);
+          std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - detection_time);
       result.recovery_time =
-          std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time -
-                                                                kill_time);
+          std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - kill_time);
 
       recovered = true;
       break;
@@ -194,9 +182,7 @@ FailoverResult RunFailoverBenchmark(Client* client,
   result.operations_during_failover = failover_ops;
   result.operations_failed = failover_failed;
   result.availability_during_failover =
-      (failover_ops > 0)
-          ? static_cast<double>(failover_ops - failover_failed) / failover_ops
-          : 0.0;
+      (failover_ops > 0) ? static_cast<double>(failover_ops - failover_failed) / failover_ops : 0.0;
 
   return result;
 }
@@ -272,30 +258,26 @@ int main(int argc, char* argv[]) {
   std::cout << "Connected. Leader: " << client.GetLeaderAddr() << std::endl;
 
   // Run failover benchmark
-  auto result = RunFailoverBenchmark(&client, kill_command, check_command,
-                                     ops_per_second, warmup_seconds);
+  auto result =
+      RunFailoverBenchmark(&client, kill_command, check_command, ops_per_second, warmup_seconds);
 
   // Print results
   std::cout << "\n========== Failover Results ==========" << std::endl;
-  std::cout << std::left << std::setw(30) << "Metric" << "Value" << std::endl;
+  std::cout << std::left << std::setw(30) << "Metric"
+            << "Value" << std::endl;
   std::cout << std::string(50, '-') << std::endl;
   std::cout << std::left << std::setw(30)
-            << "Failure Detection Time:" << result.detection_time.count()
+            << "Failure Detection Time:" << result.detection_time.count() << " ms" << std::endl;
+  std::cout << std::left << std::setw(30) << "Leader Election Time:" << result.election_time.count()
+            << " ms" << std::endl;
+  std::cout << std::left << std::setw(30) << "Total Recovery Time:" << result.recovery_time.count()
             << " ms" << std::endl;
   std::cout << std::left << std::setw(30)
-            << "Leader Election Time:" << result.election_time.count() << " ms"
+            << "Operations During Failover:" << result.operations_during_failover << std::endl;
+  std::cout << std::left << std::setw(30) << "Failed Operations:" << result.operations_failed
             << std::endl;
-  std::cout << std::left << std::setw(30)
-            << "Total Recovery Time:" << result.recovery_time.count() << " ms"
-            << std::endl;
-  std::cout << std::left << std::setw(30) << "Operations During Failover:"
-            << result.operations_during_failover << std::endl;
-  std::cout << std::left << std::setw(30)
-            << "Failed Operations:" << result.operations_failed << std::endl;
-  std::cout << std::left << std::setw(30)
-            << "Availability During Failover:" << std::fixed
-            << std::setprecision(1)
-            << (result.availability_during_failover * 100.0) << "%"
+  std::cout << std::left << std::setw(30) << "Availability During Failover:" << std::fixed
+            << std::setprecision(1) << (result.availability_during_failover * 100.0) << "%"
             << std::endl;
 
   return 0;

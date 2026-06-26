@@ -1,7 +1,5 @@
 #pragma once
 
-#include <asio.hpp>
-#include <asio/ssl.hpp>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -12,6 +10,10 @@
 #include <thread>
 #include <unordered_map>
 #include <variant>
+
+#include <asio.hpp>
+
+#include <asio/ssl.hpp>
 
 namespace rollingraft {
 
@@ -37,8 +39,7 @@ class MetricsHttpServer {
   using TlsConfig = MetricsHttpServerTlsConfig;
 
   MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry,
-                    const TlsConfig& tls_config = {},
-                    const std::string& admin_token = "");
+                    const TlsConfig& tls_config = {}, const std::string& admin_token = "");
   ~MetricsHttpServer();
 
   void Start();
@@ -55,8 +56,7 @@ class MetricsHttpServer {
   void BroadcastEvent(const std::string& json_event);
 
  public:
-  std::tuple<std::string, std::string, std::string, bool> BuildResponse(
-      const std::string& request);
+  std::tuple<std::string, std::string, std::string, bool> BuildResponse(const std::string& request);
   void RemoveDeadSseConnections();
 
   // Simple per-IP rate limiter: sliding window of 10 requests per second
@@ -71,8 +71,8 @@ class MetricsHttpServer {
   void Run();
   void DoAccept();
 
-  using SocketVariant = std::variant<asio::ip::tcp::socket,
-                                     asio::ssl::stream<asio::ip::tcp::socket>>;
+  using SocketVariant =
+      std::variant<asio::ip::tcp::socket, asio::ssl::stream<asio::ip::tcp::socket>>;
   void HandleConnection(SocketVariant socket);
 
   std::string bind_addr_;

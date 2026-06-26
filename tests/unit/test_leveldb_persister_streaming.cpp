@@ -4,18 +4,19 @@
  */
 
 #include <filesystem>
-#include <gtest/gtest.h>
-#include <leveldb/db.h>
 
 #include "rollingraft/persister.h"
+
+#include <gtest/gtest.h>
+#include <leveldb/db.h>
 
 using namespace rollingraft;
 
 class LevelDBPersisterStreamingTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    test_dir_ = "/tmp/rollingraft_streaming_test_" +
-                std::to_string(getpid()) + "_" + std::to_string(counter_++);
+    test_dir_ = "/tmp/rollingraft_streaming_test_" + std::to_string(getpid()) + "_" +
+                std::to_string(counter_++);
     std::filesystem::create_directories(test_dir_);
 
     persister_ = CreateLevelDBPersister();
@@ -59,20 +60,16 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_BasicRoundTrip) {
   // Load via streaming
   std::string loaded_data;
   uint64_t loaded_index = 0, loaded_term = 0;
-  auto chunk_consumer = [&](const std::string& chunk) {
-    loaded_data += chunk;
-  };
+  auto chunk_consumer = [&](const std::string& chunk) { loaded_data += chunk; };
 
-  status = persister_->LoadSnapshotStream(chunk_consumer, loaded_index,
-                                          loaded_term);
+  status = persister_->LoadSnapshotStream(chunk_consumer, loaded_index, loaded_term);
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(loaded_index, 42);
   EXPECT_EQ(loaded_term, 7);
   EXPECT_EQ(loaded_data, original_data);
 }
 
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_OverwritesOldFormat) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_OverwritesOldFormat) {
   // First save using old interface
   std::string old_data = "old_format_data";
   auto status = persister_->SaveSnapshot(old_data, 10, 1);
@@ -101,9 +98,7 @@ TEST_F(LevelDBPersisterStreamingTest,
 
   // Load via streaming should work
   std::string loaded_new;
-  auto chunk_consumer = [&](const std::string& chunk) {
-    loaded_new += chunk;
-  };
+  auto chunk_consumer = [&](const std::string& chunk) { loaded_new += chunk; };
   status = persister_->LoadSnapshotStream(chunk_consumer, idx, term);
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(loaded_new, new_data);
@@ -120,12 +115,9 @@ TEST_F(LevelDBPersisterStreamingTest, LoadSnapshotStream_OldFormatFallback) {
   // Load via streaming should fall back to old format
   std::string loaded_data;
   uint64_t loaded_index = 0, loaded_term = 0;
-  auto chunk_consumer = [&](const std::string& chunk) {
-    loaded_data += chunk;
-  };
+  auto chunk_consumer = [&](const std::string& chunk) { loaded_data += chunk; };
 
-  status = persister_->LoadSnapshotStream(chunk_consumer, loaded_index,
-                                          loaded_term);
+  status = persister_->LoadSnapshotStream(chunk_consumer, loaded_index, loaded_term);
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(loaded_data, old_data);
   EXPECT_EQ(loaded_index, 30);
@@ -168,8 +160,7 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_HashVerification) {
   EXPECT_EQ(loaded, data);
 }
 
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_FewerChunksThanBefore) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_FewerChunksThanBefore) {
   // First save with 4 chunks
   std::string data1(256, 'A');
   size_t offset1 = 0;
@@ -204,8 +195,7 @@ TEST_F(LevelDBPersisterStreamingTest,
   EXPECT_EQ(idx, 20);
   EXPECT_EQ(term, 2);
 }
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_AtomicReplace_Normal) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_Normal) {
   // Save an initial streaming snapshot.
   std::string data_a(128, 'A');
   size_t offset_a = 0;
@@ -238,8 +228,7 @@ TEST_F(LevelDBPersisterStreamingTest,
   EXPECT_EQ(term, 2);
 }
 
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_AtomicReplace_PreservesOldOnInterruption) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_PreservesOldOnInterruption) {
   // Save an initial streaming snapshot.
   std::string data_a(128, 'A');
   size_t offset_a = 0;
@@ -278,8 +267,7 @@ TEST_F(LevelDBPersisterStreamingTest,
   EXPECT_EQ(term, 1);
 }
 
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_AtomicReplace_HashVerificationFailure) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_HashVerificationFailure) {
   // Save an initial streaming snapshot.
   std::string data_a(128, 'A');
   size_t offset_a = 0;
@@ -325,8 +313,7 @@ TEST_F(LevelDBPersisterStreamingTest,
   auto status = persister_->LoadSnapshotStream(consumer, idx, term);
   EXPECT_FALSE(status.ok());
 }
-TEST_F(LevelDBPersisterStreamingTest,
-       SaveSnapshotStream_EmptyData_ClearsExistingSnapshot) {
+TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_EmptyData_ClearsExistingSnapshot) {
   // Save an initial streaming snapshot.
   std::string data(128, 'A');
   size_t offset = 0;

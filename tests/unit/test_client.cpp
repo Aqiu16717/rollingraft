@@ -4,10 +4,11 @@
  */
 
 #include <chrono>
-#include <gtest/gtest.h>
 #include <thread>
 
 #include "rollingraft/client.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

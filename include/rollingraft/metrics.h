@@ -117,20 +117,17 @@ class MetricsRegistry {
   Counter& GetCounter(const std::string& name,
                       const std::map<std::string, std::string>& labels = {});
 
-  Gauge& GetGauge(const std::string& name,
-                  const std::map<std::string, std::string>& labels = {});
+  Gauge& GetGauge(const std::string& name, const std::map<std::string, std::string>& labels = {});
 
-  Histogram& GetHistogram(
-      const std::string& name, const std::vector<double>& buckets,
-      const std::map<std::string, std::string>& labels = {});
+  Histogram& GetHistogram(const std::string& name, const std::vector<double>& buckets,
+                          const std::map<std::string, std::string>& labels = {});
 
   /** Remove a previously registered counter (no-op if absent). */
   void RemoveCounter(const std::string& name,
                      const std::map<std::string, std::string>& labels = {});
 
   /** Remove a previously registered gauge (no-op if absent). */
-  void RemoveGauge(const std::string& name,
-                   const std::map<std::string, std::string>& labels = {});
+  void RemoveGauge(const std::string& name, const std::map<std::string, std::string>& labels = {});
 
   /** Remove a previously registered histogram (no-op if absent). */
   void RemoveHistogram(const std::string& name,

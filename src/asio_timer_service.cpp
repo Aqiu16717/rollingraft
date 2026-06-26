@@ -30,8 +30,7 @@ void AsioTimerService::Start() {
 
   if (owns_io_context_) {
     io_thread_exited_.store(false, std::memory_order_relaxed);
-    work_guard_ = std::make_unique<
-        asio::executor_work_guard<asio::io_context::executor_type>>(
+    work_guard_ = std::make_unique<asio::executor_work_guard<asio::io_context::executor_type>>(
         io_context_.get_executor());
     io_thread_ = std::thread([this]() {
       try {
@@ -132,22 +131,21 @@ TimerId AsioTimerService::SetTimeout(std::chrono::milliseconds delay,
     timers_[id] = timer;
   }
 
-  timer->asio_timer->async_wait(
-      asio::bind_executor(strand_, [this, id, timer](std::error_code ec) {
-        if (!ec) {
-          if (timer->callback) {
-            try {
-              timer->callback();
-            } catch (const std::exception& e) {
-              LOG_ERROR("Timer callback exception: {}", e.what());
-            } catch (...) {
-              LOG_ERROR("Timer callback unknown exception");
-            }
-          }
+  timer->asio_timer->async_wait(asio::bind_executor(strand_, [this, id, timer](std::error_code ec) {
+    if (!ec) {
+      if (timer->callback) {
+        try {
+          timer->callback();
+        } catch (const std::exception& e) {
+          LOG_ERROR("Timer callback exception: {}", e.what());
+        } catch (...) {
+          LOG_ERROR("Timer callback unknown exception");
         }
-        std::lock_guard<std::mutex> lock(timers_mutex_);
-        timers_.erase(id);
-      }));
+      }
+    }
+    std::lock_guard<std::mutex> lock(timers_mutex_);
+    timers_.erase(id);
+  }));
 
   return id;
 }
@@ -197,8 +195,7 @@ TimerId AsioTimerService::SetInterval(std::chrono::milliseconds interval,
     if (running_) {
       try {
         timer->asio_timer->expires_after(interval);
-        timer->asio_timer->async_wait(
-            asio::bind_executor(strand_, *handler));
+        timer->asio_timer->async_wait(asio::bind_executor(strand_, *handler));
       } catch (const std::exception& e) {
         LOG_ERROR("Failed to reschedule interval timer: {}", e.what());
       }

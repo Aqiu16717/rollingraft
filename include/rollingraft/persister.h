@@ -12,12 +12,13 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <rollingraft/raft_log.h>
-#include <rollingraft/status.h>
-#include <rollingraft/types.h>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <rollingraft/raft_log.h>
+#include <rollingraft/status.h>
+#include <rollingraft/types.h>
 
 namespace rollingraft {
 
@@ -115,8 +116,7 @@ class Persister {
    * @param out Output vector for entries
    * @return Status::OK() on success
    */
-  virtual Status GetEntries(uint64_t start, uint64_t end,
-                            std::vector<RaftLogEntry>* out) = 0;
+  virtual Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) = 0;
 
   /**
    * Get a single log entry.
@@ -166,8 +166,8 @@ class Persister {
    * @param last_term Last log term included in snapshot
    * @return Status::OK() on success
    */
-  virtual Status SaveSnapshot(const std::string& snapshot_data,
-                              uint64_t last_index, uint64_t last_term) {
+  virtual Status SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
+                              uint64_t last_term) {
     (void)snapshot_data;
     (void)last_index;
     (void)last_term;
@@ -211,9 +211,8 @@ class Persister {
    * @param last_term Last log term included in snapshot
    * @return Status::OK() on success
    */
-  virtual Status SaveSnapshotStream(
-      const std::function<bool(std::string& chunk)>& chunk_provider,
-      uint64_t last_index, uint64_t last_term) {
+  virtual Status SaveSnapshotStream(const std::function<bool(std::string& chunk)>& chunk_provider,
+                                    uint64_t last_index, uint64_t last_term) {
     // Default: collect all chunks and call SaveSnapshot
     std::string data;
     std::string chunk;
@@ -235,8 +234,8 @@ class Persister {
    * @return Status::OK() on success
    */
   virtual Status LoadSnapshotStream(
-      const std::function<void(const std::string& chunk)>& chunk_consumer,
-      uint64_t& last_index, uint64_t& last_term) {
+      const std::function<void(const std::string& chunk)>& chunk_consumer, uint64_t& last_index,
+      uint64_t& last_term) {
     // Default: call LoadSnapshot and pass entire data
     std::string data;
     auto status = LoadSnapshot(data, last_index, last_term);

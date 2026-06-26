@@ -73,8 +73,7 @@ class MockStateMachine : public StateMachine {
 
     size_t Read(uint64_t offset, uint8_t* dest, size_t length) override {
       if (offset >= data.size()) return 0;
-      size_t to_copy =
-          std::min(length, data.size() - static_cast<size_t>(offset));
+      size_t to_copy = std::min(length, data.size() - static_cast<size_t>(offset));
       std::memcpy(dest, data.data() + offset, to_copy);
       return to_copy;
     }

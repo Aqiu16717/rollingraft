@@ -8,13 +8,14 @@
 
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <iomanip>
+#include <iostream>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "rollingraft/raft_log.h"
+
 #include "raft_log_entry.pb.h"
 #include <nlohmann/json.hpp>
 
@@ -75,7 +76,10 @@ static std::string Base64Decode(const std::string& encoded) {
   uint8_t array4[4], array3[3];
   while (in_len-- && encoded[in_] != '=') {
     int val = lookup(encoded[in_]);
-    if (val == -1) { in_++; continue; }
+    if (val == -1) {
+      in_++;
+      continue;
+    }
     array4[i++] = static_cast<uint8_t>(val);
     in_++;
     if (i == 4) {
@@ -101,8 +105,7 @@ static std::string Base64Decode(const std::string& encoded) {
 // ------------------------------------------------------------------
 
 static std::string RandomString(size_t len, std::mt19937& rng) {
-  static const char kChars[] =
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  static const char kChars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   std::uniform_int_distribution<size_t> dist(0, sizeof(kChars) - 2);
   std::string s;
   s.reserve(len);
@@ -110,8 +113,7 @@ static std::string RandomString(size_t len, std::mt19937& rng) {
   return s;
 }
 
-static RaftLogEntry MakeEntry(uint64_t index, uint64_t term,
-                              const std::string& data,
+static RaftLogEntry MakeEntry(uint64_t index, uint64_t term, const std::string& data,
                               const std::string& command) {
   RaftLogEntry e;
   e.index_ = index;
@@ -187,8 +189,7 @@ struct BenchmarkResult {
 };
 
 static BenchmarkResult RunBenchmark(
-    const std::string& name,
-    const std::vector<RaftLogEntry>& entries,
+    const std::string& name, const std::vector<RaftLogEntry>& entries,
     std::function<std::string(const RaftLogEntry&)> serialize,
     std::function<bool(const std::string&, RaftLogEntry&)> deserialize) {
   const int kIterations = 100000;
@@ -220,7 +221,8 @@ static BenchmarkResult RunBenchmark(
     deserialized.push_back(tmp);
   }
   auto t3 = std::chrono::steady_clock::now();
-  double deserialize_ns = std::chrono::duration<double, std::nano>(t3 - t2).count() / serialized.size();
+  double deserialize_ns =
+      std::chrono::duration<double, std::nano>(t3 - t2).count() / serialized.size();
 
   size_t total_bytes = 0;
   for (const auto& s : serialized) total_bytes += s.size();
@@ -265,7 +267,8 @@ int main() {
 
     double serialize_speedup = json_result.serialize_ns / pb_result.serialize_ns;
     double deserialize_speedup = json_result.deserialize_ns / pb_result.deserialize_ns;
-    double size_reduction = static_cast<double>(json_result.serialized_bytes) / pb_result.serialized_bytes;
+    double size_reduction =
+        static_cast<double>(json_result.serialized_bytes) / pb_result.serialized_bytes;
 
     std::cout << "Speedup: serialize=" << std::setprecision(2) << serialize_speedup << "x"
               << " deserialize=" << deserialize_speedup << "x"

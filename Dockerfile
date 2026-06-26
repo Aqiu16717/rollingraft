@@ -9,7 +9,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
+    libprotobuf-dev \
     libsnappy-dev \
+    libssl-dev \
+    pkg-config \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -36,7 +40,9 @@ FROM ubuntu:22.04 AS runtime
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
+    libprotobuf23 \
     libsnappy1v5 \
+    libssl3 \
     curl \
     netcat \
     iputils-ping \
@@ -51,6 +57,12 @@ COPY --from=builder /build/install/ /app/
 # Copy wait-for-cluster helper script
 COPY --from=builder /build/scripts/wait-for-cluster.sh /app/bin/
 RUN chmod +x /app/bin/wait-for-cluster.sh
+
+# Copy test TLS certificates used by integration tests
+COPY --from=builder /build/tests/certs/ /build/tests/certs/
+
+# Copy test certificates used by integration tests
+COPY --from=builder /build/tests/certs /build/tests/certs
 
 # Create data directory
 RUN mkdir -p /app/data

@@ -57,23 +57,21 @@ OperationResult DoReadOperation() {
 }
 
 void PrintUsage(const char* program) {
-  std::cout
-      << "Usage: " << program << " [options] <server1> <server2> ...\n"
-      << "\n"
-      << "Options:\n"
-      << "  -t, --type <write|read|mixed>  Benchmark type (default: write)\n"
-      << "  -d, --duration <seconds>       Test duration (default: 10)\n"
-      << "  -c, --clients <n>              Number of concurrent clients "
-         "(default: 1)\n"
-      << "  -s, --size <bytes>             Payload size (default: 100)\n"
-      << "  -o, --output <file>            Save results to JSON file\n"
-      << "  -h, --help                     Show this help\n"
-      << "\n"
-      << "Examples:\n"
-      << "  " << program << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n"
-      << "  " << program << " -t read -d 30 -c 4 127.0.0.1:8001\n"
-      << "  " << program
-      << " -t mixed -s 1024 -o results.json 127.0.0.1:8001\n";
+  std::cout << "Usage: " << program << " [options] <server1> <server2> ...\n"
+            << "\n"
+            << "Options:\n"
+            << "  -t, --type <write|read|mixed>  Benchmark type (default: write)\n"
+            << "  -d, --duration <seconds>       Test duration (default: 10)\n"
+            << "  -c, --clients <n>              Number of concurrent clients "
+               "(default: 1)\n"
+            << "  -s, --size <bytes>             Payload size (default: 100)\n"
+            << "  -o, --output <file>            Save results to JSON file\n"
+            << "  -h, --help                     Show this help\n"
+            << "\n"
+            << "Examples:\n"
+            << "  " << program << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n"
+            << "  " << program << " -t read -d 30 -c 4 127.0.0.1:8001\n"
+            << "  " << program << " -t mixed -s 1024 -o results.json 127.0.0.1:8001\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -135,14 +133,11 @@ int main(int argc, char* argv[]) {
   }
   std::cout << std::endl;
   std::cout << "Type: "
-            << (config.operation_type == BenchmarkConfig::OperationType::kWrite
-                    ? "write"
-                : config.operation_type == BenchmarkConfig::OperationType::kRead
-                    ? "read"
-                    : "mixed")
+            << (config.operation_type == BenchmarkConfig::OperationType::kWrite  ? "write"
+                : config.operation_type == BenchmarkConfig::OperationType::kRead ? "read"
+                                                                                 : "mixed")
             << std::endl;
-  std::cout << "Duration: " << config.duration.count() << " seconds"
-            << std::endl;
+  std::cout << "Duration: " << config.duration.count() << " seconds" << std::endl;
   std::cout << "Clients: " << config.num_clients << std::endl;
   std::cout << "Payload size: " << config.payload_size << " bytes" << std::endl;
   std::cout << "======================================" << std::endl;
@@ -158,11 +153,9 @@ int main(int argc, char* argv[]) {
 
   // Check if cluster is healthy
   if (!g_client->IsHealthy()) {
-    std::cout << "Warning: Could not connect to cluster. Benchmark may fail."
-              << std::endl;
+    std::cout << "Warning: Could not connect to cluster. Benchmark may fail." << std::endl;
   } else {
-    std::cout << "Connected. Leader: " << g_client->GetLeaderAddr()
-              << std::endl;
+    std::cout << "Connected. Leader: " << g_client->GetLeaderAddr() << std::endl;
   }
 
   // Run benchmark
@@ -183,8 +176,7 @@ int main(int argc, char* argv[]) {
     stats = benchmark.Run();
   } else {
     // Multi-client benchmark - run concurrent benchmarks and aggregate
-    std::cout << "Running with " << config.num_clients
-              << " concurrent clients..." << std::endl;
+    std::cout << "Running with " << config.num_clients << " concurrent clients..." << std::endl;
 
     std::vector<std::future<BenchmarkStats>> futures;
 
@@ -216,12 +208,10 @@ int main(int argc, char* argv[]) {
       stats.failure_count += s.failure_count;
     }
     stats.operations_per_second =
-        (static_cast<double>(stats.total_operations) * 1000.0) /
-        stats.duration_ms.count();
-    stats.success_rate =
-        (stats.total_operations > 0)
-            ? static_cast<double>(stats.success_count) / stats.total_operations
-            : 0.0;
+        (static_cast<double>(stats.total_operations) * 1000.0) / stats.duration_ms.count();
+    stats.success_rate = (stats.total_operations > 0)
+                             ? static_cast<double>(stats.success_count) / stats.total_operations
+                             : 0.0;
 
     // Use max latency from all clients as conservative estimate
     for (const auto& s : all_stats) {

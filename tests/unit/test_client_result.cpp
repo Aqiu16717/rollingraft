@@ -3,10 +3,10 @@
  * @brief Unit tests for ClientResult class
  */
 
-#include <gtest/gtest.h>
-
 #include "rollingraft/client.h"
 #include "rollingraft/status.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

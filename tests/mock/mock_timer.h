@@ -27,11 +27,9 @@ class MockTimerService : public TimerService {
   void Start() override {}
   void Stop() override;
 
-  TimerId SetTimeout(std::chrono::milliseconds delay,
-                     std::function<void()> callback) override;
+  TimerId SetTimeout(std::chrono::milliseconds delay, std::function<void()> callback) override;
 
-  TimerId SetInterval(std::chrono::milliseconds interval,
-                      std::function<void()> callback) override;
+  TimerId SetInterval(std::chrono::milliseconds interval, std::function<void()> callback) override;
 
   bool CancelTimer(TimerId id) override;
 

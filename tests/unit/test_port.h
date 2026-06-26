@@ -2,8 +2,9 @@
 
 #include <atomic>
 #include <cstdint>
-#include <unistd.h>
 #include <vector>
+
+#include <unistd.h>
 
 /**
  * Return a unique ephemeral port for unit testing.
@@ -13,8 +14,7 @@
  * port collisions when ctest runs tests in parallel with -jN.
  */
 inline uint16_t GetUniqueTestPort() {
-  static uint16_t base =
-      static_cast<uint16_t>(20000 + (getpid() % 30000));
+  static uint16_t base = static_cast<uint16_t>(20000 + (getpid() % 30000));
   static std::atomic<uint16_t> counter{0};
   return static_cast<uint16_t>(base + counter.fetch_add(1));
 }

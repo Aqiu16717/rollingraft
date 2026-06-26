@@ -55,19 +55,16 @@ class LeaderTransferScenario : public ClusterBenchmark {
     // Run steady load for 5 seconds
     std::cout << "Running steady load for 5 seconds..." << std::endl;
     auto steady_start = std::chrono::steady_clock::now();
-    while (std::chrono::steady_clock::now() - steady_start <
-           std::chrono::seconds(5)) {
+    while (std::chrono::steady_clock::now() - steady_start < std::chrono::seconds(5)) {
       auto status = ExecuteCommand("load");
       if (!status.ok()) {
-        std::cout << "Operation failed during steady state: "
-                  << status.ToString() << std::endl;
+        std::cout << "Operation failed during steady state: " << status.ToString() << std::endl;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
     // Stop the leader to simulate transfer
-    std::cout << "\nStopping leader (node " << (leader_idx_ + 1) << ")..."
-              << std::endl;
+    std::cout << "\nStopping leader (node " << (leader_idx_ + 1) << ")..." << std::endl;
     auto transfer_start = std::chrono::steady_clock::now();
     StopNode(leader_idx_);
 
@@ -82,8 +79,7 @@ class LeaderTransferScenario : public ClusterBenchmark {
     while (std::chrono::steady_clock::now() - transfer_start < max_wait) {
       // Check if any remaining node is leader
       for (size_t i = 0; i < nodes_.size(); ++i) {
-        if (i != static_cast<size_t>(leader_idx_) && nodes_[i] &&
-            nodes_[i]->IsLeader()) {
+        if (i != static_cast<size_t>(leader_idx_) && nodes_[i] && nodes_[i]->IsLeader()) {
           new_leader_elected = true;
           break;
         }
@@ -103,8 +99,8 @@ class LeaderTransferScenario : public ClusterBenchmark {
     }
 
     auto transfer_end = std::chrono::steady_clock::now();
-    auto downtime = std::chrono::duration_cast<std::chrono::milliseconds>(
-        transfer_end - transfer_start);
+    auto downtime =
+        std::chrono::duration_cast<std::chrono::milliseconds>(transfer_end - transfer_start);
 
     std::cout << "\nTransfer complete!" << std::endl;
     std::cout << "Downtime: " << downtime.count() << " ms" << std::endl;
@@ -118,12 +114,10 @@ class LeaderTransferScenario : public ClusterBenchmark {
     stats.failure_count = ops_failed;
     stats.success_rate =
         (ops_during_transfer > 0)
-            ? static_cast<double>(ops_during_transfer - ops_failed) /
-                  ops_during_transfer
+            ? static_cast<double>(ops_during_transfer - ops_failed) / ops_during_transfer
             : 0.0;
     stats.duration_ms = downtime;
-    stats.operations_per_second =
-        downtime.count() > 0 ? 1000.0 / downtime.count() : 0.0;
+    stats.operations_per_second = downtime.count() > 0 ? 1000.0 / downtime.count() : 0.0;
     stats.latency_p50_us = static_cast<double>(downtime.count() * 1000);
     stats.latency_p99_us = static_cast<double>(downtime.count() * 1000);
 
@@ -134,7 +128,6 @@ class LeaderTransferScenario : public ClusterBenchmark {
   int leader_idx_ = -1;
 };
 
-REGISTER_SCENARIO(leader_transfer,
-                  []() { return std::make_unique<LeaderTransferScenario>(); });
+REGISTER_SCENARIO(leader_transfer, []() { return std::make_unique<LeaderTransferScenario>(); });
 
 }  // namespace rollingraft

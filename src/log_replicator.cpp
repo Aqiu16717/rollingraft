@@ -5,9 +5,8 @@ using namespace rollingraft;
 void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
   // PRECONDITION: replication_mtx_ is held by caller
   auto cfg = runtime_config_->Get();
-  heartbeat_timer_ = timer_->SetInterval(
-      std::chrono::milliseconds(cfg.heartbeat_interval_ms),
-      [this]() { OnHeartbeatTimeout(); });
+  heartbeat_timer_ = timer_->SetInterval(std::chrono::milliseconds(cfg.heartbeat_interval_ms),
+                                         [this]() { OnHeartbeatTimeout(); });
 }
 
 void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
@@ -79,9 +78,8 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
         continue;
       }
 
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         now - it->second)
-                         .count();
+      auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
       if (elapsed >= 0 && static_cast<uint32_t>(elapsed) >= config_.dead_node_timeout_ms) {
         dead_nodes.push_back(peer_id);
       }
@@ -96,9 +94,8 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
       uint32_t majority_after_remove = remaining / 2 + 1;
       int active_voters = 1;  // Leader counts itself
       for (const auto& [peer_id, ack_time] : quorum_acks_) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - ack_time)
-                           .count();
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
         if (elapsed >= 0 &&
             static_cast<uint32_t>(elapsed) < runtime_config_->Get().election_timeout_ms &&
             cluster_config_.IsVoter(peer_id) && peer_id != dead_id) {
@@ -106,19 +103,20 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
         }
       }
       if (static_cast<uint32_t>(active_voters) < majority_after_remove) {
-        LOG_WARN("Node {}: dead node {} detected but removing it would lose quorum ({} < {}), skipping",
-                 server_id_, dead_id, active_voters, majority_after_remove);
+        LOG_WARN(
+            "Node {}: dead node {} detected but removing it would lose quorum ({} < {}), skipping",
+            server_id_, dead_id, active_voters, majority_after_remove);
         continue;
       }
     }
 
-    LOG_INFO("Node {}: auto-removing dead node {} (no contact for {}ms)",
-             server_id_, dead_id, config_.dead_node_timeout_ms);
+    LOG_INFO("Node {}: auto-removing dead node {} (no contact for {}ms)", server_id_, dead_id,
+             config_.dead_node_timeout_ms);
 
     if (metrics_) {
-      metrics_->GetCounter("raft_dead_nodes_detected_total",
-                           {{"node_id", std::to_string(server_id_)},
-                            {"peer_id", std::to_string(dead_id)}})
+      metrics_
+          ->GetCounter("raft_dead_nodes_detected_total", {{"node_id", std::to_string(server_id_)},
+                                                          {"peer_id", std::to_string(dead_id)}})
           .Increment();
     }
 
@@ -135,8 +133,8 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
     timer_->SetTimeout(std::chrono::milliseconds(1), [this, dead_id]() {
       auto status = RemoveNode(dead_id);
       if (!status.ok()) {
-        LOG_WARN("Node {}: auto-removal of dead node {} failed: {}",
-                 server_id_, dead_id, status.ToString());
+        LOG_WARN("Node {}: auto-removal of dead node {} failed: {}", server_id_, dead_id,
+                 status.ToString());
       }
     });
   }
@@ -156,16 +154,14 @@ void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
     if (it->second >= commit_index_) {
       // Schedule promotion asynchronously to avoid lock re-entrancy.
       // PromoteLearner will check pending_config_change_ internally.
-      LOG_INFO("Node {} auto-promoting learner {} (match={} commit={})",
-               server_id_, learner_id, it->second, commit_index_);
-      timer_->SetTimeout(std::chrono::milliseconds(0),
-                         [this, learner_id]() {
-                           auto status = PromoteLearner(learner_id);
-                           if (!status.ok()) {
-                             LOG_DEBUG("Auto-promote learner {} failed: {}",
-                                       learner_id, status.GetMessage());
-                           }
-                         });
+      LOG_INFO("Node {} auto-promoting learner {} (match={} commit={})", server_id_, learner_id,
+               it->second, commit_index_);
+      timer_->SetTimeout(std::chrono::milliseconds(0), [this, learner_id]() {
+        auto status = PromoteLearner(learner_id);
+        if (!status.ok()) {
+          LOG_DEBUG("Auto-promote learner {} failed: {}", learner_id, status.GetMessage());
+        }
+      });
     }
   }
 }
@@ -195,9 +191,8 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   // Check if we need to send snapshot instead
   Index first_log_index = log_.GetFirstIndex();
   if (next_idx < first_log_index) {
-    LOG_INFO(
-        "Node {}: next_idx {} < first_log_index {}, sending snapshot to {}",
-        server_id_, next_idx, first_log_index, peer_id);
+    LOG_INFO("Node {}: next_idx {} < first_log_index {}, sending snapshot to {}", server_id_,
+             next_idx, first_log_index, peer_id);
     // Bridge: replication_mtx_ -> snapshot_mtx_ per lock hierarchy
     std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
     SendInstallSnapshotToPeerLocked(peer_id);
@@ -210,8 +205,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   req.prev_log_index_ = next_idx - 1;
   req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
   req.leader_commit_ = commit_index_;
-  req.correlation_id_ =
-      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
+  req.correlation_id_ = next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   // Get log entries — in group commit mode we send entries that are
   // in the in-memory log, not just fsynced ones. The pipeline ensures
@@ -220,8 +214,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   Index effective_last = last_index;
   if (next_idx <= effective_last) {
     auto cfg = runtime_config_->Get();
-    Index end =
-        std::min(next_idx + cfg.max_entries_per_append, effective_last + 1);
+    Index end = std::min(next_idx + cfg.max_entries_per_append, effective_last + 1);
     req.entries_ = log_.GetEntries(next_idx, end);
   }
 
@@ -239,8 +232,8 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
       }
     }
     if (inflight_count >= window) {
-      LOG_DEBUG("Node {}: pipeline full on peer {}, inflight={}/{}",
-                server_id_, peer_id, inflight_count, window);
+      LOG_DEBUG("Node {}: pipeline full on peer {}, inflight={}/{}", server_id_, peer_id,
+                inflight_count, window);
       return;
     }
   }
@@ -249,8 +242,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   std::string data;
   auto status = protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
-    LOG_ERROR("Failed to serialize AppendEntriesRequest: {}",
-              status.ToString());
+    LOG_ERROR("Failed to serialize AppendEntriesRequest: {}", status.ToString());
     return;
   }
 
@@ -269,40 +261,37 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_appendentries_sent_total",
-                     {{"node_id", std::to_string(server_id_)},
-                      {"peer_id", std::to_string(peer_id)}})
+        ->GetCounter("raft_appendentries_sent_total", {{"node_id", std::to_string(server_id_)},
+                                                       {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
 
   {
     auto cfg = runtime_config_->Get();
-    network_->SendRpc(
-        peer_id, it_addr->second, data, req.correlation_id_,
-        std::chrono::milliseconds(cfg.rpc_timeout_ms),
-        [this, peer_id, is_heartbeat](const std::string& resp, bool success,
-                        const std::string& error) {
-          if (!success) {
-            LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id,
-                     error);
-            ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
-            return;
-          }
+    network_->SendRpc(peer_id, it_addr->second, data, req.correlation_id_,
+                      std::chrono::milliseconds(cfg.rpc_timeout_ms),
+                      [this, peer_id, is_heartbeat](const std::string& resp, bool success,
+                                                    const std::string& error) {
+                        if (!success) {
+                          LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id, error);
+                          ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
+                          return;
+                        }
 
-          AppendEntriesResponse response;
-          auto status = protocol_->DeserializeResponse(resp, response);
-          if (!status.ok()) {
-            LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
-                      status.ToString());
-            ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
-            return;
-          }
-          if (is_heartbeat) {
-            HandleHeartbeatResponse(peer_id, response);
-          } else {
-            HandleAppendEntriesResponse(peer_id, response);
-          }
-        });
+                        AppendEntriesResponse response;
+                        auto status = protocol_->DeserializeResponse(resp, response);
+                        if (!status.ok()) {
+                          LOG_ERROR("Failed to deserialize AppendEntriesResponse: {}",
+                                    status.ToString());
+                          ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
+                          return;
+                        }
+                        if (is_heartbeat) {
+                          HandleHeartbeatResponse(peer_id, response);
+                        } else {
+                          HandleAppendEntriesResponse(peer_id, response);
+                        }
+                      });
   }
 }
 
@@ -348,13 +337,12 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_appendentries_retries_total",
-                     {{"node_id", std::to_string(server_id_)},
-                      {"peer_id", std::to_string(peer_id)}})
+        ->GetCounter("raft_appendentries_retries_total", {{"node_id", std::to_string(server_id_)},
+                                                          {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
-  LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms",
-           server_id_, retry.attempts, peer_id, delay);
+  LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms", server_id_,
+           retry.attempts, peer_id, delay);
 
   timer_->SetTimeout(std::chrono::milliseconds(delay), [this, peer_id]() {
     std::lock_guard<std::mutex> lock_e(election_mtx_);
@@ -365,8 +353,8 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   });
 }
 
-void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
-    NodeId from, const AppendEntriesResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
+                                                         const AppendEntriesResponse& resp) {
   // Bridge pattern: election_mtx_ first, then replication_mtx_
   // HandleAppendEntriesResponse may trigger leader step-down (election state)
   // and updates match_index_/next_index_ (replication state).
@@ -407,8 +395,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     if (metrics_) {
       metrics_
           ->GetCounter("raft_appendentries_success_total",
-                       {{"node_id", std::to_string(server_id_)},
-                        {"peer_id", std::to_string(from)}})
+                       {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
           .Increment();
     }
     // Update progress based on the actual start index of this batch.
@@ -436,11 +423,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
       int ack_count = 1;  // Leader counts itself
       std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
       for (const auto& [peer_id, ack_time] : quorum_acks_) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           now - ack_time)
-                           .count();
-        if (elapsed >= 0 &&
-            static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
+        if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
             cluster_config_.IsVoter(peer_id)) {
           ++ack_count;
         }
@@ -473,8 +458,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     if (metrics_) {
       metrics_
           ->GetCounter("raft_appendentries_failure_total",
-                       {{"node_id", std::to_string(server_id_)},
-                        {"peer_id", std::to_string(from)}})
+                       {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
           .Increment();
     }
     // Log mismatch: clear all inflight entries for this peer because
@@ -509,8 +493,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
   }
 }
 
-void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(
-    NodeId from, const AppendEntriesResponse& resp) {
+void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
+                                                     const AppendEntriesResponse& resp) {
   // Bridge pattern: election_mtx_ first, then replication_mtx_
   std::lock_guard<std::mutex> lock_e(election_mtx_);
   std::unique_lock<std::mutex> lock_r(replication_mtx_);
@@ -544,11 +528,8 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(
     int ack_count = 1;  // Leader counts itself
     std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
     for (const auto& [peer_id, ack_time] : quorum_acks_) {
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         now - ack_time)
-                         .count();
-      if (elapsed >= 0 &&
-          static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
+      if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms &&
           cluster_config_.IsVoter(peer_id)) {
         ++ack_count;
       }
@@ -579,11 +560,8 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   // Count how many VOTERS have acked within election_timeout
   int ack_count = 1;  // Leader counts itself
   for (const auto& [peer_id, ack_time] : quorum_acks_) {
-    auto elapsed =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time)
-            .count();
-    if (elapsed >= 0 &&
-        static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
+    if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
       if (cluster_config_.IsVoter(peer_id)) {
         ++ack_count;
@@ -598,13 +576,11 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   }
 
   if (static_cast<uint32_t>(ack_count) < majority) {
-    LOG_WARN(
-        "Node {} lost quorum (acks={}/{}), stepping down from leadership",
-        server_id_, ack_count, majority);
+    LOG_WARN("Node {} lost quorum (acks={}/{}), stepping down from leadership", server_id_,
+             ack_count, majority);
     if (metrics_) {
       metrics_
-          ->GetCounter("raft_checkquorum_stepdown_total",
-                       {{"node_id", std::to_string(server_id_)}})
+          ->GetCounter("raft_checkquorum_stepdown_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
     BecomeFollowerLocked(current_term_);
@@ -630,11 +606,9 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     {
       std::shared_lock<std::shared_mutex> lock_m(membership_mtx_);
       leader_in_new = cluster_config_.IsVoter(server_id_);
-      leader_in_old =
-          cluster_config_.is_joint &&
-          std::find(cluster_config_.old_nodes.begin(),
-                    cluster_config_.old_nodes.end(),
-                    server_id_) != cluster_config_.old_nodes.end();
+      leader_in_old = cluster_config_.is_joint &&
+                      std::find(cluster_config_.old_nodes.begin(), cluster_config_.old_nodes.end(),
+                                server_id_) != cluster_config_.old_nodes.end();
     }
 
     // Group commit: leader counts itself as long as the entry is in
@@ -653,8 +627,7 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
           peer_in_new = cluster_config_.IsVoter(peer_id);
           peer_in_old =
               cluster_config_.is_joint &&
-              std::find(cluster_config_.old_nodes.begin(),
-                        cluster_config_.old_nodes.end(),
+              std::find(cluster_config_.old_nodes.begin(), cluster_config_.old_nodes.end(),
                         peer_id) != cluster_config_.old_nodes.end();
         }
         if (peer_in_new) ++new_count;
@@ -671,17 +644,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     if (can_commit) {
       commit_index_ = index;
       if (metrics_) {
-        metrics_
-            ->GetCounter("raft_commits_total",
-                         {{"node_id", std::to_string(server_id_)}})
+        metrics_->GetCounter("raft_commits_total", {{"node_id", std::to_string(server_id_)}})
             .Increment();
-        metrics_
-            ->GetGauge("raft_commit_index",
-                       {{"node_id", std::to_string(server_id_)}})
+        metrics_->GetGauge("raft_commit_index", {{"node_id", std::to_string(server_id_)}})
             .Set(static_cast<double>(commit_index_));
       }
-      LOG_INFO("Node {} commit index advanced to {}", server_id_,
-               commit_index_);
+      LOG_INFO("Node {} commit index advanced to {}", server_id_, commit_index_);
       ApplyCommittedLocked();
       break;
     }

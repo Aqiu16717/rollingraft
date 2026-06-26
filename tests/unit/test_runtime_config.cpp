@@ -3,12 +3,13 @@
  * @brief Unit tests for RuntimeConfig hot reload
  */
 
-#include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/runtime_config.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

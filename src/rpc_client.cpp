@@ -6,17 +6,18 @@
  * to the Raft cluster.
  */
 
-#include <arpa/inet.h>
-#include <asio.hpp>
 #include <chrono>
 #include <cstring>
 #include <string>
+
+#include <asio.hpp>
 
 #include "rollingraft/logger.h"
 #include "rollingraft/rpc.h"
 #include "rollingraft/status.h"
 
 #include "nlohmann/json.hpp"
+#include <arpa/inet.h>
 
 namespace rollingraft {
 
@@ -32,8 +33,7 @@ static std::string SerializeClientRequest(const ClientRequest& req) {
 }
 
 // Helper to deserialize ClientResponse from JSON
-static bool DeserializeClientResponse(const std::string& data,
-                                      ClientResponse& resp) {
+static bool DeserializeClientResponse(const std::string& data, ClientResponse& resp) {
   try {
     auto j = nlohmann::json::parse(data);
 
@@ -72,12 +72,10 @@ static std::string SerializeReadIndexRequest(const ReadIndexRequest& req) {
 }
 
 // Helper to deserialize ReadIndexResponse from JSON
-static bool DeserializeReadIndexResponse(const std::string& data,
-                                         ReadIndexResponse& resp) {
+static bool DeserializeReadIndexResponse(const std::string& data, ReadIndexResponse& resp) {
   try {
     auto j = nlohmann::json::parse(data);
-    if (!j.contains("term") || !j.contains("read_index") ||
-        !j.contains("leader_valid")) {
+    if (!j.contains("term") || !j.contains("read_index") || !j.contains("leader_valid")) {
       return false;
     }
     resp.term_ = j["term"];
@@ -91,8 +89,7 @@ static bool DeserializeReadIndexResponse(const std::string& data,
 
 // Generic synchronous RPC helper using ASIO
 static Status DoRpcCall(const std::string& addr, const std::string& request_data,
-                        std::string& response_data,
-                        std::chrono::milliseconds timeout) {
+                        std::string& response_data, std::chrono::milliseconds timeout) {
   try {
     auto colon_pos = addr.find(':');
     if (colon_pos == std::string::npos) {
@@ -120,13 +117,11 @@ static Status DoRpcCall(const std::string& addr, const std::string& request_data
       }
     });
 
-    asio::async_connect(
-        socket, endpoints,
-        [&](std::error_code ec, const asio::ip::tcp::endpoint&) {
-          connect_done = true;
-          connect_ec = ec;
-          timer.cancel();
-        });
+    asio::async_connect(socket, endpoints, [&](std::error_code ec, const asio::ip::tcp::endpoint&) {
+      connect_done = true;
+      connect_ec = ec;
+      timer.cancel();
+    });
 
     io_context.run_for(timeout);
 
@@ -134,8 +129,7 @@ static Status DoRpcCall(const std::string& addr, const std::string& request_data
       return Status::Error("Timeout connecting to " + addr);
     }
     if (connect_ec) {
-      return Status::Error("Failed to connect to " + addr + ": " +
-                           connect_ec.message());
+      return Status::Error("Failed to connect to " + addr + ": " + connect_ec.message());
     }
 
     uint32_t length = htonl(static_cast<uint32_t>(request_data.size()));
@@ -143,8 +137,7 @@ static Status DoRpcCall(const std::string& addr, const std::string& request_data
     asio::write(socket, asio::buffer(request_data));
 
     uint32_t response_length_net;
-    size_t bytes_read =
-        asio::read(socket, asio::buffer(&response_length_net, sizeof(length)));
+    size_t bytes_read = asio::read(socket, asio::buffer(&response_length_net, sizeof(length)));
     if (bytes_read != sizeof(length)) {
       return Status::Error("Failed to read response length");
     }
@@ -155,8 +148,7 @@ static Status DoRpcCall(const std::string& addr, const std::string& request_data
     }
 
     response_data.resize(response_length);
-    bytes_read =
-        asio::read(socket, asio::buffer(&response_data[0], response_length));
+    bytes_read = asio::read(socket, asio::buffer(&response_data[0], response_length));
     if (bytes_read != response_length) {
       return Status::Error("Failed to read complete response");
     }
@@ -172,8 +164,7 @@ static Status DoRpcCall(const std::string& addr, const std::string& request_data
   }
 }
 
-Status RpcCall(const std::string& addr, const ReadIndexRequest& req,
-               ReadIndexResponse& resp,
+Status RpcCall(const std::string& addr, const ReadIndexRequest& req, ReadIndexResponse& resp,
                std::chrono::milliseconds timeout) {
   std::string request_data = SerializeReadIndexRequest(req);
   std::string response_data;
@@ -187,8 +178,7 @@ Status RpcCall(const std::string& addr, const ReadIndexRequest& req,
   return Status::OK();
 }
 
-Status RpcCall(const std::string& addr, const ClientRequest& req,
-               ClientResponse& resp,
+Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse& resp,
                std::chrono::milliseconds timeout) {
   std::string request_data = SerializeClientRequest(req);
   std::string response_data;

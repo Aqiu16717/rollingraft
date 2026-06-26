@@ -20,31 +20,29 @@
 using namespace rollingraft;
 
 void PrintUsage(const char* program) {
-  std::cout
-      << "Usage: " << program << " [options]\n"
-      << "\n"
-      << "Options:\n"
-      << "  --all                    Run all scenarios\n"
-      << "  --scenario <name>        Run specific scenario\n"
-      << "  --output-dir <dir>       Output directory for results (default: "
-         "benchmark/results)\n"
-      << "  --output <file>          Output file for single scenario\n"
-      << "  --compare                Compare current results against baseline\n"
-      << "  --baseline <file>        Baseline JSON file for comparison\n"
-      << "  --current <file>         Current JSON file for comparison\n"
-      << "  --threshold <ratio>      Regression threshold (default: 0.05 = "
-         "5%)\n"
-      << "  --repetitions <n>        Number of repetitions (default: 3)\n"
-      << "  --list                   List available scenarios\n"
-      << "  --help                   Show this help\n"
-      << "\n"
-      << "Examples:\n"
-      << "  " << program << " --all --output-dir=benchmark/results\n"
-      << "  " << program
-      << " --scenario=single_leader_write --output=results.json\n"
-      << "  " << program
-      << " --compare --baseline=baselines/main/single_leader_write.json "
-         "--current=results.json\n";
+  std::cout << "Usage: " << program << " [options]\n"
+            << "\n"
+            << "Options:\n"
+            << "  --all                    Run all scenarios\n"
+            << "  --scenario <name>        Run specific scenario\n"
+            << "  --output-dir <dir>       Output directory for results (default: "
+               "benchmark/results)\n"
+            << "  --output <file>          Output file for single scenario\n"
+            << "  --compare                Compare current results against baseline\n"
+            << "  --baseline <file>        Baseline JSON file for comparison\n"
+            << "  --current <file>         Current JSON file for comparison\n"
+            << "  --threshold <ratio>      Regression threshold (default: 0.05 = "
+               "5%)\n"
+            << "  --repetitions <n>        Number of repetitions (default: 3)\n"
+            << "  --list                   List available scenarios\n"
+            << "  --help                   Show this help\n"
+            << "\n"
+            << "Examples:\n"
+            << "  " << program << " --all --output-dir=benchmark/results\n"
+            << "  " << program << " --scenario=single_leader_write --output=results.json\n"
+            << "  " << program
+            << " --compare --baseline=baselines/main/single_leader_write.json "
+               "--current=results.json\n";
 }
 
 void ListScenarios() {
@@ -182,8 +180,7 @@ int main(int argc, char* argv[]) {
     return RunScenario(config.scenario_name, config);
   }
 
-  std::cerr
-      << "Error: No action specified. Use --all, --scenario, or --compare.\n";
+  std::cerr << "Error: No action specified. Use --all, --scenario, or --compare.\n";
   PrintUsage(argv[0]);
   return 1;
 }

@@ -47,8 +47,7 @@ class SingleLeaderWriteScenario : public ClusterBenchmark {
   }
 };
 
-REGISTER_SCENARIO(single_leader_write, []() {
-  return std::make_unique<SingleLeaderWriteScenario>();
-});
+REGISTER_SCENARIO(single_leader_write,
+                  []() { return std::make_unique<SingleLeaderWriteScenario>(); });
 
 }  // namespace rollingraft

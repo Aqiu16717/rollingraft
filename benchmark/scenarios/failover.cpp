@@ -68,19 +68,16 @@ class FailoverScenario : public ClusterBenchmark {
     // Run steady load for 5 seconds
     std::cout << "Running steady load for 5 seconds..." << std::endl;
     auto steady_start = std::chrono::steady_clock::now();
-    while (std::chrono::steady_clock::now() - steady_start <
-           std::chrono::seconds(5)) {
+    while (std::chrono::steady_clock::now() - steady_start < std::chrono::seconds(5)) {
       auto status = ExecuteCommand("load");
       if (!status.ok()) {
-        std::cout << "Operation failed during steady state: "
-                  << status.ToString() << std::endl;
+        std::cout << "Operation failed during steady state: " << status.ToString() << std::endl;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     // Kill the leader
-    std::cout << "\nKilling leader (node " << (leader_idx_ + 1) << ")..."
-              << std::endl;
+    std::cout << "\nKilling leader (node " << (leader_idx_ + 1) << ")..." << std::endl;
     auto kill_time = std::chrono::steady_clock::now();
     StopNode(leader_idx_);
 
@@ -107,8 +104,8 @@ class FailoverScenario : public ClusterBenchmark {
           detection_time = std::chrono::steady_clock::now();
           detected = true;
           std::cout << "\nFailure detected after "
-                    << std::chrono::duration_cast<std::chrono::milliseconds>(
-                           detection_time - kill_time)
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(detection_time -
+                                                                             kill_time)
                            .count()
                     << " ms" << std::endl;
         }
@@ -117,20 +114,17 @@ class FailoverScenario : public ClusterBenchmark {
           recovered = true;
           auto recovery_time = std::chrono::steady_clock::now();
 
-          detection_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-              detection_time - kill_time);
-          election_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-              recovery_time - detection_time);
-          recovery_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-              recovery_time - kill_time);
+          detection_ms_ =
+              std::chrono::duration_cast<std::chrono::milliseconds>(detection_time - kill_time);
+          election_ms_ =
+              std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - detection_time);
+          recovery_ms_ =
+              std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - kill_time);
 
           std::cout << "Failover complete!" << std::endl;
-          std::cout << "  Detection time: " << detection_ms_.count() << " ms"
-                    << std::endl;
-          std::cout << "  Election time: " << election_ms_.count() << " ms"
-                    << std::endl;
-          std::cout << "  Total recovery: " << recovery_ms_.count() << " ms"
-                    << std::endl;
+          std::cout << "  Detection time: " << detection_ms_.count() << " ms" << std::endl;
+          std::cout << "  Election time: " << election_ms_.count() << " ms" << std::endl;
+          std::cout << "  Total recovery: " << recovery_ms_.count() << " ms" << std::endl;
           break;
         }
       }
@@ -153,15 +147,13 @@ class FailoverScenario : public ClusterBenchmark {
     stats.failure_count = ops_failed;
     stats.success_rate =
         (ops_during_failover > 0)
-            ? static_cast<double>(ops_during_failover - ops_failed) /
-                  ops_during_failover
+            ? static_cast<double>(ops_during_failover - ops_failed) / ops_during_failover
             : 0.0;
     stats.duration_ms = recovery_ms_;
     // Use recovery time as the key metric (lower is better)
-    stats.operations_per_second =
-        recovery_ms_.count() > 0
-            ? 1000.0 / recovery_ms_.count()  // inverse for comparison
-            : 0.0;
+    stats.operations_per_second = recovery_ms_.count() > 0
+                                      ? 1000.0 / recovery_ms_.count()  // inverse for comparison
+                                      : 0.0;
     stats.latency_p50_us = static_cast<double>(detection_ms_.count() * 1000);
     stats.latency_p99_us = static_cast<double>(recovery_ms_.count() * 1000);
 
@@ -175,7 +167,6 @@ class FailoverScenario : public ClusterBenchmark {
   std::chrono::milliseconds recovery_ms_{0};
 };
 
-REGISTER_SCENARIO(failover,
-                  []() { return std::make_unique<FailoverScenario>(); });
+REGISTER_SCENARIO(failover, []() { return std::make_unique<FailoverScenario>(); });
 
 }  // namespace rollingraft

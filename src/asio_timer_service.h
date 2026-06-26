@@ -11,11 +11,12 @@
  */
 #pragma once
 
-#include <asio.hpp>
 #include <atomic>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+
+#include <asio.hpp>
 
 #include "rollingraft/timer_service.h"
 
@@ -73,8 +74,7 @@ class AsioTimerService : public TimerService {
    * @return TimerId unique identifier for cancellation
    * @note Callback is invoked from io_context thread
    */
-  TimerId SetTimeout(std::chrono::milliseconds delay,
-                     std::function<void()> callback) override;
+  TimerId SetTimeout(std::chrono::milliseconds delay, std::function<void()> callback) override;
 
   /**
    * Schedule a periodic timer.
@@ -84,8 +84,7 @@ class AsioTimerService : public TimerService {
    * @note First invocation after interval, then repeats
    * @note Callback duration affects next interval timing
    */
-  TimerId SetInterval(std::chrono::milliseconds interval,
-                      std::function<void()> callback) override;
+  TimerId SetInterval(std::chrono::milliseconds interval, std::function<void()> callback) override;
 
   /**
    * Cancel a scheduled timer.
@@ -135,8 +134,7 @@ class AsioTimerService : public TimerService {
   asio::io_context* io_ptr_ = nullptr;
 
   // Work guard prevents io_context from exiting when no timers
-  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>
-      work_guard_;
+  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>> work_guard_;
   // Background thread for internal io_context
   std::thread io_thread_;
   // Service state flag

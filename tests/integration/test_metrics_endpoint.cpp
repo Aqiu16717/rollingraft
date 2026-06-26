@@ -1,6 +1,5 @@
 #include <chrono>
 #include <filesystem>
-#include <gtest/gtest.h>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -9,6 +8,7 @@
 
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -50,14 +50,12 @@ class MetricsEndpointTest : public ::testing::Test {
     metrics_addrs_ = FormatAddrs({ports[3], ports[4], ports[5]});
 
     for (int i = 0; i < 3; ++i) {
-      auto config =
-          MakeConfig(i + 1, raft_addrs_[i], raft_addrs_, metrics_addrs_[i]);
+      auto config = MakeConfig(i + 1, raft_addrs_[i], raft_addrs_, metrics_addrs_[i]);
       auto sm = std::make_shared<MockStateMachine>();
       state_machines_.push_back(sm);
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
       auto status = nodes_[i]->Start();
-      EXPECT_TRUE(status.ok())
-          << "Failed to start node " << (i + 1) << ": " << status.ToString();
+      EXPECT_TRUE(status.ok()) << "Failed to start node " << (i + 1) << ": " << status.ToString();
     }
   }
 
@@ -89,9 +87,9 @@ class MetricsEndpointTest : public ::testing::Test {
 
   RaftNode* GetLeader(int timeout_sec = 15) {
     auto start = std::chrono::steady_clock::now();
-    while (std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::steady_clock::now() - start)
-               .count() < timeout_sec) {
+    while (
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
+            .count() < timeout_sec) {
       for (auto& node : nodes_) {
         if (node->IsLeader()) {
           return node.get();
@@ -119,21 +117,13 @@ class MetricsEndpointTest : public ::testing::Test {
     return result;
   }
 
-  std::string FetchMetrics(const std::string& addr) {
-    return FetchUrl(addr, "/metrics");
-  }
+  std::string FetchMetrics(const std::string& addr) { return FetchUrl(addr, "/metrics"); }
 
-  std::string FetchHealthz(const std::string& addr) {
-    return FetchUrl(addr, "/healthz");
-  }
+  std::string FetchHealthz(const std::string& addr) { return FetchUrl(addr, "/healthz"); }
 
-  std::string FetchReadyz(const std::string& addr) {
-    return FetchUrl(addr, "/readyz");
-  }
+  std::string FetchReadyz(const std::string& addr) { return FetchUrl(addr, "/readyz"); }
 
-  std::string FetchStatus(const std::string& addr) {
-    return FetchUrl(addr, "/v1/status");
-  }
+  std::string FetchStatus(const std::string& addr) { return FetchUrl(addr, "/v1/status"); }
 
   std::string PostUrl(const std::string& addr, const std::string& path,
                       const std::string& body = "") {
@@ -193,8 +183,7 @@ TEST_F(MetricsEndpointTest, MetricsShowRoleAndTerm) {
   }
 
   EXPECT_NE(leader_output.find("raft_role{node_id="), std::string::npos);
-  EXPECT_NE(leader_output.find("raft_current_term{node_id="),
-            std::string::npos);
+  EXPECT_NE(leader_output.find("raft_current_term{node_id="), std::string::npos);
 }
 
 TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
@@ -207,14 +196,13 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
 
   // Propose a command and wait for it to commit
   std::atomic<bool> done{false};
-  leader->Propose("metrics_test_cmd", [&done](const ApplyResult& result) {
-    done = result.success;
-  });
+  leader->Propose("metrics_test_cmd",
+                  [&done](const ApplyResult& result) { done = result.success; });
 
   auto start = std::chrono::steady_clock::now();
-  while (!done && std::chrono::duration_cast<std::chrono::seconds>(
-                      std::chrono::steady_clock::now() - start)
-                          .count() < 5) {
+  while (!done &&
+         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
+                 .count() < 5) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 
@@ -225,8 +213,7 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
-  EXPECT_NE(output.find("raft_propose_total"), std::string::npos)
-      << "Missing propose counter";
+  EXPECT_NE(output.find("raft_propose_total"), std::string::npos) << "Missing propose counter";
 }
 
 TEST_F(MetricsEndpointTest, HealthzReturnsAlive) {
@@ -372,8 +359,7 @@ TEST_F(MetricsEndpointTest, TransferLeadershipFromLeader) {
   ASSERT_GE(follower_idx, 0);
 
   std::string body = "{\"target_node_id\":" + std::to_string(follower_idx + 1) + "}";
-  std::string output =
-      PostUrl(metrics_addrs_[leader_idx], "/v1/leadership/transfer", body);
+  std::string output = PostUrl(metrics_addrs_[leader_idx], "/v1/leadership/transfer", body);
   EXPECT_NE(output.find("\"status\""), std::string::npos)
       << "Transfer leadership response: " << output;
 }
@@ -393,8 +379,7 @@ TEST_F(MetricsEndpointTest, TransferLeadershipOnFollowerFails) {
   ASSERT_GE(follower_idx, 0);
 
   std::string body = "{\"target_node_id\":1}";
-  std::string output =
-      PostUrl(metrics_addrs_[follower_idx], "/v1/leadership/transfer", body);
+  std::string output = PostUrl(metrics_addrs_[follower_idx], "/v1/leadership/transfer", body);
   EXPECT_NE(output.find("\"error\""), std::string::npos)
       << "Follower should reject transfer: " << output;
 }
@@ -410,9 +395,7 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
   // Propose a command
   std::atomic<bool> propose_done{false};
   leader->Propose("latency_test_cmd",
-                  [&propose_done](const ApplyResult& result) {
-                    propose_done = result.success;
-                  });
+                  [&propose_done](const ApplyResult& result) { propose_done = result.success; });
 
   // Issue a ReadIndex
   std::atomic<bool> read_done{false};
@@ -420,8 +403,7 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
 
   auto start = std::chrono::steady_clock::now();
   while ((!propose_done || !read_done) &&
-         std::chrono::duration_cast<std::chrono::seconds>(
-             std::chrono::steady_clock::now() - start)
+         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
                  .count() < 5) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
@@ -432,21 +414,15 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
-  EXPECT_NE(output.find("raft_proposal_latency_seconds_bucket"),
-            std::string::npos)
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_bucket"), std::string::npos)
       << "Missing proposal latency histogram";
-  EXPECT_NE(output.find("raft_proposal_latency_seconds_sum"),
-            std::string::npos);
-  EXPECT_NE(output.find("raft_proposal_latency_seconds_count"),
-            std::string::npos);
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_sum"), std::string::npos);
+  EXPECT_NE(output.find("raft_proposal_latency_seconds_count"), std::string::npos);
 
-  EXPECT_NE(output.find("raft_readindex_latency_seconds_bucket"),
-            std::string::npos)
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_bucket"), std::string::npos)
       << "Missing readindex latency histogram";
-  EXPECT_NE(output.find("raft_readindex_latency_seconds_sum"),
-            std::string::npos);
-  EXPECT_NE(output.find("raft_readindex_latency_seconds_count"),
-            std::string::npos);
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_sum"), std::string::npos);
+  EXPECT_NE(output.find("raft_readindex_latency_seconds_count"), std::string::npos);
 }
 
 TEST_F(MetricsEndpointTest, MetricsShowHeartbeatCoalescing) {
@@ -500,15 +476,14 @@ TEST_F(MetricsEndpointTest, MetricsShowLeaderLeaseValid) {
   // Wait for the leader to collect quorum acks and establish a lease.
   auto start = std::chrono::steady_clock::now();
   bool found_valid = false;
-  while (std::chrono::duration_cast<std::chrono::seconds>(
-             std::chrono::steady_clock::now() - start)
+  while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
              .count() < 3) {
     for (int i = 0; i < 3; ++i) {
       std::string out = FetchMetrics(metrics_addrs_[i]);
       if (out.find("raft_leader_lease_valid") != std::string::npos) {
         if (nodes_[i]->IsLeader() &&
-            out.find("raft_leader_lease_valid{node_id=\"" +
-                      std::to_string(i + 1) + "\"} 1") != std::string::npos) {
+            out.find("raft_leader_lease_valid{node_id=\"" + std::to_string(i + 1) + "\"} 1") !=
+                std::string::npos) {
           found_valid = true;
           break;
         }
@@ -554,9 +529,10 @@ TEST_F(MetricsEndpointTest, MetricsShowPeerLag) {
   // Each follower should have a lag line.
   for (int i = 0; i < 3; ++i) {
     if (i == leader_idx) continue;
-    std::string label = "node_id=\"" + std::to_string(leader_idx + 1) +
-                        "\",peer_id=\"" + std::to_string(i + 1) + "\"";
+    std::string label = "node_id=\"" + std::to_string(leader_idx + 1) + "\",peer_id=\"" +
+                        std::to_string(i + 1) + "\"";
     EXPECT_NE(output.find(label), std::string::npos)
-        << "Missing peer lag line for peer " << (i + 1) << " in:\n" << output;
+        << "Missing peer lag line for peer " << (i + 1) << " in:\n"
+        << output;
   }
 }

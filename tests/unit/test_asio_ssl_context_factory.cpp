@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
-
 #include "rollingraft/asio_ssl_context_factory.h"
+
+#include <gtest/gtest.h>
 
 namespace rollingraft {
 

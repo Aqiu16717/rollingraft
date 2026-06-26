@@ -17,8 +17,7 @@
 
 class CounterSnapshot : public rollingraft::Snapshot {
  public:
-  CounterSnapshot(int64_t value, uint64_t index, uint64_t term)
-      : value_(value) {
+  CounterSnapshot(int64_t value, uint64_t index, uint64_t term) : value_(value) {
     meta_.last_included_index_ = index;
     meta_.last_included_term_ = term;
 
@@ -34,8 +33,7 @@ class CounterSnapshot : public rollingraft::Snapshot {
     if (offset > data_.size()) {
       return 0;
     }
-    size_t can_read =
-        std::min(data_.size() - static_cast<size_t>(offset), length);
+    size_t can_read = std::min(data_.size() - static_cast<size_t>(offset), length);
     std::memcpy(dest, data_.data() + offset, can_read);
     return can_read;
   }
@@ -54,8 +52,7 @@ class CounterMachine : public rollingraft::StateMachine {
 
   ~CounterMachine() = default;
 
-  rollingraft::ApplyResult Apply(std::span<const uint8_t> data,
-                                 uint64_t index) override {
+  rollingraft::ApplyResult Apply(std::span<const uint8_t> data, uint64_t index) override {
     std::lock_guard<std::mutex> lock(mtx_);
 
     std::string cmd(data.begin(), data.end());
@@ -84,9 +81,7 @@ class CounterMachine : public rollingraft::StateMachine {
     return result;
   }
 
-  uint64_t GetLastAppliedIndex() const override {
-    return last_applied_index_.load();
-  }
+  uint64_t GetLastAppliedIndex() const override { return last_applied_index_.load(); }
 
   std::shared_ptr<rollingraft::Snapshot> CreateSnapshot() override {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -141,19 +136,16 @@ class CounterMachine : public rollingraft::StateMachine {
 };
 
 void PrintUsage(const char* prog) {
-  std::cout << "Usage: " << prog
-            << " <node_id> <listen_addr> <peer1_addr> [peer2_addr ...]\n";
+  std::cout << "Usage: " << prog << " <node_id> <listen_addr> <peer1_addr> [peer2_addr ...]\n";
   std::cout << "Examples:\n";
   std::cout << "  " << prog << " 1 8001 8002 8003\n";
-  std::cout << "  " << prog
-            << " 1 0.0.0.0:8001 raft-node-2:8002 raft-node-3:8003\n";
+  std::cout << "  " << prog << " 1 0.0.0.0:8001 raft-node-2:8002 raft-node-3:8003\n";
 }
 
 std::atomic<bool> g_running{true};
 
 void SignalHandler(int signum) {
-  std::cout << "\nInterrupt signal (" << signum
-            << ") received. Shutting down...\n";
+  std::cout << "\nInterrupt signal (" << signum << ") received. Shutting down...\n";
   g_running = false;
 }
 
@@ -175,9 +167,7 @@ int main(int argc, char** argv) {
   config.node_id = node_id;
   config.listen_addr = listen_addr;
   config.data_dir = "./data/node" + std::to_string(node_id);
-  config.persister_factory = []() {
-    return rollingraft::CreateLevelDBPersister();
-  };
+  config.persister_factory = []() { return rollingraft::CreateLevelDBPersister(); };
 
   for (int i = 3; i < argc; ++i) {
     std::string peer = argv[i];
@@ -214,11 +204,9 @@ int main(int argc, char** argv) {
     std::cout << "Stopping Raft node..." << std::endl;
 
     // Stop with timeout to avoid hanging on disk issues
-    auto stop_future =
-        std::async(std::launch::async, [&raft_node]() { raft_node.Stop(); });
+    auto stop_future = std::async(std::launch::async, [&raft_node]() { raft_node.Stop(); });
 
-    if (stop_future.wait_for(std::chrono::seconds(5)) ==
-        std::future_status::timeout) {
+    if (stop_future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
       std::cerr << "Warning: Stop() timed out, forcing exit..." << std::endl;
       // Force exit if graceful shutdown fails
       std::exit(1);

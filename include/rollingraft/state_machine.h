@@ -149,8 +149,7 @@ class StateMachine {
    *                       data is available. Return false when done.
    * @return true if restore succeeded, false otherwise
    */
-  virtual bool RestoreStream(
-      const std::function<bool(std::string& chunk)>& chunk_provider) {
+  virtual bool RestoreStream(const std::function<bool(std::string& chunk)>& chunk_provider) {
     std::vector<uint8_t> data;
     std::string chunk;
     while (chunk_provider(chunk)) {

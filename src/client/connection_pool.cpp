@@ -10,8 +10,7 @@
 namespace rollingraft {
 
 ConnectionPool::ConnectionPool(std::chrono::milliseconds connect_timeout)
-    : work_guard_(asio::make_work_guard(io_context_)),
-      connect_timeout_(connect_timeout) {
+    : work_guard_(asio::make_work_guard(io_context_)), connect_timeout_(connect_timeout) {
   io_thread_ = std::thread([this]() { io_context_.run(); });
 }
 
@@ -23,8 +22,7 @@ ConnectionPool::~ConnectionPool() {
   }
 }
 
-std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::GetConnection(
-    const std::string& addr) {
+std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::GetConnection(const std::string& addr) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   // Check existing connection
@@ -45,8 +43,7 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::GetConnection(
   return conn;
 }
 
-std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
-    const std::string& addr) {
+std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(const std::string& addr) {
   // Parse address
   auto colon_pos = addr.find(':');
   if (colon_pos == std::string::npos) {
@@ -63,8 +60,7 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
     // io_context would deadlock because the single worker thread is
     // blocked waiting for itself to run the async completion handlers.
     asio::io_context temp_io;
-    asio::executor_work_guard<asio::io_context::executor_type> temp_work(
-        temp_io.get_executor());
+    asio::executor_work_guard<asio::io_context::executor_type> temp_work(temp_io.get_executor());
 
     asio::ip::tcp::socket temp_socket(temp_io);
     std::error_code connect_ec;
@@ -74,8 +70,7 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
     resolver->async_resolve(
         host, port_str,
         [&temp_socket, resolver, &connect_ec, &completed](
-            std::error_code ec,
-            asio::ip::tcp::resolver::results_type endpoints) {
+            std::error_code ec, asio::ip::tcp::resolver::results_type endpoints) {
           if (ec) {
             if (!completed.exchange(true)) {
               connect_ec = ec;
@@ -84,8 +79,7 @@ std::shared_ptr<asio::ip::tcp::socket> ConnectionPool::CreateConnection(
           }
           asio::async_connect(
               temp_socket, endpoints,
-              [&connect_ec, &completed](std::error_code ec,
-                                        const asio::ip::tcp::endpoint&) {
+              [&connect_ec, &completed](std::error_code ec, const asio::ip::tcp::endpoint&) {
                 if (!completed.exchange(true)) {
                   connect_ec = ec;
                 }

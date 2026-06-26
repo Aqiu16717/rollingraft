@@ -1,5 +1,4 @@
 #include <chrono>
-#include <gtest/gtest.h>
 #include <memory>
 
 #include "rollingraft/raft_node.h"
@@ -7,6 +6,7 @@
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
 #include "test_port.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -20,7 +20,10 @@ using namespace rollingraft;
 
 class LeaderStepDownTest : public ::testing::Test {
  protected:
-  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); ports_ = GetTestPorts(10); }
+  void SetUp() override {
+    sm_ = std::make_shared<MockStateMachine>();
+    ports_ = GetTestPorts(10);
+  }
 
   void TearDown() override {
     if (node_) {

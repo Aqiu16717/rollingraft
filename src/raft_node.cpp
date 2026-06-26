@@ -1,13 +1,13 @@
+#include "rollingraft/tls_config.h"
+
 #include "asio_timer_service.h"
 #include "json_protocol.h"
 #include "raft_node_impl.h"
-#include "rollingraft/tls_config.h"
 
 // Forward declaration for default network transport
 namespace rollingraft {
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
-std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(
-    const TlsConfig& tls_config);
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(const TlsConfig& tls_config);
 }  // namespace rollingraft
 
 using namespace rollingraft;
@@ -72,10 +72,10 @@ Status RaftNodeConfig::Validate() const {
     return Status::Error("CONFIG_INVALID", "heartbeat_interval_ms must be > 0");
   }
   if (election_timeout_ms <= heartbeat_interval_ms) {
-    return Status::Error("CONFIG_INVALID",
-                         "election_timeout_ms (" + std::to_string(election_timeout_ms) +
-                             ") must be > heartbeat_interval_ms (" +
-                             std::to_string(heartbeat_interval_ms) + ")");
+    return Status::Error("CONFIG_INVALID", "election_timeout_ms (" +
+                                               std::to_string(election_timeout_ms) +
+                                               ") must be > heartbeat_interval_ms (" +
+                                               std::to_string(heartbeat_interval_ms) + ")");
   }
 
   // Peer consistency
@@ -110,8 +110,7 @@ Status RaftNodeConfig::Validate() const {
   }
   // Shutdown timeout must be 0 (infinite) or >= 100ms
   if (shutdown_timeout_ms > 0 && shutdown_timeout_ms < 100) {
-    return Status::Error("CONFIG_INVALID",
-                         "shutdown_timeout_ms must be 0 or >= 100");
+    return Status::Error("CONFIG_INVALID", "shutdown_timeout_ms must be 0 or >= 100");
   }
   // Dead node timeout must be > 0 if auto-removal is enabled
   if (auto_remove_dead_nodes && dead_node_timeout_ms == 0) {
@@ -121,9 +120,8 @@ Status RaftNodeConfig::Validate() const {
 
   // Compression type must be 0 (none) or 1 (snappy)
   if (compression_type > 1) {
-    return Status::Error("CONFIG_INVALID",
-                         "compression_type must be 0 (none) or 1 (snappy), got " +
-                             std::to_string(compression_type));
+    return Status::Error("CONFIG_INVALID", "compression_type must be 0 (none) or 1 (snappy), got " +
+                                               std::to_string(compression_type));
   }
 
   return Status::OK();
@@ -131,8 +129,7 @@ Status RaftNodeConfig::Validate() const {
 
 // ========== RaftNode Public Interface ==========
 
-RaftNode::RaftNode(const RaftNodeConfig& config,
-                   std::shared_ptr<StateMachine> sm) {
+RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> sm) {
   auto status = config.Validate();
   if (!status.ok()) {
     throw std::invalid_argument("RaftNodeConfig validation failed: " + status.ToString());
@@ -143,19 +140,14 @@ RaftNode::RaftNode(const RaftNodeConfig& config,
       config.network_factory
           ? config.network_factory()
           : (config.tls_enabled
-                 ? CreateAsioNetworkTransport(
-                       TlsConfig{.enabled = true,
-                                 .cert_file = config.tls_cert_file,
-                                 .key_file = config.tls_key_file,
-                                 .ca_file = config.tls_ca_file})
+                 ? CreateAsioNetworkTransport(TlsConfig{.enabled = true,
+                                                        .cert_file = config.tls_cert_file,
+                                                        .key_file = config.tls_key_file,
+                                                        .ca_file = config.tls_ca_file})
                  : CreateDefaultNetworkTransport()),
-      config.timer_factory ? config.timer_factory()
-                           : TimerService::CreateDefault(),
-      config.persister_factory
-          ? std::shared_ptr<Persister>(config.persister_factory())
-          : nullptr,
-      config.protocol_factory ? config.protocol_factory()
-                              : std::make_unique<JsonProtocol>());
+      config.timer_factory ? config.timer_factory() : TimerService::CreateDefault(),
+      config.persister_factory ? std::shared_ptr<Persister>(config.persister_factory()) : nullptr,
+      config.protocol_factory ? config.protocol_factory() : std::make_unique<JsonProtocol>());
 }
 
 RaftNode::~RaftNode() = default;
@@ -170,14 +162,11 @@ RaftNodeRole RaftNode::GetRole() const { return raft_node_impl_->GetRole(); }
 
 Term RaftNode::CurrentTerm() const { return raft_node_impl_->CurrentTerm(); }
 
-NodeAddr RaftNode::GetLeaderAddr() const {
-  return raft_node_impl_->GetLeaderAddr();
-}
+NodeAddr RaftNode::GetLeaderAddr() const { return raft_node_impl_->GetLeaderAddr(); }
 
 EventBus& RaftNode::GetEventBus() { return raft_node_impl_->GetEventBus(); }
 
-void RaftNode::SetRoleChangeCallback(
-    std::function<void(RaftNodeRole role, Term term)> callback) {
+void RaftNode::SetRoleChangeCallback(std::function<void(RaftNodeRole role, Term term)> callback) {
   raft_node_impl_->SetRoleChangeCallback(std::move(callback));
 }
 
@@ -186,11 +175,9 @@ void RaftNode::SetLeaderChangeCallback(
   raft_node_impl_->SetLeaderChangeCallback(std::move(callback));
 }
 
-Status RaftNode::Propose(
-    const std::string& command,
-    std::function<void(const ApplyResult& result)> callback,
-    uint64_t session_id,
-    uint64_t seq_num) {
+Status RaftNode::Propose(const std::string& command,
+                         std::function<void(const ApplyResult& result)> callback,
+                         uint64_t session_id, uint64_t seq_num) {
   return raft_node_impl_->Propose(command, std::move(callback), session_id, seq_num);
 }
 
@@ -212,26 +199,16 @@ Status RaftNode::AddLearner(NodeId id, const NodeAddr& addr) {
   return raft_node_impl_->AddLearner(id, addr);
 }
 
-Status RaftNode::PromoteLearner(NodeId id) {
-  return raft_node_impl_->PromoteLearner(id);
-}
+Status RaftNode::PromoteLearner(NodeId id) { return raft_node_impl_->PromoteLearner(id); }
 
-Status RaftNode::RemoveNode(NodeId id) {
-  return raft_node_impl_->RemoveNode(id);
-}
+Status RaftNode::RemoveNode(NodeId id) { return raft_node_impl_->RemoveNode(id); }
 
-ClusterConfig RaftNode::GetConfig() const {
-  return raft_node_impl_->GetConfig();
-}
+ClusterConfig RaftNode::GetConfig() const { return raft_node_impl_->GetConfig(); }
 
-Status RaftNode::TriggerSnapshot() {
-  return raft_node_impl_->TriggerSnapshot();
-}
+Status RaftNode::TriggerSnapshot() { return raft_node_impl_->TriggerSnapshot(); }
 
 Status RaftNode::TransferLeadershipTo(NodeId target_id) {
   return raft_node_impl_->TransferLeadershipTo(target_id);
 }
 
-Index RaftNode::GetCommitIndex() const {
-  return raft_node_impl_->GetCommitIndex();
-}
+Index RaftNode::GetCommitIndex() const { return raft_node_impl_->GetCommitIndex(); }

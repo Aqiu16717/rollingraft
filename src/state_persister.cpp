@@ -6,36 +6,31 @@
 #include "rollingraft/state_persister.h"
 
 #include <cstring>
-#include <leveldb/db.h>
-#include <leveldb/write_batch.h>
 
 #include "rollingraft/logger.h"
+
+#include <leveldb/db.h>
+#include <leveldb/write_batch.h>
 
 namespace rollingraft {
 
 // ==================== SHA-256 Implementation ====================
 
 static const uint32_t kSha256K[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
 
-static inline uint32_t Sha256Ror(uint32_t x, uint32_t n) {
-  return (x >> n) | (x << (32 - n));
-}
+static inline uint32_t Sha256Ror(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
 
-static inline void Sha256CompressRound(uint32_t& a, uint32_t& b, uint32_t& c,
-                                       uint32_t& d, uint32_t& e, uint32_t& f,
-                                       uint32_t& g, uint32_t& h, uint32_t k,
-                                       uint32_t w) {
+static inline void Sha256CompressRound(uint32_t& a, uint32_t& b, uint32_t& c, uint32_t& d,
+                                       uint32_t& e, uint32_t& f, uint32_t& g, uint32_t& h,
+                                       uint32_t k, uint32_t w) {
   uint32_t s1 = Sha256Ror(e, 6) ^ Sha256Ror(e, 11) ^ Sha256Ror(e, 25);
   uint32_t ch = (e & f) ^ (~e & g);
   uint32_t temp1 = h + s1 + ch + k + w;
@@ -66,14 +61,11 @@ static void Sha256ProcessChunk(Sha256Context& ctx, const uint8_t* chunk) {
   for (size_t j = 0; j < 16; ++j) {
     w[j] = (static_cast<uint32_t>(chunk[j * 4]) << 24) |
            (static_cast<uint32_t>(chunk[j * 4 + 1]) << 16) |
-           (static_cast<uint32_t>(chunk[j * 4 + 2]) << 8) |
-           static_cast<uint32_t>(chunk[j * 4 + 3]);
+           (static_cast<uint32_t>(chunk[j * 4 + 2]) << 8) | static_cast<uint32_t>(chunk[j * 4 + 3]);
   }
   for (size_t j = 16; j < 64; ++j) {
-    uint32_t s0 =
-        Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
-    uint32_t s1 =
-        Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
+    uint32_t s0 = Sha256Ror(w[j - 15], 7) ^ Sha256Ror(w[j - 15], 18) ^ (w[j - 15] >> 3);
+    uint32_t s1 = Sha256Ror(w[j - 2], 17) ^ Sha256Ror(w[j - 2], 19) ^ (w[j - 2] >> 10);
     w[j] = w[j - 16] + s0 + w[j - 7] + s1;
   }
   uint32_t a = ctx.h[0], b = ctx.h[1], c = ctx.h[2], d = ctx.h[3];
@@ -207,12 +199,10 @@ Status StatePersister::SaveState(const PersistentState& state) {
   }
 
   leveldb::WriteBatch batch;
-  batch.Put(kStateTermKey,
-            leveldb::Slice(reinterpret_cast<const char*>(&state.current_term),
-                           sizeof(state.current_term)));
-  batch.Put(kStateVotedForKey,
-            leveldb::Slice(reinterpret_cast<const char*>(&state.voted_for),
-                           sizeof(state.voted_for)));
+  batch.Put(kStateTermKey, leveldb::Slice(reinterpret_cast<const char*>(&state.current_term),
+                                          sizeof(state.current_term)));
+  batch.Put(kStateVotedForKey, leveldb::Slice(reinterpret_cast<const char*>(&state.voted_for),
+                                              sizeof(state.voted_for)));
 
   leveldb::WriteOptions write_options;
   write_options.sync = true;
@@ -236,8 +226,8 @@ Status StatePersister::LoadState(PersistentState& state) {
   return Status::OK();
 }
 
-Status StatePersister::SaveSnapshot(const std::string& snapshot_data,
-                                    uint64_t last_index, uint64_t last_term) {
+Status StatePersister::SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
+                                    uint64_t last_term) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   if (!db_) {
@@ -255,8 +245,7 @@ Status StatePersister::SaveSnapshot(const std::string& snapshot_data,
   std::memcpy(meta + 8, &last_term, sizeof(last_term));
   batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
 
-  batch.Put(kSnapshotHashKey,
-            leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
+  batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
   leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
   if (!s.ok()) {
@@ -266,13 +255,11 @@ Status StatePersister::SaveSnapshot(const std::string& snapshot_data,
   snapshot_last_index_ = last_index;
   snapshot_last_term_ = last_term;
 
-  LOG_INFO("Snapshot saved with SHA-256 hash, index={}, term={}", last_index,
-           last_term);
+  LOG_INFO("Snapshot saved with SHA-256 hash, index={}, term={}", last_index, last_term);
   return Status::OK();
 }
 
-Status StatePersister::LoadSnapshot(std::string& snapshot_data,
-                                    uint64_t& last_index,
+Status StatePersister::LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
                                     uint64_t& last_term) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
@@ -280,8 +267,7 @@ Status StatePersister::LoadSnapshot(std::string& snapshot_data,
     return Status::Error("StatePersister not open");
   }
 
-  leveldb::Status s =
-      db_->Get(leveldb::ReadOptions(), kSnapshotDataKey, &snapshot_data);
+  leveldb::Status s = db_->Get(leveldb::ReadOptions(), kSnapshotDataKey, &snapshot_data);
   if (s.IsNotFound()) {
     return Status::Error("No snapshot available");
   }
@@ -306,8 +292,7 @@ Status StatePersister::LoadSnapshot(std::string& snapshot_data,
     if (std::memcmp(stored_hash.data(), computed_hash, 32) != 0) {
       LOG_ERROR("Snapshot SHA-256 mismatch! Data may be corrupted.");
       snapshot_data.clear();
-      return Status::Error(
-          "Snapshot integrity check failed: SHA-256 mismatch");
+      return Status::Error("Snapshot integrity check failed: SHA-256 mismatch");
     }
     LOG_DEBUG("Snapshot SHA-256 verified successfully");
   } else if (!s.IsNotFound()) {
@@ -320,8 +305,8 @@ Status StatePersister::LoadSnapshot(std::string& snapshot_data,
 }
 
 Status StatePersister::SaveSnapshotStream(
-    const std::function<bool(std::string& chunk)>& chunk_provider,
-    uint64_t last_index, uint64_t last_term) {
+    const std::function<bool(std::string& chunk)>& chunk_provider, uint64_t last_index,
+    uint64_t last_term) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   if (!db_) {
@@ -339,8 +324,7 @@ Status StatePersister::SaveSnapshotStream(
   try {
     while (chunk_provider(chunk)) {
       if (!chunk.empty()) {
-        std::string key =
-            std::string(kSnapshotTmpChunkPrefix) + std::to_string(chunk_index);
+        std::string key = std::string(kSnapshotTmpChunkPrefix) + std::to_string(chunk_index);
         leveldb::Status s = db_->Put(leveldb::WriteOptions(), key, chunk);
         if (!s.ok()) {
           DeleteSnapshotTempDataLocked();
@@ -352,8 +336,7 @@ Status StatePersister::SaveSnapshotStream(
     }
   } catch (const std::exception& e) {
     DeleteSnapshotTempDataLocked();
-    return Status::Error("Snapshot chunk provider failed: " +
-                         std::string(e.what()));
+    return Status::Error("Snapshot chunk provider failed: " + std::string(e.what()));
   }
 
   if (chunk_index == 0) {
@@ -387,14 +370,11 @@ Status StatePersister::SaveSnapshotStream(
   DeleteSnapshotDataLocked(&batch);
 
   batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
-  batch.Put(kSnapshotHashKey,
-            leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
+  batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
   for (uint32_t i = 0; i < chunk_index; ++i) {
-    std::string tmp_key =
-        std::string(kSnapshotTmpChunkPrefix) + std::to_string(i);
-    std::string final_key =
-        std::string(kSnapshotChunkPrefix) + std::to_string(i);
+    std::string tmp_key = std::string(kSnapshotTmpChunkPrefix) + std::to_string(i);
+    std::string final_key = std::string(kSnapshotChunkPrefix) + std::to_string(i);
     std::string chunk_data;
     leveldb::Status s = db_->Get(leveldb::ReadOptions(), tmp_key, &chunk_data);
     if (!s.ok()) {
@@ -416,14 +396,14 @@ Status StatePersister::SaveSnapshotStream(
   snapshot_last_index_ = last_index;
   snapshot_last_term_ = last_term;
 
-  LOG_INFO("Snapshot saved (streaming, {} chunks), index={}, term={}",
-           chunk_index, last_index, last_term);
+  LOG_INFO("Snapshot saved (streaming, {} chunks), index={}, term={}", chunk_index, last_index,
+           last_term);
   return Status::OK();
 }
 
 Status StatePersister::LoadSnapshotStream(
-    const std::function<void(const std::string& chunk)>& chunk_consumer,
-    uint64_t& last_index, uint64_t& last_term) {
+    const std::function<void(const std::string& chunk)>& chunk_consumer, uint64_t& last_index,
+    uint64_t& last_term) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   if (!db_) {
@@ -490,8 +470,7 @@ Status StatePersister::LoadSnapshotStream(
   if (stored_hash.size() == 32) {
     if (std::memcmp(stored_hash.data(), computed_hash, 32) != 0) {
       LOG_ERROR("Snapshot SHA-256 mismatch! Data may be corrupted.");
-      return Status::Error(
-          "Snapshot integrity check failed: SHA-256 mismatch");
+      return Status::Error("Snapshot integrity check failed: SHA-256 mismatch");
     }
     LOG_DEBUG("Snapshot SHA-256 verified successfully");
   } else {
@@ -531,8 +510,7 @@ void StatePersister::DeleteSnapshotDataLocked() {
 
   std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
   std::string prefix(kSnapshotChunkPrefix);
-  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
-       it->Next()) {
+  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix); it->Next()) {
     db_->Delete(leveldb::WriteOptions(), it->key());
   }
 }
@@ -544,8 +522,7 @@ void StatePersister::DeleteSnapshotDataLocked(leveldb::WriteBatch* batch) {
 
   std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
   std::string prefix(kSnapshotChunkPrefix);
-  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
-       it->Next()) {
+  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix); it->Next()) {
     batch->Delete(it->key());
   }
 }
@@ -553,8 +530,7 @@ void StatePersister::DeleteSnapshotDataLocked(leveldb::WriteBatch* batch) {
 void StatePersister::DeleteSnapshotTempDataLocked() {
   std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
   std::string prefix(kSnapshotTmpChunkPrefix);
-  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix);
-       it->Next()) {
+  for (it->Seek(prefix); it->Valid() && it->key().starts_with(prefix); it->Next()) {
     db_->Delete(leveldb::WriteOptions(), it->key());
   }
 }
@@ -565,15 +541,13 @@ void StatePersister::LoadStateFromDB() {
   std::string term_value;
   leveldb::Status s = db_->Get(leveldb::ReadOptions(), kStateTermKey, &term_value);
   if (s.ok() && term_value.size() == sizeof(Term)) {
-    std::memcpy(&cached_state_.current_term, term_value.data(),
-                sizeof(cached_state_.current_term));
+    std::memcpy(&cached_state_.current_term, term_value.data(), sizeof(cached_state_.current_term));
   }
 
   std::string voted_value;
   s = db_->Get(leveldb::ReadOptions(), kStateVotedForKey, &voted_value);
   if (s.ok() && voted_value.size() == sizeof(NodeId)) {
-    std::memcpy(&cached_state_.voted_for, voted_value.data(),
-                sizeof(cached_state_.voted_for));
+    std::memcpy(&cached_state_.voted_for, voted_value.data(), sizeof(cached_state_.voted_for));
   }
 }
 

@@ -5,8 +5,7 @@
 
 namespace rollingraft {
 
-ApplyResult MockStateMachine::Apply(std::span<const uint8_t> data,
-                                    uint64_t index) {
+ApplyResult MockStateMachine::Apply(std::span<const uint8_t> data, uint64_t index) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::string cmd(data.begin(), data.end());

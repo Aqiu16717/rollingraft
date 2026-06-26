@@ -4,10 +4,10 @@
  */
 
 #include <chrono>
-#include <gtest/gtest.h>
 #include <thread>
 
 #include "client/leader_tracker.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -110,9 +110,7 @@ TEST_F(LeaderTrackerTest, UpdateLeader_ResetsTTL) {
 
 // ========== IsLeaderStale Tests ==========
 
-TEST_F(LeaderTrackerTest, IsLeaderStale_InitiallyTrue) {
-  EXPECT_TRUE(tracker_->IsLeaderStale());
-}
+TEST_F(LeaderTrackerTest, IsLeaderStale_InitiallyTrue) { EXPECT_TRUE(tracker_->IsLeaderStale()); }
 
 TEST_F(LeaderTrackerTest, IsLeaderStale_AfterUpdate_False) {
   tracker_->UpdateLeader("127.0.0.1:8001");

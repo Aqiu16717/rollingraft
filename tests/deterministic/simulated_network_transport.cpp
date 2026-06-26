@@ -5,8 +5,8 @@
 
 namespace rollingraft {
 
-SimulatedNetworkTransport::SimulatedNetworkTransport(
-    NodeId node_id, SimulatedNetwork* network, SimulatedClock* clock)
+SimulatedNetworkTransport::SimulatedNetworkTransport(NodeId node_id, SimulatedNetwork* network,
+                                                     SimulatedClock* clock)
     : state_(std::make_shared<State>()) {
   state_->node_id = node_id;
   state_->network = network;
@@ -22,9 +22,8 @@ Status SimulatedNetworkTransport::Initialize(const NodeAddr& listen_addr,
 
   auto weak = std::weak_ptr<State>(state_);
   state_->network->RegisterEndpoint(
-      state_->node_id,
-      [weak](NodeId from, const std::string& payload, uint64_t correlation_id,
-             std::string& response) {
+      state_->node_id, [weak](NodeId from, const std::string& payload, uint64_t correlation_id,
+                              std::string& response) {
         auto state = weak.lock();
         if (!state) return;
 
@@ -53,8 +52,7 @@ Status SimulatedNetworkTransport::Initialize(const NodeAddr& listen_addr,
   return Status::OK();
 }
 
-void SimulatedNetworkTransport::SetConnectionCallback(
-    ConnectionCallback callback) {
+void SimulatedNetworkTransport::SetConnectionCallback(ConnectionCallback callback) {
   state_->connection_callback = std::move(callback);
 }
 
@@ -75,10 +73,10 @@ Status SimulatedNetworkTransport::Stop() {
   return Status::OK();
 }
 
-void SimulatedNetworkTransport::SendRpc(
-    NodeId to, [[maybe_unused]] const NodeAddr& addr, const std::string& request_data,
-    uint64_t correlation_id, std::chrono::milliseconds timeout,
-    RpcResponseCallback callback) {
+void SimulatedNetworkTransport::SendRpc(NodeId to, [[maybe_unused]] const NodeAddr& addr,
+                                        const std::string& request_data, uint64_t correlation_id,
+                                        std::chrono::milliseconds timeout,
+                                        RpcResponseCallback callback) {
   if (!state_) return;
   {
     std::lock_guard<std::mutex> lock(state_->callbacks_mtx);

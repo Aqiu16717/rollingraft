@@ -26,8 +26,8 @@ std::string BenchmarkStats::ToString() const {
   oss << "Throughput: " << operations_per_second << " ops/sec\n";
   oss << "Success Rate: " << (success_rate * 100.0) << "%\n";
   oss << "Latency (us): min=" << latency_min_us << " avg=" << latency_avg_us
-      << " p50=" << latency_p50_us << " p99=" << latency_p99_us
-      << " max=" << latency_max_us << "\n";
+      << " p50=" << latency_p50_us << " p99=" << latency_p99_us << " max=" << latency_max_us
+      << "\n";
   return oss.str();
 }
 
@@ -59,8 +59,7 @@ BenchmarkStats Benchmark::Run() {
     auto op_end = std::chrono::steady_clock::now();
 
     auto latency_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(op_end - op_start)
-            .count();
+        std::chrono::duration_cast<std::chrono::microseconds>(op_end - op_start).count();
     latencies.push_back(static_cast<double>(latency_us));
 
     if (result.success) {
@@ -71,8 +70,7 @@ BenchmarkStats Benchmark::Run() {
 
     ++op_count;
 
-    if (config_.progress_interval > 0 &&
-        op_count % config_.progress_interval == 0) {
+    if (config_.progress_interval > 0 && op_count % config_.progress_interval == 0) {
       std::cout << "Progress: " << op_count << " operations\r" << std::flush;
     }
   }
@@ -82,8 +80,7 @@ BenchmarkStats Benchmark::Run() {
   }
 
   auto actual_end = std::chrono::steady_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      actual_end - start_time);
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(actual_end - start_time);
 
   TearDown();
 
@@ -92,13 +89,10 @@ BenchmarkStats Benchmark::Run() {
   stats.total_operations = op_count;
   stats.success_count = success_count;
   stats.failure_count = failure_count;
-  stats.success_rate =
-      (op_count > 0) ? static_cast<double>(success_count) / op_count : 0.0;
+  stats.success_rate = (op_count > 0) ? static_cast<double>(success_count) / op_count : 0.0;
   stats.duration_ms = duration;
   stats.operations_per_second =
-      (duration.count() > 0)
-          ? (static_cast<double>(op_count) * 1000.0) / duration.count()
-          : 0.0;
+      (duration.count() > 0) ? (static_cast<double>(op_count) * 1000.0) / duration.count() : 0.0;
 
   // Calculate latency statistics
   if (!latencies.empty()) {
@@ -115,8 +109,7 @@ BenchmarkStats Benchmark::Run() {
 
     // Percentiles
     auto percentile = [&](double p) -> double {
-      size_t idx =
-          static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
+      size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
       if (idx >= latencies.size()) idx = latencies.size() - 1;
       return latencies[idx];
     };
@@ -131,8 +124,8 @@ BenchmarkStats Benchmark::Run() {
 
 // ========== ThroughputBenchmark ==========
 
-ThroughputBenchmark::ThroughputBenchmark(
-    const BenchmarkConfig& config, std::function<OperationResult()> operation)
+ThroughputBenchmark::ThroughputBenchmark(const BenchmarkConfig& config,
+                                         std::function<OperationResult()> operation)
     : Benchmark(config), operation_(std::move(operation)) {}
 
 OperationResult ThroughputBenchmark::DoOperation() { return operation_(); }
@@ -152,8 +145,7 @@ std::map<int, BenchmarkStats> LatencyBenchmark::RunLatencyCurve() {
   std::vector<int> target_throughputs = {100, 500, 1000, 2000, 5000, 10000};
 
   for (int target : target_throughputs) {
-    std::cout << "Testing at target throughput: " << target << " ops/sec"
-              << std::endl;
+    std::cout << "Testing at target throughput: " << target << " ops/sec" << std::endl;
 
     // Adjust config for this target throughput
     auto config = config_;
@@ -207,8 +199,7 @@ FailoverBenchmark::FailoverResult FailoverBenchmark::RunFailover() {
 
   // Run steady load for a few seconds
   auto steady_start = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - steady_start <
-         std::chrono::seconds(5)) {
+  while (std::chrono::steady_clock::now() - steady_start < std::chrono::seconds(5)) {
     auto r = operation_();
     if (!r.success) {
       std::cout << "Operation failed during steady state!" << std::endl;
@@ -243,8 +234,8 @@ FailoverBenchmark::FailoverResult FailoverBenchmark::RunFailover() {
         detection_time = std::chrono::steady_clock::now();
         detected = true;
         std::cout << "Leader failure detected after "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(
-                         detection_time - kill_time)
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(detection_time -
+                                                                           kill_time)
                          .count()
                   << " ms" << std::endl;
       }
@@ -255,24 +246,18 @@ FailoverBenchmark::FailoverResult FailoverBenchmark::RunFailover() {
         auto recovery_time = std::chrono::steady_clock::now();
 
         result.detection_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                detection_time - kill_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(detection_time - kill_time);
         result.election_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                recovery_time - detection_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - detection_time);
         result.recovery_time =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                recovery_time - kill_time);
+            std::chrono::duration_cast<std::chrono::milliseconds>(recovery_time - kill_time);
         result.operations_during_failover = ops_during_failover;
         result.operations_failed = ops_failed;
 
         std::cout << "Failover complete!" << std::endl;
-        std::cout << "  Detection time: " << result.detection_time.count()
-                  << " ms" << std::endl;
-        std::cout << "  Election time: " << result.election_time.count()
-                  << " ms" << std::endl;
-        std::cout << "  Total recovery: " << result.recovery_time.count()
-                  << " ms" << std::endl;
+        std::cout << "  Detection time: " << result.detection_time.count() << " ms" << std::endl;
+        std::cout << "  Election time: " << result.election_time.count() << " ms" << std::endl;
+        std::cout << "  Total recovery: " << result.recovery_time.count() << " ms" << std::endl;
 
         return result;
       }
@@ -297,30 +282,27 @@ namespace benchmark {
 void PrintResults(const std::vector<BenchmarkStats>& results) {
   std::cout << "\n========== Benchmark Results ==========\n" << std::endl;
 
-  std::cout << std::left << std::setw(10) << "Run" << std::setw(15)
-            << "Throughput" << std::setw(12) << "Success%" << std::setw(12)
-            << "P50 Lat" << std::setw(12) << "P99 Lat" << std::setw(12)
-            << "Max Lat" << std::endl;
+  std::cout << std::left << std::setw(10) << "Run" << std::setw(15) << "Throughput" << std::setw(12)
+            << "Success%" << std::setw(12) << "P50 Lat" << std::setw(12) << "P99 Lat"
+            << std::setw(12) << "Max Lat" << std::endl;
   std::cout << std::string(73, '-') << std::endl;
 
   for (size_t i = 0; i < results.size(); ++i) {
     const auto& s = results[i];
     std::cout << std::left << std::setw(10) << (i + 1) << std::setw(15)
-              << static_cast<int>(s.operations_per_second) << std::setw(12)
-              << std::fixed << std::setprecision(1) << (s.success_rate * 100)
-              << std::setw(12) << static_cast<int>(s.latency_p50_us)
-              << std::setw(12) << static_cast<int>(s.latency_p99_us)
-              << std::setw(12) << static_cast<int>(s.latency_max_us)
-              << std::endl;
+              << static_cast<int>(s.operations_per_second) << std::setw(12) << std::fixed
+              << std::setprecision(1) << (s.success_rate * 100) << std::setw(12)
+              << static_cast<int>(s.latency_p50_us) << std::setw(12)
+              << static_cast<int>(s.latency_p99_us) << std::setw(12)
+              << static_cast<int>(s.latency_max_us) << std::endl;
   }
 }
 
 void PrintComparison(const std::map<std::string, BenchmarkStats>& results) {
   std::cout << "\n========== Comparison ==========\n" << std::endl;
 
-  std::cout << std::left << std::setw(20) << "Benchmark" << std::setw(15)
-            << "Throughput" << std::setw(12) << "P50 Lat" << std::setw(12)
-            << "P99 Lat" << std::endl;
+  std::cout << std::left << std::setw(20) << "Benchmark" << std::setw(15) << "Throughput"
+            << std::setw(12) << "P50 Lat" << std::setw(12) << "P99 Lat" << std::endl;
   std::cout << std::string(59, '-') << std::endl;
 
   for (const auto& [name, s] : results) {
@@ -337,8 +319,7 @@ void SaveToJson(const std::string& filename, const BenchmarkStats& stats) {
   if (!file.is_open()) return;
 
   file << "{\n";
-  file << "  \"throughput_ops_per_sec\": " << stats.operations_per_second
-       << ",\n";
+  file << "  \"throughput_ops_per_sec\": " << stats.operations_per_second << ",\n";
   file << "  \"total_operations\": " << stats.total_operations << ",\n";
   file << "  \"success_count\": " << stats.success_count << ",\n";
   file << "  \"failure_count\": " << stats.failure_count << ",\n";
@@ -418,8 +399,7 @@ RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions) {
 
   // Calculate stddev
   auto& stddev = result.stddev;
-  auto calc_stddev = [&](double mean_val,
-                         std::function<double(const BenchmarkStats&)> getter) {
+  auto calc_stddev = [&](double mean_val, std::function<double(const BenchmarkStats&)> getter) {
     double sum_sq = 0.0;
     for (const auto& run : result.runs) {
       double diff = getter(run) - mean_val;
@@ -429,20 +409,15 @@ RepeatedBenchmarkStats RunRepeated(Benchmark* benchmark, int repetitions) {
   };
 
   stddev.operations_per_second = calc_stddev(
-      mean.operations_per_second,
-      [](const BenchmarkStats& s) { return s.operations_per_second; });
+      mean.operations_per_second, [](const BenchmarkStats& s) { return s.operations_per_second; });
   stddev.latency_p50_us =
-      calc_stddev(mean.latency_p50_us,
-                  [](const BenchmarkStats& s) { return s.latency_p50_us; });
+      calc_stddev(mean.latency_p50_us, [](const BenchmarkStats& s) { return s.latency_p50_us; });
   stddev.latency_p99_us =
-      calc_stddev(mean.latency_p99_us,
-                  [](const BenchmarkStats& s) { return s.latency_p99_us; });
+      calc_stddev(mean.latency_p99_us, [](const BenchmarkStats& s) { return s.latency_p99_us; });
   stddev.latency_p999_us =
-      calc_stddev(mean.latency_p999_us,
-                  [](const BenchmarkStats& s) { return s.latency_p999_us; });
+      calc_stddev(mean.latency_p999_us, [](const BenchmarkStats& s) { return s.latency_p999_us; });
   stddev.success_rate =
-      calc_stddev(mean.success_rate,
-                  [](const BenchmarkStats& s) { return s.success_rate; });
+      calc_stddev(mean.success_rate, [](const BenchmarkStats& s) { return s.success_rate; });
 
   return result;
 }
@@ -452,16 +427,13 @@ std::string RepeatedBenchmarkStats::ToString() const {
   oss << std::fixed << std::setprecision(2);
   oss << "Repeated Benchmark Results (" << repetition_count << " runs)\n";
   oss << "========================================\n";
-  oss << "Throughput: " << mean.operations_per_second << " ± "
-      << stddev.operations_per_second << " ops/sec\n";
-  oss << "Success Rate: " << (mean.success_rate * 100.0) << " ± "
-      << (stddev.success_rate * 100.0) << "%\n";
-  oss << "Latency P50: " << mean.latency_p50_us << " ± "
-      << stddev.latency_p50_us << " us\n";
-  oss << "Latency P99: " << mean.latency_p99_us << " ± "
-      << stddev.latency_p99_us << " us\n";
-  oss << "Latency P999: " << mean.latency_p999_us << " ± "
-      << stddev.latency_p999_us << " us\n";
+  oss << "Throughput: " << mean.operations_per_second << " ± " << stddev.operations_per_second
+      << " ops/sec\n";
+  oss << "Success Rate: " << (mean.success_rate * 100.0) << " ± " << (stddev.success_rate * 100.0)
+      << "%\n";
+  oss << "Latency P50: " << mean.latency_p50_us << " ± " << stddev.latency_p50_us << " us\n";
+  oss << "Latency P99: " << mean.latency_p99_us << " ± " << stddev.latency_p99_us << " us\n";
+  oss << "Latency P999: " << mean.latency_p999_us << " ± " << stddev.latency_p999_us << " us\n";
   return oss.str();
 }
 
@@ -475,8 +447,7 @@ void RepeatedBenchmarkStats::SaveToJson(
 
 namespace benchmark {
 
-void SaveToJson(const std::string& filename,
-                const RepeatedBenchmarkStats& stats,
+void SaveToJson(const std::string& filename, const RepeatedBenchmarkStats& stats,
                 const std::string& benchmark_name,
                 const std::map<std::string, std::string>& parameters) {
   std::ofstream file(filename);
@@ -511,11 +482,9 @@ void SaveToJson(const std::string& filename,
   file << "    \"throughput_ops_per_sec\": {\n";
   file << "      \"mean\": " << stats.mean.operations_per_second << ",\n";
   file << "      \"stddev\": " << stats.stddev.operations_per_second << ",\n";
-  file << "      \"min\": "
-       << stats.mean.operations_per_second - stats.stddev.operations_per_second
+  file << "      \"min\": " << stats.mean.operations_per_second - stats.stddev.operations_per_second
        << ",\n";
-  file << "      \"max\": "
-       << stats.mean.operations_per_second + stats.stddev.operations_per_second
+  file << "      \"max\": " << stats.mean.operations_per_second + stats.stddev.operations_per_second
        << "\n";
   file << "    },\n";
 

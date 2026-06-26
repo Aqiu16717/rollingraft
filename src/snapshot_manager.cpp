@@ -11,9 +11,9 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
   }
 
   auto cfg = runtime_config_->Get();
-  snapshot_check_timer_ = timer_->SetInterval(
-      std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
-      [this]() { MaybeTriggerAutoSnapshotLocked(); });
+  snapshot_check_timer_ =
+      timer_->SetInterval(std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
+                          [this]() { MaybeTriggerAutoSnapshotLocked(); });
 
   LOG_INFO("Node {} started auto-snapshot check (every {}ms)", server_id_,
            cfg.snapshot_check_interval_ms);
@@ -36,13 +36,12 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter(
-            "raft_snapshots_created_total",
-            {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
+        ->GetCounter("raft_snapshots_created_total",
+                     {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
         .Increment();
   }
-  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)",
-           server_id_, trigger, entries_since_snapshot);
+  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)", server_id_, trigger,
+           entries_since_snapshot);
 
   // Create snapshot
   auto snapshot = state_machine_->CreateSnapshot();
@@ -61,16 +60,15 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   std::vector<uint8_t> buffer(kReadChunkSize);
 
   auto cfg = runtime_config_->Get();
-  const size_t kMaxSnapshotSize =
-      cfg.max_snapshot_size_bytes > 0 ? cfg.max_snapshot_size_bytes
+  const size_t kMaxSnapshotSize = cfg.max_snapshot_size_bytes > 0
+                                      ? cfg.max_snapshot_size_bytes
                                       : 100 * 1024 * 1024;  // 100MB default
 
   // Pre-scan to check total size (memory-free)
   uint64_t check_offset = 0;
   size_t total_size = 0;
   while (true) {
-    size_t bytes_read =
-        snapshot->Read(check_offset, buffer.data(), kReadChunkSize);
+    size_t bytes_read = snapshot->Read(check_offset, buffer.data(), kReadChunkSize);
     if (bytes_read == 0) break;
     total_size += bytes_read;
     if (total_size > kMaxSnapshotSize) {
@@ -87,19 +85,17 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   if (persister_ && total_size > 0) {
     uint64_t stream_offset = 0;
     auto chunk_provider = [&](std::string& chunk) -> bool {
-      size_t bytes_read =
-          snapshot->Read(stream_offset, buffer.data(), kReadChunkSize);
+      size_t bytes_read = snapshot->Read(stream_offset, buffer.data(), kReadChunkSize);
       if (bytes_read == 0) return false;
       chunk.assign(reinterpret_cast<char*>(buffer.data()), bytes_read);
       stream_offset += bytes_read;
       return true;
     };
 
-    auto status = persister_->SaveSnapshotStream(chunk_provider, snapshot_index,
-                                                  snapshot_term);
+    auto status = persister_->SaveSnapshotStream(chunk_provider, snapshot_index, snapshot_term);
     if (!status.ok()) {
-      LOG_ERROR("Node {} failed to persist {}-snapshot: {}", server_id_,
-                trigger, status.ToString());
+      LOG_ERROR("Node {} failed to persist {}-snapshot: {}", server_id_, trigger,
+                status.ToString());
       return;
     }
   }
@@ -127,21 +123,18 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter(
-            "raft_log_compactions_total",
-            {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
+        ->GetCounter("raft_log_compactions_total",
+                     {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
         .Increment();
     metrics_
-        ->GetCounter("raft_log_entries_compacted_total",
-                     {{"node_id", std::to_string(server_id_)}})
+        ->GetCounter("raft_log_entries_compacted_total", {{"node_id", std::to_string(server_id_)}})
         .Increment(entries_since_snapshot);
   }
 
   LOG_INFO(
       "Node {} {}-snapshot completed at index {} term {} ({} bytes, "
       "{} entries truncated)",
-      server_id_, trigger, snapshot_index, snapshot_term, total_size,
-      entries_since_snapshot);
+      server_id_, trigger, snapshot_index, snapshot_term, total_size, entries_since_snapshot);
 }
 
 void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
@@ -213,8 +206,7 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 
   // Already in progress? Skip
   if (state.in_progress) {
-    LOG_DEBUG("Node {}: snapshot send to {} already in progress", server_id_,
-              peer_id);
+    LOG_DEBUG("Node {}: snapshot send to {} already in progress", server_id_, peer_id);
     return;
   }
 
@@ -233,15 +225,13 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_snapshot_sends_started_total",
-                     {{"node_id", std::to_string(server_id_)},
-                      {"peer_id", std::to_string(peer_id)}})
+        ->GetCounter("raft_snapshot_sends_started_total", {{"node_id", std::to_string(server_id_)},
+                                                           {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
   state.in_progress = true;
-  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?",
-           server_id_, peer_id, state.last_included_index,
-           state.last_included_term);
+  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", server_id_, peer_id,
+           state.last_included_index, state.last_included_term);
 
   SendNextSnapshotChunkLocked(peer_id);
 }
@@ -261,9 +251,8 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   // Read chunk
   std::vector<char> buffer(kSnapshotChunkSize);
-  size_t bytes_read = state.snapshot->Read(
-      state.offset, reinterpret_cast<uint8_t*>(buffer.data()),
-      kSnapshotChunkSize);
+  size_t bytes_read = state.snapshot->Read(state.offset, reinterpret_cast<uint8_t*>(buffer.data()),
+                                           kSnapshotChunkSize);
   buffer.resize(bytes_read);
   state.last_chunk_size = bytes_read;
 
@@ -279,15 +268,14 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   req.offset_ = static_cast<uint32_t>(state.offset);
   req.data_ = std::move(buffer);
   req.done_ = is_last;
-  req.correlation_id_ =
-      next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
+  req.correlation_id_ = next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   // Serialize
   std::string data;
   auto status = protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
-    LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}",
-              server_id_, status.ToString());
+    LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}", server_id_,
+              status.ToString());
     state.in_progress = false;
     return;
   }
@@ -302,41 +290,38 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_snapshot_chunks_sent_total",
-                     {{"node_id", std::to_string(server_id_)}})
+        ->GetCounter("raft_snapshot_chunks_sent_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
-  LOG_DEBUG(
-      "Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
-      server_id_, peer_id, state.offset, bytes_read, is_last);
+  LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}", server_id_,
+            peer_id, state.offset, bytes_read, is_last);
 
   // Send
-  network_->SendRpc(peer_id, it_addr->second, data, req.correlation_id_,
-                    std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
-                    [this, peer_id](const std::string& resp, bool success,
-                                    const std::string& error) {
-                      // Deserialize response first (outside lock)
-                      InstallSnapshotResponse response;
-                      if (success) {
-                        auto status =
-                            protocol_->DeserializeResponse(resp, response);
-                        if (!status.ok()) {
-                          LOG_ERROR(
-                              "Node {}: failed to deserialize "
-                              "InstallSnapshotResponse: {}",
-                              server_id_, status.ToString());
-                          success = false;
-                        }
-                      } else {
-                        LOG_WARN("Node {}: InstallSnapshot to {} failed: {}",
-                                 server_id_, peer_id, error);
-                      }
-                      HandleInstallSnapshotResponse(peer_id, response, success);
-                    });
+  network_->SendRpc(
+      peer_id, it_addr->second, data, req.correlation_id_,
+      std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
+      [this, peer_id](const std::string& resp, bool success, const std::string& error) {
+        // Deserialize response first (outside lock)
+        InstallSnapshotResponse response;
+        if (success) {
+          auto status = protocol_->DeserializeResponse(resp, response);
+          if (!status.ok()) {
+            LOG_ERROR(
+                "Node {}: failed to deserialize "
+                "InstallSnapshotResponse: {}",
+                server_id_, status.ToString());
+            success = false;
+          }
+        } else {
+          LOG_WARN("Node {}: InstallSnapshot to {} failed: {}", server_id_, peer_id, error);
+        }
+        HandleInstallSnapshotResponse(peer_id, response, success);
+      });
 }
 
-void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
-    NodeId from, const InstallSnapshotResponse& resp, bool rpc_success) {
+void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
+                                                           const InstallSnapshotResponse& resp,
+                                                           bool rpc_success) {
   // Phase 1: Election state check under election_mtx_ only.
   // Must NOT hold replication_mtx_ or snapshot_mtx_ here because
   // BecomeFollowerLocked acquires both internally.
@@ -369,8 +354,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
 
     // RPC failed: retry with backoff
     if (!rpc_success) {
-      LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_,
-               from);
+      LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_, from);
       timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
         std::lock_guard<std::mutex> lock_e(election_mtx_);
         std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
@@ -382,22 +366,20 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
     }
 
     // Check if we're done
-    if (state.offset + state.last_chunk_size >=
-        state.snapshot->GetMeta().last_included_index_) {
+    if (state.offset + state.last_chunk_size >= state.snapshot->GetMeta().last_included_index_) {
       // Actually we need to track total size, not index. Let 'done' flag drive
       // this. But we don't store total size. Use the done flag from last send.
       // Simpler: check if last chunk was smaller than chunk size
       if (state.last_chunk_size < kSnapshotChunkSize) {
         // Transfer complete
-        LOG_INFO(
-            "Node {}: snapshot send to {} completed, updating progress to {}",
-            server_id_, from, state.last_included_index);
+        LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}", server_id_,
+                 from, state.last_included_index);
 
         if (metrics_) {
           metrics_
-              ->GetCounter("raft_snapshot_sends_completed_total",
-                           {{"node_id", std::to_string(server_id_)},
-                            {"peer_id", std::to_string(from)}})
+              ->GetCounter(
+                  "raft_snapshot_sends_completed_total",
+                  {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
               .Increment();
         }
         match_index_[from] = state.last_included_index;
@@ -420,5 +402,3 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
     SendNextSnapshotChunkLocked(from);
   }
 }
-
-

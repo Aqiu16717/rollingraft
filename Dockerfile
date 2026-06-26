@@ -58,6 +58,9 @@ COPY --from=builder /build/install/ /app/
 COPY --from=builder /build/scripts/wait-for-cluster.sh /app/bin/
 RUN chmod +x /app/bin/wait-for-cluster.sh
 
+# Copy test certificates used by integration tests
+COPY --from=builder /build/tests/certs /build/tests/certs
+
 # Create data directory
 RUN mkdir -p /app/data
 

@@ -1,6 +1,7 @@
 #include "simulated_network.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "rollingraft/network_transport.h"
 

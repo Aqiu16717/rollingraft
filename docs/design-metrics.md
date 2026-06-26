@@ -42,7 +42,7 @@ emitted through the existing `MetricsRegistry` and served by
 | `raft_group_commit_unsynced_entries` | gauge | `node_id` | Number of flushed-but-not-yet-fsynced log entries |
 | `raft_group_commit_pending_epochs` | gauge | `node_id` | Number of commit epochs waiting for fsync |
 | `raft_group_commit_lag_ms` | gauge | `node_id` | Wall-clock lag (ms) of the oldest epoch when it becomes durable |
-| `logpersister_sync_latency_ms` | histogram | `node_id` | Latency of `Persister::Sync()` / fsync in milliseconds |
+| `raft_log_persister_sync_latency_ms` | histogram | `node_id` | Latency of `Persister::Sync()` / fsync in milliseconds |
 
 **Update sites**
 - `GroupCommitController::RegisterFlushedBatch` increments pending epochs and
@@ -53,7 +53,7 @@ emitted through the existing `MetricsRegistry` and served by
 - `GroupCommitController::OnSyncFailure` poisons pending epochs and resets the
   gauges.
 - `LogPersister::BackgroundSyncLoop` and the `kSyncEveryWrite` inline path
-  record `logpersister_sync_latency_ms` around every `persister_->Sync()`.
+  record `raft_log_persister_sync_latency_ms` around every `persister_->Sync()`.
 
 **Rationale for unit names**
 - `raft_group_commit_unsynced_entries` directly answers "how many entries are
@@ -61,8 +61,8 @@ emitted through the existing `MetricsRegistry` and served by
 - `raft_group_commit_pending_epochs` exposes the batch/epoch backlog.
 - `raft_group_commit_lag_ms` measures the end-to-end group-commit latency,
   not just the fsync time.
-- `logpersister_sync_latency_ms` is kept in milliseconds because production
-  fsync latencies are typically sub-second and the existing histogram buckets
+- `raft_log_persister_sync_latency_ms` is kept in milliseconds because
+  production fsync latencies are typically sub-second and the histogram buckets
   (0.5 ms – 5 s) give good resolution.
 
 ### 3. Log Replication
@@ -99,6 +99,25 @@ emitted through the existing `MetricsRegistry` and served by
 
 ## Implementation Details
 
+### Lock Context
+
+All new metric helpers read state that is already protected by the caller's
+locks.  No additional mutexes are introduced.
+
+- `UpdateLeaderLeaseMetricLocked` must be called while holding `election_mtx_`.
+  `leader_lease_expiry_` is only written while `election_mtx_` is held (see
+  `log_replicator.cpp`), so reading it under the same lock is race-free.
+- `SetPeerReplicationLagMetricLocked` reads `match_index_` and therefore must
+  be called from a context that already protects `match_index_`:
+  - `log_replicator.cpp` paths hold `election_mtx_` + `replication_mtx_`.
+  - `snapshot_manager.cpp` holds the same hierarchy.
+  - `election_manager.cpp` `BecomeLeaderLocked()` holds `election_mtx_`; leader
+    state initialization is serialized there.
+  - Membership-change paths in `raft_node_core.cpp` hold the full hierarchy.
+  - `membership_manager.cpp` `ApplyConfigChangeLocked()` holds `membership_mtx_`
+    when mutating `match_index_`; the helper is called immediately after the
+    mutation.
+
 ### Metric Helpers
 
 Two helpers were added to `RaftNodeImpl` to keep metric updates centralized:
@@ -112,6 +131,13 @@ void SetPeerReplicationLagMetricLocked(NodeId peer_id);
 ```
 
 Both are no-ops when `metrics_` is null (i.e. `config.metrics_enabled == false`).
+
+### Stale Time-Series Cleanup
+
+`MetricsRegistry` provides `RemoveCounter`, `RemoveGauge`, and
+`RemoveHistogram`.  When a node is removed from the cluster, the corresponding
+`raft_transport_peer_lag_entries` gauge is removed so the time series does not
+linger at the last reported value.
 
 ### Group Commit Metrics
 

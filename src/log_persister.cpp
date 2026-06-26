@@ -8,6 +8,7 @@
 
 #include "rollingraft/log_persister.h"
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <future>
@@ -23,6 +24,12 @@
 #endif
 
 namespace rollingraft {
+
+namespace {
+// Histogram buckets for fsync latency, in milliseconds.
+constexpr std::array<double, 13> kSyncLatencyBucketsMs = {
+    0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000};
+}  // namespace
 
 LogPersister::LogPersister(std::shared_ptr<Persister> persister,
                            LogPersistenceConfig config,
@@ -438,9 +445,9 @@ void LogPersister::BackgroundSyncLoop() {
                               .count() /
                           1000.0;
         metrics_
-            ->GetHistogram("logpersister_sync_latency_ms",
-                           {0.5, 1,   2,   5,   10,  25,
-                            50,  100, 250, 500, 1000, 2500, 5000})
+            ->GetHistogram("raft_log_persister_sync_latency_ms",
+                           {kSyncLatencyBucketsMs.begin(),
+                            kSyncLatencyBucketsMs.end()})
             .Observe(elapsed_ms);
       }
     }
@@ -600,9 +607,9 @@ bool LogPersister::DoFlush() {
                               .count() /
                           1000.0;
         metrics_
-            ->GetHistogram("logpersister_sync_latency_ms",
-                           {0.5, 1,   2,   5,   10,  25,
-                            50,  100, 250, 500, 1000, 2500, 5000})
+            ->GetHistogram("raft_log_persister_sync_latency_ms",
+                           {kSyncLatencyBucketsMs.begin(),
+                            kSyncLatencyBucketsMs.end()})
             .Observe(elapsed_ms);
       }
       if (!sync_status.ok()) {

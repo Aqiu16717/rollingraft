@@ -226,9 +226,13 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     cluster_config_.version++;
 
     peer_map_.erase(id);
-    SetPeerReplicationLagMetricLocked(id);
     next_index_.erase(id);
     match_index_.erase(id);
+    if (metrics_) {
+      auto labels = metrics_node_label_;
+      labels["peer_id"] = std::to_string(id);
+      metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
+    }
 
     peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
                                      [id, this](const NodeAddr& a) {

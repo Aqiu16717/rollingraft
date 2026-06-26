@@ -20,6 +20,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
       protocol_(std::move(protocol)),
       peer_addrs_(config.peers) {
   server_id_ = config.node_id;
+  metrics_node_label_ = {{"node_id", std::to_string(server_id_)}};
 
   // Build peer map
   bool has_explicit_peer_ids = !config.peer_node_ids.empty();
@@ -1313,9 +1314,13 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 
   // Remove from peer map immediately (optimistic)
   peer_map_.erase(id);
-  SetPeerReplicationLagMetricLocked(id);
   next_index_.erase(id);
   match_index_.erase(id);
+  if (metrics_) {
+    auto labels = metrics_node_label_;
+    labels["peer_id"] = std::to_string(id);
+    metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
+  }
 
   // Remove from peer_addrs_
   peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
@@ -1545,11 +1550,9 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
                             .count();
     remaining_seconds = std::max(0.0, remaining_ms / 1000.0);
   }
-  metrics_->GetGauge("raft_leader_lease_seconds",
-                     {{"node_id", std::to_string(server_id_)}})
+  metrics_->GetGauge("raft_leader_lease_seconds", metrics_node_label_)
       .Set(remaining_seconds);
-  metrics_->GetGauge("raft_leader_lease_valid",
-                     {{"node_id", std::to_string(server_id_)}})
+  metrics_->GetGauge("raft_leader_lease_valid", metrics_node_label_)
       .Set(valid ? 1.0 : 0.0);
 }
 
@@ -1564,8 +1567,7 @@ void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
   double lag = (last_index >= match)
                    ? static_cast<double>(last_index - match)
                    : 0.0;
-  metrics_->GetGauge("raft_transport_peer_lag_entries",
-                     {{"node_id", std::to_string(server_id_)},
-                      {"peer_id", std::to_string(peer_id)}})
-      .Set(lag);
+  auto labels = metrics_node_label_;
+  labels["peer_id"] = std::to_string(peer_id);
+  metrics_->GetGauge("raft_transport_peer_lag_entries", labels).Set(lag);
 }

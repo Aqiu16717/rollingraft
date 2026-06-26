@@ -1,6 +1,7 @@
 #include <atomic>
 
 #include "asio_timer_service.h"
+#include "rollingraft/log_persister.h"
 #include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
@@ -178,7 +179,8 @@ Status RaftNode::RaftNodeImpl::Start() {
       }
     }
 
-    log_persister_ = std::make_unique<LogPersister>(persister_, log_config);
+    log_persister_ =
+        std::make_unique<LogPersister>(persister_, log_config, metrics_.get());
     log_persister_->Start();
 
     // Restore log entries from disk.
@@ -1233,6 +1235,7 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
   peer_map_[id] = addr;
   next_index_[id] = log_.GetLastLogInfo().first + 1;
   match_index_[id] = 0;
+  SetPeerReplicationLagMetricLocked(id);
 
   LOG_INFO("Node {} proposing AddNode for {} at index {}", server_id_, id,
            index);
@@ -1310,6 +1313,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 
   // Remove from peer map immediately (optimistic)
   peer_map_.erase(id);
+  SetPeerReplicationLagMetricLocked(id);
   next_index_.erase(id);
   match_index_.erase(id);
 
@@ -1393,6 +1397,7 @@ Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
   peer_map_[id] = addr;
   next_index_[id] = log_.GetLastLogInfo().first + 1;
   match_index_[id] = 0;
+  SetPeerReplicationLagMetricLocked(id);
 
   LOG_INFO("Node {} proposing AddLearner for {} at index {}", server_id_, id,
            index);
@@ -1525,4 +1530,42 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
   } catch (...) {
     return -1;
   }
+}
+
+void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
+  if (!metrics_) return;
+  auto cfg = runtime_config_->Get();
+  bool valid = false;
+  double remaining_seconds = 0.0;
+  if (role_ == RaftNodeRole::LEADER && cfg.leader_lease_enabled) {
+    auto now = std::chrono::steady_clock::now();
+    valid = now < leader_lease_expiry_;
+    auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            leader_lease_expiry_ - now)
+                            .count();
+    remaining_seconds = std::max(0.0, remaining_ms / 1000.0);
+  }
+  metrics_->GetGauge("raft_leader_lease_seconds",
+                     {{"node_id", std::to_string(server_id_)}})
+      .Set(remaining_seconds);
+  metrics_->GetGauge("raft_leader_lease_valid",
+                     {{"node_id", std::to_string(server_id_)}})
+      .Set(valid ? 1.0 : 0.0);
+}
+
+void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
+  if (!metrics_) return;
+  auto [last_index, _] = log_.GetLastLogInfo();
+  Index match = 0;
+  auto it = match_index_.find(peer_id);
+  if (it != match_index_.end()) {
+    match = it->second;
+  }
+  double lag = (last_index >= match)
+                   ? static_cast<double>(last_index - match)
+                   : 0.0;
+  metrics_->GetGauge("raft_transport_peer_lag_entries",
+                     {{"node_id", std::to_string(server_id_)},
+                      {"peer_id", std::to_string(peer_id)}})
+      .Set(lag);
 }

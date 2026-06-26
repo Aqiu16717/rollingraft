@@ -203,6 +203,10 @@ class RaftNode::RaftNodeImpl {
   uint64_t GetLogTermLocked(uint64_t index);
   static NodeId ParseNodeId(const NodeAddr& addr);
 
+  // Metrics helpers (must hold appropriate locks)
+  void UpdateLeaderLeaseMetricLocked();
+  void SetPeerReplicationLagMetricLocked(NodeId peer_id);
+
   // Membership change
   void ApplyConfigChangeLocked(const std::string& cmd);
   void MaybeAutoPromoteLearnersLocked();

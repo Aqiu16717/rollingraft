@@ -402,6 +402,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(
         }
         match_index_[from] = state.last_included_index;
         next_index_[from] = state.last_included_index + 1;
+        SetPeerReplicationLagMetricLocked(from);
 
         // Clean up
         snapshot_sends_.erase(it);

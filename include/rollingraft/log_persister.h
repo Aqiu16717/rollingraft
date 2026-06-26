@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "rollingraft/metrics.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/raft_log.h"
 #include "rollingraft/status.h"
@@ -134,7 +135,8 @@ class LogPersister {
    * @param config Persistence configuration
    */
   explicit LogPersister(std::shared_ptr<Persister> persister,
-                        LogPersistenceConfig config = {});
+                        LogPersistenceConfig config = {},
+                        MetricsRegistry* metrics = nullptr);
 
   ~LogPersister();
 
@@ -297,6 +299,9 @@ class LogPersister {
 
   // Group commit controller (null when sync_policy == kSyncEveryWrite)
   std::unique_ptr<GroupCommitController> group_commit_controller_;
+
+  // Metrics registry (optional, forwarded to group commit controller)
+  MetricsRegistry* metrics_ = nullptr;
 
   // Error tracking
   std::atomic<bool> healthy_{true};

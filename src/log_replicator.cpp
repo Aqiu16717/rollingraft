@@ -416,6 +416,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     match_index_[from] = std::max(match_index_[from], new_match);
     // next_index_ was already advanced when sending; ensure it stays >= match+1.
     next_index_[from] = std::max(next_index_[from], match_index_[from] + 1);
+    SetPeerReplicationLagMetricLocked(from);
 
     // Reset retry state on success
     retry_state_.erase(from);
@@ -447,6 +448,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
       if (static_cast<uint32_t>(ack_count) >= cluster_config_.GetMajority()) {
         leader_lease_expiry_ = now + std::chrono::milliseconds(cfg.election_timeout_ms);
       }
+      UpdateLeaderLeaseMetricLocked();
     }
 
     // Coalescing: regular heartbeat acks also count for ReadIndex,
@@ -497,6 +499,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(
     if (next_index_[from] < 1) {
       next_index_[from] = 1;
     }
+    SetPeerReplicationLagMetricLocked(from);
 
     // Even on failure, the peer is alive — update contact time
     last_contact_time_[from] = std::chrono::steady_clock::now();
@@ -553,6 +556,7 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(
     if (static_cast<uint32_t>(ack_count) >= cluster_config_.GetMajority()) {
       leader_lease_expiry_ = now + std::chrono::milliseconds(cfg.election_timeout_ms);
     }
+    UpdateLeaderLeaseMetricLocked();
   }
 
   // Coalescing: heartbeat acks also count for ReadIndex

@@ -25,14 +25,17 @@
 namespace rollingraft {
 
 LogPersister::LogPersister(std::shared_ptr<Persister> persister,
-                           LogPersistenceConfig config)
+                           LogPersistenceConfig config,
+                           MetricsRegistry* metrics)
     : persister_(std::move(persister)),
       config_(config),
+      metrics_(metrics),
       async_state_(std::make_shared<AsyncState>()) {
   async_state_->persister = persister_;
 
   if (config_.sync_policy != LogPersistenceConfig::SyncPolicy::kSyncEveryWrite) {
-    group_commit_controller_ = std::make_unique<GroupCommitController>(config_);
+    group_commit_controller_ =
+        std::make_unique<GroupCommitController>(config_, metrics_);
   }
 }
 
@@ -426,7 +429,20 @@ void LogPersister::BackgroundSyncLoop() {
 
     Status sync_status;
     if (persister_) {
+      auto t0 = std::chrono::steady_clock::now();
       sync_status = persister_->Sync();
+      auto t1 = std::chrono::steady_clock::now();
+      if (metrics_) {
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                              t1 - t0)
+                              .count() /
+                          1000.0;
+        metrics_
+            ->GetHistogram("logpersister_sync_latency_ms",
+                           {0.5, 1,   2,   5,   10,  25,
+                            50,  100, 250, 500, 1000, 2500, 5000})
+            .Observe(elapsed_ms);
+      }
     }
 
     if (sync_status.ok()) {
@@ -575,7 +591,20 @@ bool LogPersister::DoFlush() {
   } else {
     // kSyncEveryWrite: sync inline before acknowledging durability.
     if (persister_) {
+      auto t0 = std::chrono::steady_clock::now();
       auto sync_status = persister_->Sync();
+      auto t1 = std::chrono::steady_clock::now();
+      if (metrics_) {
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                              t1 - t0)
+                              .count() /
+                          1000.0;
+        metrics_
+            ->GetHistogram("logpersister_sync_latency_ms",
+                           {0.5, 1,   2,   5,   10,  25,
+                            50,  100, 250, 500, 1000, 2500, 5000})
+            .Observe(elapsed_ms);
+      }
       if (!sync_status.ok()) {
         healthy_ = false;
         {

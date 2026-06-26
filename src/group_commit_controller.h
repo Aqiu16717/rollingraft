@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "rollingraft/log_persister.h"
+#include "rollingraft/metrics.h"
 #include "rollingraft/status.h"
 
 namespace rollingraft {
@@ -37,7 +38,10 @@ class GroupCommitController {
  public:
   using DurableCallback = std::function<void(Status)>;
 
-  explicit GroupCommitController(const LogPersistenceConfig& config);
+  explicit GroupCommitController(
+      const LogPersistenceConfig& config,
+      MetricsRegistry* metrics = nullptr,
+      const std::map<std::string, std::string>& metric_labels = {});
 
   /**
    * Register a newly flushed batch.
@@ -113,14 +117,18 @@ class GroupCommitController {
     uint64_t epoch;
     size_t entry_count;
     size_t byte_size;
+    std::chrono::steady_clock::time_point flush_time;
     std::vector<DurableCallback> callbacks;
   };
 
   bool IsSyncPolicyEnabled() const;
   size_t UnsyncedEntryCountLocked() const;
   size_t UnsyncedByteCountLocked() const;
+  void UpdateMetricsLocked() const;
 
   LogPersistenceConfig config_;
+  MetricsRegistry* metrics_;
+  std::map<std::string, std::string> metric_labels_;
 
   mutable std::mutex mutex_;
 

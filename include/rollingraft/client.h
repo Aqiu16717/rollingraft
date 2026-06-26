@@ -140,8 +140,7 @@ class Client {
    * @param timeout Maximum wait time
    * @return Result with response or error
    */
-  ClientResult Execute(const std::string& command,
-                       std::chrono::milliseconds timeout);
+  ClientResult Execute(const std::string& command, std::chrono::milliseconds timeout);
 
   /** Execute with default timeout. */
   ClientResult Execute(const std::string& command);
@@ -151,8 +150,7 @@ class Client {
    * @param query Read query
    * @param timeout Maximum wait time
    */
-  ClientResult Query(const std::string& query,
-                     std::chrono::milliseconds timeout);
+  ClientResult Query(const std::string& query, std::chrono::milliseconds timeout);
 
   /** Query with default timeout. */
   ClientResult Query(const std::string& query);
@@ -163,13 +161,11 @@ class Client {
    * @param callback Called on completion
    * @param timeout Maximum wait time
    */
-  void ExecuteAsync(const std::string& command,
-                    std::function<void(ClientResult)> callback,
+  void ExecuteAsync(const std::string& command, std::function<void(ClientResult)> callback,
                     std::chrono::milliseconds timeout);
 
   /** Async with default timeout. */
-  void ExecuteAsync(const std::string& command,
-                    std::function<void(ClientResult)> callback);
+  void ExecuteAsync(const std::string& command, std::function<void(ClientResult)> callback);
 
   /** Force refresh leader cache. */
   void RefreshLeader();

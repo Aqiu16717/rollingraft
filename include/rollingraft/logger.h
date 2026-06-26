@@ -15,8 +15,9 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <spdlog/fmt/fmt.h>
 #include <string>
+
+#include <spdlog/fmt/fmt.h>
 
 namespace rollingraft {
 

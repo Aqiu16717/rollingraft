@@ -1,5 +1,4 @@
 #include <chrono>
-#include <gtest/gtest.h>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -9,6 +8,7 @@
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
 #include "test_port.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -22,7 +22,10 @@ using namespace rollingraft;
 
 class RaftLogReplicationTest : public ::testing::Test {
  protected:
-  void SetUp() override { sm_ = std::make_shared<MockStateMachine>(); ports_ = GetTestPorts(11); }
+  void SetUp() override {
+    sm_ = std::make_shared<MockStateMachine>();
+    ports_ = GetTestPorts(11);
+  }
 
   void TearDown() override {
     if (node_) {
@@ -58,8 +61,7 @@ TEST_F(RaftLogReplicationTest, Follower_RejectPropose) {
 
   // As follower, propose should fail
   std::atomic<bool> callback_called{false};
-  auto status = node_->Propose(
-      "cmd1", [&](const ApplyResult&) { callback_called = true; });
+  auto status = node_->Propose("cmd1", [&](const ApplyResult&) { callback_called = true; });
 
   // Should return error immediately
   EXPECT_FALSE(status.ok());
@@ -133,8 +135,7 @@ TEST_F(RaftLogReplicationTest, Persistence_LogsRestored) {
 
   // The node should have restored logs (verified via persister)
   // Note: Direct log access is internal, but we can verify no crash
-  EXPECT_TRUE(node_->IsLeader() ||
-              !node_->IsLeader());  // Just verify state is valid
+  EXPECT_TRUE(node_->IsLeader() || !node_->IsLeader());  // Just verify state is valid
 }
 
 TEST_F(RaftLogReplicationTest, Follower_RejectProposeBatch) {
@@ -144,8 +145,7 @@ TEST_F(RaftLogReplicationTest, Follower_RejectProposeBatch) {
 
   std::atomic<bool> callback_called{false};
   auto status = node_->ProposeBatch(
-      {"cmd1", "cmd2"},
-      [&](const std::vector<ApplyResult>&) { callback_called = true; });
+      {"cmd1", "cmd2"}, [&](const std::vector<ApplyResult>&) { callback_called = true; });
 
   EXPECT_FALSE(status.ok());
   EXPECT_FALSE(callback_called);
@@ -173,13 +173,12 @@ TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
   // Wait for election timeout to fire and node to become leader
   // Single node needs only its own vote; timeout is randomized [50,100]ms
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  ASSERT_TRUE(node_->IsLeader())
-      << "Node should be leader after election timeout";
+  ASSERT_TRUE(node_->IsLeader()) << "Node should be leader after election timeout";
 
   std::atomic<bool> completed{false};
   std::vector<ApplyResult> batch_results;
-  auto status = node_->ProposeBatch(
-      {"cmd1", "cmd2", "cmd3"}, [&](const std::vector<ApplyResult>& results) {
+  auto status =
+      node_->ProposeBatch({"cmd1", "cmd2", "cmd3"}, [&](const std::vector<ApplyResult>& results) {
         batch_results = results;
         completed = true;
       });
@@ -187,9 +186,9 @@ TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
 
   // Wait for commit (single node = immediate quorum)
   auto start = std::chrono::steady_clock::now();
-  while (!completed && std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::steady_clock::now() - start)
-                               .count() < 5) {
+  while (!completed &&
+         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
+                 .count() < 5) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 

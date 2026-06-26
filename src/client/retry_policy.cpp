@@ -11,10 +11,8 @@
 
 namespace rollingraft {
 
-RetryPolicy::RetryPolicy(int max_retries,
-                         std::chrono::milliseconds initial_delay,
-                         std::chrono::milliseconds max_delay,
-                         double backoff_multiplier)
+RetryPolicy::RetryPolicy(int max_retries, std::chrono::milliseconds initial_delay,
+                         std::chrono::milliseconds max_delay, double backoff_multiplier)
     : max_retries_(max_retries),
       initial_delay_(initial_delay),
       max_delay_(max_delay),
@@ -28,35 +26,28 @@ bool RetryPolicy::IsRetryableError(const Status& error) {
 
   // Use error code classification instead of string matching
   auto code = error.GetErrorCode();
-  if (code == Status::Code::kRequestVoteError ||
-      code == Status::Code::kAppendEntriesError ||
+  if (code == Status::Code::kRequestVoteError || code == Status::Code::kAppendEntriesError ||
       code == Status::Code::kInstallSnapshotError) {
     return true;
   }
 
   // Generic errors may be retryable - check message content as fallback
   std::string msg = error.GetMessage();
-  if (msg.find("network") != std::string::npos ||
-      msg.find("Network") != std::string::npos ||
-      msg.find("timeout") != std::string::npos ||
-      msg.find("Timeout") != std::string::npos ||
-      msg.find("connect") != std::string::npos ||
-      msg.find("Connect") != std::string::npos) {
+  if (msg.find("network") != std::string::npos || msg.find("Network") != std::string::npos ||
+      msg.find("timeout") != std::string::npos || msg.find("Timeout") != std::string::npos ||
+      msg.find("connect") != std::string::npos || msg.find("Connect") != std::string::npos) {
     return true;
   }
 
   return false;
 }
 
-bool RetryPolicy::ShouldRetry(int attempt_count) const {
-  return attempt_count < max_retries_;
-}
+bool RetryPolicy::ShouldRetry(int attempt_count) const { return attempt_count < max_retries_; }
 
 std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   // Exponential backoff: delay = initial * multiplier^attempt
   double factor = std::pow(backoff_multiplier_, attempt_count);
-  auto base_delay = std::chrono::milliseconds(
-      static_cast<int>(initial_delay_.count() * factor));
+  auto base_delay = std::chrono::milliseconds(static_cast<int>(initial_delay_.count() * factor));
 
   // Cap at max delay (before jitter so final delay stays within bounds)
   base_delay = std::min(base_delay, max_delay_);

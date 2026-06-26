@@ -1,7 +1,5 @@
 #pragma once
 
-#include <asio.hpp>
-#include <asio/ssl.hpp>
 #include <atomic>
 #include <deque>
 #include <memory>
@@ -9,12 +7,16 @@
 #include <string>
 #include <variant>
 
+#include <asio.hpp>
+
+#include <asio/ssl.hpp>
+
 namespace rollingraft {
 
 class SseConnection : public std::enable_shared_from_this<SseConnection> {
  public:
-  using SocketVariant = std::variant<asio::ip::tcp::socket,
-                                     asio::ssl::stream<asio::ip::tcp::socket>>;
+  using SocketVariant =
+      std::variant<asio::ip::tcp::socket, asio::ssl::stream<asio::ip::tcp::socket>>;
 
   SseConnection(SocketVariant socket, asio::io_context::strand strand);
 

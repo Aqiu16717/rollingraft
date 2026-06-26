@@ -152,9 +152,7 @@ class RaftEvent {
  public:
   template <typename T>
   explicit RaftEvent(T event)  // NOLINT(google-explicit-constructor)
-      : type_(typeid(T)),
-        data_(std::make_shared<T>(std::move(event))),
-        name_(T::kName) {}
+      : type_(typeid(T)), data_(std::make_shared<T>(std::move(event))), name_(T::kName) {}
 
   /** Get event type name for logging/debugging. */
   const char* Name() const { return name_; }
@@ -258,8 +256,7 @@ class EventBus {
  private:
   mutable std::mutex mutex_;
   uint64_t next_id_ = 1;
-  std::unordered_map<std::type_index, std::unordered_map<uint64_t, EventHandler>>
-      subscriptions_;
+  std::unordered_map<std::type_index, std::unordered_map<uint64_t, EventHandler>> subscriptions_;
   std::unordered_map<uint64_t, EventHandler> wildcard_subs_;
 };
 

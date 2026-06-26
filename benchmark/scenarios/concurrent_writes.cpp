@@ -59,14 +59,10 @@ class ConcurrentWritesScenario : public ClusterBenchmark {
   OperationResult DoOperation() override { return OperationResult{}; }
 
  private:
-  ConcurrentConfigResult RunConfiguration(int num_clients,
-                                          size_t payload_size,
-                                          int duration_sec);
-  void PrintCsvResults(
-      const std::vector<ConcurrentConfigResult>& results) const;
-  void SaveCsvResults(
-      const std::vector<ConcurrentConfigResult>& results,
-      const std::string& filename) const;
+  ConcurrentConfigResult RunConfiguration(int num_clients, size_t payload_size, int duration_sec);
+  void PrintCsvResults(const std::vector<ConcurrentConfigResult>& results) const;
+  void SaveCsvResults(const std::vector<ConcurrentConfigResult>& results,
+                      const std::string& filename) const;
 };
 
 BenchmarkStats ConcurrentWritesScenario::Run() {
@@ -76,8 +72,7 @@ BenchmarkStats ConcurrentWritesScenario::Run() {
     return fail;
   }
 
-  std::cout << "\n========== Concurrent Writes Benchmark ==========\n"
-            << std::endl;
+  std::cout << "\n========== Concurrent Writes Benchmark ==========\n" << std::endl;
 
   // Test matrix: concurrency levels × payload sizes
   std::vector<int> client_counts = {1, 5, 10};
@@ -88,9 +83,8 @@ BenchmarkStats ConcurrentWritesScenario::Run() {
 
   for (size_t payload_size : payload_sizes) {
     for (int num_clients : client_counts) {
-      std::cout << "\n--- Configuration: " << num_clients << " clients, "
-                << payload_size << " B payload, " << kDurationSec
-                << " s duration ---" << std::endl;
+      std::cout << "\n--- Configuration: " << num_clients << " clients, " << payload_size
+                << " B payload, " << kDurationSec << " s duration ---" << std::endl;
 
       auto result = RunConfiguration(num_clients, payload_size, kDurationSec);
       all_results.push_back(result);
@@ -98,8 +92,7 @@ BenchmarkStats ConcurrentWritesScenario::Run() {
       std::cout << "Throughput: " << result.stats.operations_per_second
                 << " ops/sec | P50: " << result.stats.latency_p50_us
                 << " us | P99: " << result.stats.latency_p99_us
-                << " us | Success: " << (result.stats.success_rate * 100.0)
-                << "%" << std::endl;
+                << " us | Success: " << (result.stats.success_rate * 100.0) << "%" << std::endl;
     }
   }
 
@@ -126,8 +119,9 @@ BenchmarkStats ConcurrentWritesScenario::Run() {
   return aggregate;
 }
 
-ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(
-    int num_clients, size_t payload_size, int duration_sec) {
+ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(int num_clients,
+                                                                  size_t payload_size,
+                                                                  int duration_sec) {
   ConcurrentConfigResult result;
   result.num_clients = num_clients;
   result.payload_size = payload_size;
@@ -156,16 +150,14 @@ ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(
         if (!status.ok()) {
           ++failed_ops;
           if (local_errs < 3) {
-            std::cerr << "[Worker " << i << " ERR] " << status.ToString()
-                      << std::endl;
+            std::cerr << "[Worker " << i << " ERR] " << status.ToString() << std::endl;
             ++local_errs;
           }
           // Stop this worker on first error to avoid timeout artifacts
           break;
         }
 
-        auto latency_us =
-            duration_cast<microseconds>(op_end - op_start).count();
+        auto latency_us = duration_cast<microseconds>(op_end - op_start).count();
         per_thread_latencies[i].push_back(static_cast<double>(latency_us));
 
         ++total_ops;
@@ -197,14 +189,12 @@ ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(
   stats.total_operations = total_ops.load();
   stats.success_count = success_ops.load();
   stats.failure_count = failed_ops.load();
-  stats.success_rate =
-      (stats.total_operations > 0)
-          ? static_cast<double>(stats.success_count) / stats.total_operations
-          : 0.0;
+  stats.success_rate = (stats.total_operations > 0)
+                           ? static_cast<double>(stats.success_count) / stats.total_operations
+                           : 0.0;
   stats.operations_per_second =
       (duration.count() > 0)
-          ? (static_cast<double>(stats.total_operations) * 1000.0) /
-                duration.count()
+          ? (static_cast<double>(stats.total_operations) * 1000.0) / duration.count()
           : 0.0;
 
   if (!all_latencies.empty()) {
@@ -220,9 +210,7 @@ ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(
     stats.latency_avg_us = sum / all_latencies.size();
 
     auto percentile = [&](double p) -> double {
-      size_t idx = static_cast<size_t>(
-                       std::ceil((p / 100.0) * all_latencies.size())) -
-                   1;
+      size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * all_latencies.size())) - 1;
       if (idx >= all_latencies.size()) idx = all_latencies.size() - 1;
       return all_latencies[idx];
     };
@@ -246,20 +234,17 @@ void ConcurrentWritesScenario::PrintCsvResults(
 
   for (const auto& r : results) {
     const auto& s = r.stats;
-    std::cout << r.num_clients << "," << r.payload_size << ","
-              << s.duration_ms.count() << "," << s.total_operations << ","
-              << s.operations_per_second << "," << s.success_rate << ","
-              << s.latency_min_us << "," << s.latency_avg_us << ","
-              << s.latency_p50_us << "," << s.latency_p99_us << ","
-              << s.latency_p999_us << "," << s.latency_max_us << std::endl;
+    std::cout << r.num_clients << "," << r.payload_size << "," << s.duration_ms.count() << ","
+              << s.total_operations << "," << s.operations_per_second << "," << s.success_rate
+              << "," << s.latency_min_us << "," << s.latency_avg_us << "," << s.latency_p50_us
+              << "," << s.latency_p99_us << "," << s.latency_p999_us << "," << s.latency_max_us
+              << std::endl;
   }
 }
 
-void ConcurrentWritesScenario::SaveCsvResults(
-    const std::vector<ConcurrentConfigResult>& results,
-    const std::string& filename) const {
-  std::filesystem::create_directories(
-      std::filesystem::path(filename).parent_path());
+void ConcurrentWritesScenario::SaveCsvResults(const std::vector<ConcurrentConfigResult>& results,
+                                              const std::string& filename) const {
+  std::filesystem::create_directories(std::filesystem::path(filename).parent_path());
 
   std::ofstream file(filename);
   if (!file.is_open()) {
@@ -273,19 +258,15 @@ void ConcurrentWritesScenario::SaveCsvResults(
 
   for (const auto& r : results) {
     const auto& s = r.stats;
-    file << r.num_clients << "," << r.payload_size << ","
-         << s.duration_ms.count() << "," << s.total_operations << ","
-         << s.operations_per_second << "," << s.success_rate << ","
-         << s.latency_min_us << "," << s.latency_avg_us << ","
-         << s.latency_p50_us << "," << s.latency_p99_us << ","
-         << s.latency_p999_us << "," << s.latency_max_us << "\n";
+    file << r.num_clients << "," << r.payload_size << "," << s.duration_ms.count() << ","
+         << s.total_operations << "," << s.operations_per_second << "," << s.success_rate << ","
+         << s.latency_min_us << "," << s.latency_avg_us << "," << s.latency_p50_us << ","
+         << s.latency_p99_us << "," << s.latency_p999_us << "," << s.latency_max_us << "\n";
   }
 
   std::cout << "\nCSV saved to: " << filename << std::endl;
 }
 
-REGISTER_SCENARIO(concurrent_writes, []() {
-  return std::make_unique<ConcurrentWritesScenario>();
-});
+REGISTER_SCENARIO(concurrent_writes, []() { return std::make_unique<ConcurrentWritesScenario>(); });
 
 }  // namespace rollingraft

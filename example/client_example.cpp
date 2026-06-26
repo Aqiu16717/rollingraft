@@ -12,10 +12,9 @@ using namespace rollingraft;
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <server1> [server2] [server3]..."
+    std::cerr << "Usage: " << argv[0] << " <server1> [server2] [server3]..." << std::endl;
+    std::cerr << "Example: " << argv[0] << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003"
               << std::endl;
-    std::cerr << "Example: " << argv[0]
-              << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003" << std::endl;
     return 1;
   }
 
@@ -77,15 +76,13 @@ int main(int argc, char* argv[]) {
     } else if (cmd == "leader") {
       std::string leader = client.GetLeaderAddr();
       if (leader.empty()) {
-        std::cout << "Leader: unknown (will discover on next request)"
-                  << std::endl;
+        std::cout << "Leader: unknown (will discover on next request)" << std::endl;
       } else {
         std::cout << "Leader: " << leader << std::endl;
       }
     } else if (cmd == "health") {
       bool healthy = client.IsHealthy();
-      std::cout << "Health: " << (healthy ? "healthy" : "unhealthy")
-                << std::endl;
+      std::cout << "Health: " << (healthy ? "healthy" : "unhealthy") << std::endl;
     } else if (cmd == "set") {
       if (parts.size() < 3) {
         std::cout << "Usage: set <key> <value>" << std::endl;

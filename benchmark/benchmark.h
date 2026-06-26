@@ -107,8 +107,7 @@ class Benchmark {
  */
 class ThroughputBenchmark : public Benchmark {
  public:
-  ThroughputBenchmark(const BenchmarkConfig& config,
-                      std::function<OperationResult()> operation);
+  ThroughputBenchmark(const BenchmarkConfig& config, std::function<OperationResult()> operation);
 
   std::string Name() const override { return "Throughput"; }
 
@@ -124,8 +123,7 @@ class ThroughputBenchmark : public Benchmark {
  */
 class LatencyBenchmark : public Benchmark {
  public:
-  LatencyBenchmark(const BenchmarkConfig& config,
-                   std::function<OperationResult()> operation);
+  LatencyBenchmark(const BenchmarkConfig& config, std::function<OperationResult()> operation);
 
   std::string Name() const override { return "Latency"; }
 
@@ -152,8 +150,7 @@ class FailoverBenchmark : public Benchmark {
     uint64_t operations_failed = 0;            // Ops failed during failover
   };
 
-  FailoverBenchmark(std::function<OperationResult()> operation,
-                    std::function<void()> kill_leader,
+  FailoverBenchmark(std::function<OperationResult()> operation, std::function<void()> kill_leader,
                     std::function<bool()> is_leader_elected);
 
   std::string Name() const override { return "Failover"; }
@@ -183,8 +180,7 @@ struct RepeatedBenchmarkStats {
   int repetition_count = 0;
 
   std::string ToString() const;
-  void SaveToJson(const std::string& filename,
-                  const std::string& benchmark_name,
+  void SaveToJson(const std::string& filename, const std::string& benchmark_name,
                   const std::map<std::string, std::string>& parameters) const;
 };
 
@@ -203,8 +199,7 @@ void PrintComparison(const std::map<std::string, BenchmarkStats>& results);
 void SaveToJson(const std::string& filename, const BenchmarkStats& stats);
 
 // Save repeated benchmark stats to JSON (schema v1.0)
-void SaveToJson(const std::string& filename,
-                const RepeatedBenchmarkStats& stats,
+void SaveToJson(const std::string& filename, const RepeatedBenchmarkStats& stats,
                 const std::string& benchmark_name,
                 const std::map<std::string, std::string>& parameters);
 

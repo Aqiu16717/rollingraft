@@ -1,10 +1,9 @@
-#include <gtest/gtest.h>
-
 #include "rollingraft/raft_node.h"
 
 #include "mock/mock_persister.h"
 #include "mock/mock_state_machine.h"
 #include "test_port.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -44,11 +43,9 @@ TEST_F(LearnerClusterConfigTest, RemoveNode_AlsoRemovesLearner) {
   config.learners = {4};
 
   // Simulate REMOVE:4
-  config.nodes.erase(std::remove(config.nodes.begin(), config.nodes.end(), 4),
-                     config.nodes.end());
-  config.learners.erase(
-      std::remove(config.learners.begin(), config.learners.end(), 4),
-      config.learners.end());
+  config.nodes.erase(std::remove(config.nodes.begin(), config.nodes.end(), 4), config.nodes.end());
+  config.learners.erase(std::remove(config.learners.begin(), config.learners.end(), 4),
+                        config.learners.end());
 
   EXPECT_FALSE(config.Contains(4));
   EXPECT_FALSE(config.IsLearner(4));

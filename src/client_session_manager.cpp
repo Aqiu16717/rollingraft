@@ -85,9 +85,9 @@ size_t ClientSessionManager::EvictExpired() {
       continue;
     }
 
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       now - sit->second.entry.last_active)
-                       .count();
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - sit->second.entry.last_active)
+            .count();
     if (elapsed >= 0 && static_cast<uint64_t>(elapsed) >= ttl_ms_) {
       // Remove expired session
       auto base_it = std::next(it).base();  // Convert reverse to forward iterator
@@ -117,8 +117,7 @@ void ClientSessionManager::Clear() {
   lru_list_.clear();
 }
 
-void ClientSessionManager::TouchSession(uint64_t session_id,
-                                        SessionNode& node) {
+void ClientSessionManager::TouchSession(uint64_t session_id, SessionNode& node) {
   // Move to front of LRU list
   lru_list_.erase(node.lru_it);
   lru_list_.push_front(session_id);

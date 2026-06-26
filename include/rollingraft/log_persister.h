@@ -134,8 +134,7 @@ class LogPersister {
    * @param persister Underlying persistent storage
    * @param config Persistence configuration
    */
-  explicit LogPersister(std::shared_ptr<Persister> persister,
-                        LogPersistenceConfig config = {},
+  explicit LogPersister(std::shared_ptr<Persister> persister, LogPersistenceConfig config = {},
                         MetricsRegistry* metrics = nullptr);
 
   ~LogPersister();
@@ -175,9 +174,8 @@ class LogPersister {
    * @param timeout Maximum time to wait for flush
    * @return Status indicating success or failure
    */
-  Status AppendSync(
-      const RaftLogEntry& entry,
-      std::chrono::milliseconds timeout = std::chrono::seconds(5));
+  Status AppendSync(const RaftLogEntry& entry,
+                    std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
   /**
    * Force flush all buffered entries to disk.
@@ -227,8 +225,7 @@ class LogPersister {
    * @param before_index Delete entries with index < before_index
    * @param callback Optional callback invoked when truncation completes
    */
-  void TruncatePrefixAsync(uint64_t before_index,
-                           TruncateCallback callback = nullptr);
+  void TruncatePrefixAsync(uint64_t before_index, TruncateCallback callback = nullptr);
 
   /**
    * Restore log entries from persistent storage.

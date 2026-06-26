@@ -3,12 +3,13 @@
  * @brief Unit tests for ConnectionPool class
  */
 
-#include <asio.hpp>
 #include <chrono>
-#include <gtest/gtest.h>
 #include <thread>
 
+#include <asio.hpp>
+
 #include "client/connection_pool.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -81,8 +82,7 @@ TEST_F(ConnectionPoolTest, CloseAll_NoConnections_NoCrash) {
 
 TEST_F(ConnectionPoolTest, GetConnection_ShortTimeout_ReturnsNull) {
   // Use very short timeout
-  auto short_timeout_pool =
-      std::make_unique<ConnectionPool>(std::chrono::milliseconds(1));
+  auto short_timeout_pool = std::make_unique<ConnectionPool>(std::chrono::milliseconds(1));
 
   // Try to connect to an address that won't respond
   auto conn = short_timeout_pool->GetConnection("127.0.0.1:59995");

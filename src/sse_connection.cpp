@@ -4,8 +4,7 @@
 
 namespace rollingraft {
 
-SseConnection::SseConnection(SocketVariant socket,
-                             asio::io_context::strand strand)
+SseConnection::SseConnection(SocketVariant socket, asio::io_context::strand strand)
     : socket_(std::move(socket)), strand_(std::move(strand)) {}
 
 void SseConnection::EnqueueEvent(const std::string& event_data) {
@@ -36,17 +35,16 @@ void SseConnection::Start() {
   auto headers_ptr = std::make_shared<std::string>(std::move(headers));
   std::visit(
       [this, headers_ptr](auto& socket) {
-        asio::async_write(
-            socket, asio::buffer(*headers_ptr),
-            asio::bind_executor(strand_, [self = shared_from_this(), headers_ptr](
-                                             std::error_code ec, std::size_t) {
-              if (!ec) {
-                self->DoWrite();
-              } else {
-                self->open_.store(false);
-                self->writing_.store(false);
-              }
-            }));
+        asio::async_write(socket, asio::buffer(*headers_ptr),
+                          asio::bind_executor(strand_, [self = shared_from_this(), headers_ptr](
+                                                           std::error_code ec, std::size_t) {
+                            if (!ec) {
+                              self->DoWrite();
+                            } else {
+                              self->open_.store(false);
+                              self->writing_.store(false);
+                            }
+                          }));
       },
       socket_);
 }
@@ -59,9 +57,8 @@ void SseConnection::Close() {
     std::visit(
         [](auto& socket) {
           std::error_code ec;
-          if constexpr (std::is_same_v<
-                            std::decay_t<decltype(socket)>,
-                            asio::ssl::stream<asio::ip::tcp::socket>>) {
+          if constexpr (std::is_same_v<std::decay_t<decltype(socket)>,
+                                       asio::ssl::stream<asio::ip::tcp::socket>>) {
             socket.shutdown(ec);
             socket.next_layer().close(ec);
           } else {
@@ -91,13 +88,11 @@ void SseConnection::DoWrite() {
 
   std::visit(
       [this](auto& socket) {
-        asio::async_write(
-            socket, asio::buffer(write_buffer_),
-            asio::bind_executor(
-                strand_, [self = shared_from_this()](std::error_code ec,
-                                                     std::size_t bytes) {
-                  self->OnWrite(ec, bytes);
-                }));
+        asio::async_write(socket, asio::buffer(write_buffer_),
+                          asio::bind_executor(strand_, [self = shared_from_this()](
+                                                           std::error_code ec, std::size_t bytes) {
+                            self->OnWrite(ec, bytes);
+                          }));
       },
       socket_);
 }

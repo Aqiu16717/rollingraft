@@ -1,7 +1,6 @@
-#include <gtest/gtest.h>
-
 #include "simulated_network.h"
 #include "test_cluster.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

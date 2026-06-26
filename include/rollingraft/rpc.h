@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -79,8 +80,7 @@ struct RequestVoteRequest : public RaftRequest {
         candidate_id_(-1),
         last_log_index_(0),
         last_log_term_(0) {}
-  RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index,
-                     Term last_log_term)
+  RequestVoteRequest(Term term, NodeId candidate_id, Index last_log_index, Term last_log_term)
       : RaftRequest(RaftMessageType::KRequestVoteRequest),
         term_(term),
         candidate_id_(candidate_id),
@@ -98,9 +98,7 @@ struct RequestVoteResponse : RaftResponse {
   bool vote_granted_;  // True means candidate received vote
 
   RequestVoteResponse()
-      : RaftResponse(RaftMessageType::KRequestVoteResponse),
-        term_(0),
-        vote_granted_(false) {}
+      : RaftResponse(RaftMessageType::KRequestVoteResponse), term_(0), vote_granted_(false) {}
   RequestVoteResponse(Term term, bool vote_granted)
       : RaftResponse(RaftMessageType::KRequestVoteResponse),
         term_(term),
@@ -114,13 +112,12 @@ struct RequestVoteResponse : RaftResponse {
  * (Section 5.3).
  */
 struct AppendEntriesRequest : public RaftRequest {
-  Term term_;             // Leader's term
-  NodeId leader_id_;      // So follower can redirect clients
-  Index prev_log_index_;  // Index of log entry immediately preceding new ones
-  Term prev_log_term_;    // Term of prev_log_index entry
-  std::vector<RaftLogEntry>
-      entries_;          // Log entries to store (empty for heartbeat)
-  Index leader_commit_;  // Leader's commit index
+  Term term_;                          // Leader's term
+  NodeId leader_id_;                   // So follower can redirect clients
+  Index prev_log_index_;               // Index of log entry immediately preceding new ones
+  Term prev_log_term_;                 // Term of prev_log_index entry
+  std::vector<RaftLogEntry> entries_;  // Log entries to store (empty for heartbeat)
+  Index leader_commit_;                // Leader's commit index
 
   AppendEntriesRequest()
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
@@ -129,9 +126,8 @@ struct AppendEntriesRequest : public RaftRequest {
         prev_log_index_(0),
         prev_log_term_(0),
         leader_commit_(0) {}
-  AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index,
-                       Term prev_log_term, std::vector<RaftLogEntry> entries,
-                       Index leader_commit)
+  AppendEntriesRequest(Term term, NodeId leader_id, Index prev_log_index, Term prev_log_term,
+                       std::vector<RaftLogEntry> entries, Index leader_commit)
       : RaftRequest(RaftMessageType::KAppendEntriesRequest),
         term_(term),
         leader_id_(leader_id),
@@ -158,8 +154,7 @@ struct AppendEntriesResponse : public RaftResponse {
         success_(false),
         conflict_index_(0),
         entries_count_(0) {}
-  AppendEntriesResponse(Term term, bool success, Index conflict_index = 0,
-                        Index entries_count = 0)
+  AppendEntriesResponse(Term term, bool success, Index conflict_index = 0, Index entries_count = 0)
       : RaftResponse(RaftMessageType::KAppendEntriesResponse),
         term_(term),
         success_(success),
@@ -191,8 +186,8 @@ struct InstallSnapshotRequest : public RaftRequest {
         offset_(0),
         done_(false) {}
   InstallSnapshotRequest(Term term, NodeId leader_id, Index last_included_index,
-                         Term last_included_term, uint32_t offset,
-                         std::vector<char> data, bool done)
+                         Term last_included_term, uint32_t offset, std::vector<char> data,
+                         bool done)
       : RaftRequest(RaftMessageType::KInstallSnapshotRequest),
         term_(term),
         leader_id_(leader_id),
@@ -211,8 +206,7 @@ struct InstallSnapshotRequest : public RaftRequest {
 struct InstallSnapshotResponse : public RaftResponse {
   Term term_;  // Current term, for leader to update itself
 
-  InstallSnapshotResponse()
-      : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(0) {}
+  InstallSnapshotResponse() : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(0) {}
   explicit InstallSnapshotResponse(Term term)
       : RaftResponse(RaftMessageType::KInstallSnapshotResponse), term_(term) {}
 };
@@ -227,10 +221,7 @@ struct ClientRequest : public RaftRequest {
   bool read_only;       // True if this is a read-only query
 
   ClientRequest()
-      : RaftRequest(RaftMessageType::KClientRequest),
-        client_id(0),
-        seq(0),
-        read_only(false) {}
+      : RaftRequest(RaftMessageType::KClientRequest), client_id(0), seq(0), read_only(false) {}
 };
 
 /**
@@ -297,9 +288,7 @@ struct PreVoteResponse : RaftResponse {
   bool vote_granted_;  // True means candidate would receive vote
 
   PreVoteResponse()
-      : RaftResponse(RaftMessageType::KPreVoteResponse),
-        term_(0),
-        vote_granted_(false) {}
+      : RaftResponse(RaftMessageType::KPreVoteResponse), term_(0), vote_granted_(false) {}
 };
 
 /**
@@ -309,8 +298,7 @@ struct ConfigChangeResponse : public RaftResponse {
   bool success_;       // Whether the change was accepted
   std::string error_;  // Error message if failed
 
-  ConfigChangeResponse()
-      : RaftResponse(RaftMessageType::KConfigChangeResponse), success_(false) {}
+  ConfigChangeResponse() : RaftResponse(RaftMessageType::KConfigChangeResponse), success_(false) {}
 };
 
 /**
@@ -328,9 +316,9 @@ struct ReadIndexRequest : public RaftRequest {
  * Returned by leader to follower with the current commit index.
  */
 struct ReadIndexResponse : public RaftResponse {
-  Term term_;            // Current term, for requester to update itself
-  Index read_index_;     // Leader's commit index at the time of request
-  bool leader_valid_;    // Whether the leader is still valid
+  Term term_;          // Current term, for requester to update itself
+  Index read_index_;   // Leader's commit index at the time of request
+  bool leader_valid_;  // Whether the leader is still valid
 
   ReadIndexResponse()
       : RaftResponse(RaftMessageType::KReadIndexResponse),
@@ -352,12 +340,10 @@ struct ReadIndexResponse : public RaftResponse {
  * @param resp Response to populate
  * @return Status of the network operation
  */
-Status RpcCall(const std::string& addr, const ClientRequest& req,
-               ClientResponse& resp,
+Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse& resp,
                std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
-Status RpcCall(const std::string& addr, const ReadIndexRequest& req,
-               ReadIndexResponse& resp,
+Status RpcCall(const std::string& addr, const ReadIndexRequest& req, ReadIndexResponse& resp,
                std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 }  // namespace rollingraft

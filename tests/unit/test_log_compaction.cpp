@@ -1,10 +1,11 @@
-#include <gtest/gtest.h>
 #include <memory>
 #include <thread>
 
 #include "rollingraft/log_persister.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/raft_log.h"
+
+#include <gtest/gtest.h>
 
 #if defined(__has_include)
 #if __has_include(<asio.hpp>)
@@ -33,8 +34,7 @@ class MockPersister : public Persister {
     return Status::OK();
   }
 
-  Status GetEntries(uint64_t start, uint64_t end,
-                    std::vector<RaftLogEntry>* out) override {
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override {
     for (uint64_t i = start; i < end && i <= last_index_; ++i) {
       auto it = entries_.find(i);
       if (it != entries_.end()) {
@@ -192,8 +192,7 @@ TEST(LogCompactionTest, TruncatePrefixAsyncSyncFallback) {
   lp.TruncatePrefixAsync(5, [&promise](Status s) { promise.set_value(s); });
 
   auto future = promise.get_future();
-  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)),
-            std::future_status::ready);
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   EXPECT_TRUE(future.get().ok());
   EXPECT_EQ(mock_ptr->entries_.size(), 6);
 
@@ -207,9 +206,7 @@ TEST(LogCompactionTest, TruncatePrefixAsyncWithExecutor) {
   std::thread io_thread([&]() { io.run(); });
 
   LogPersistenceConfig config;
-  config.executor = [&io](std::function<void()> fn) {
-    asio::post(io, std::move(fn));
-  };
+  config.executor = [&io](std::function<void()> fn) { asio::post(io, std::move(fn)); };
 
   auto mock = std::make_shared<MockPersister>();
   auto* mock_ptr = mock.get();
@@ -233,8 +230,7 @@ TEST(LogCompactionTest, TruncatePrefixAsyncWithExecutor) {
   io_thread.join();
 
   auto future = promise.get_future();
-  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)),
-            std::future_status::ready);
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   EXPECT_TRUE(future.get().ok());
   EXPECT_EQ(mock_ptr->entries_.size(), 6);
 
@@ -247,9 +243,7 @@ TEST(LogCompactionTest, TruncatePrefixAsyncShutdownSafety) {
   std::thread io_thread([&]() { io.run(); });
 
   LogPersistenceConfig config;
-  config.executor = [&io](std::function<void()> fn) {
-    asio::post(io, std::move(fn));
-  };
+  config.executor = [&io](std::function<void()> fn) { asio::post(io, std::move(fn)); };
 
   {
     auto mock = std::make_shared<MockPersister>();

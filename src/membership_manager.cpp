@@ -1,5 +1,4 @@
 #include "raft_node_impl.h"
-
 #include <nlohmann/json.hpp>
 
 using namespace rollingraft;
@@ -57,20 +56,17 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     // Remove newly promoted voters from learners
     for (NodeId id : cluster_config_.nodes) {
       cluster_config_.learners.erase(
-          std::remove(cluster_config_.learners.begin(),
-                      cluster_config_.learners.end(), id),
+          std::remove(cluster_config_.learners.begin(), cluster_config_.learners.end(), id),
           cluster_config_.learners.end());
     }
 
-    LOG_INFO("Node {} applied JOINT config (old={}, new={}, version {})",
-             server_id_, old_nodes_json, new_nodes_json,
-             cluster_config_.version);
+    LOG_INFO("Node {} applied JOINT config (old={}, new={}, version {})", server_id_,
+             old_nodes_json, new_nodes_json, cluster_config_.version);
 
     // If we are the leader, automatically propose FINALIZE after JOINT
     // is applied. This ensures the cluster transitions out of joint mode.
     if (role_ == RaftNodeRole::LEADER) {
-      std::string finalize_cmd =
-          "CONFIG_CHANGE:FINALIZE:" + NodesToJson(cluster_config_.nodes);
+      std::string finalize_cmd = "CONFIG_CHANGE:FINALIZE:" + NodesToJson(cluster_config_.nodes);
       auto [idx, status] = log_.Append(current_term_, finalize_cmd);
       if (status.ok()) {
         if (log_persister_) {
@@ -79,8 +75,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
             log_persister_->Append(*entry_opt);
           }
         }
-        LOG_INFO("Node {} auto-proposed FINALIZE at index {}", server_id_,
-                 idx);
+        LOG_INFO("Node {} auto-proposed FINALIZE at index {}", server_id_, idx);
         BroadcastAppendEntriesLocked();
       }
     }
@@ -102,13 +97,12 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     // Ensure no voter is still in learners
     for (NodeId id : cluster_config_.nodes) {
       cluster_config_.learners.erase(
-          std::remove(cluster_config_.learners.begin(),
-                      cluster_config_.learners.end(), id),
+          std::remove(cluster_config_.learners.begin(), cluster_config_.learners.end(), id),
           cluster_config_.learners.end());
     }
 
-    LOG_INFO("Node {} applied FINALIZE config (new={}, version {})",
-             server_id_, new_nodes_json, cluster_config_.version);
+    LOG_INFO("Node {} applied FINALIZE config (new={}, version {})", server_id_, new_nodes_json,
+             cluster_config_.version);
     return;
   }
 
@@ -140,8 +134,8 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
         }
       }
 
-      LOG_INFO("Node {} applied AddLearner for {} (config version {})",
-               server_id_, id, cluster_config_.version);
+      LOG_INFO("Node {} applied AddLearner for {} (config version {})", server_id_, id,
+               cluster_config_.version);
     }
     return;
   }
@@ -154,16 +148,15 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
     // Remove from learners
     cluster_config_.learners.erase(
-        std::remove(cluster_config_.learners.begin(),
-                    cluster_config_.learners.end(), id),
+        std::remove(cluster_config_.learners.begin(), cluster_config_.learners.end(), id),
         cluster_config_.learners.end());
 
     if (!cluster_config_.IsVoter(id)) {
       cluster_config_.nodes.push_back(id);
       cluster_config_.version++;
 
-      LOG_INFO("Node {} applied PromoteLearner for {} (config version {})",
-               server_id_, id, cluster_config_.version);
+      LOG_INFO("Node {} applied PromoteLearner for {} (config version {})", server_id_, id,
+               cluster_config_.version);
     }
     return;
   }
@@ -188,8 +181,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
       // Also remove from learners if promoting
       cluster_config_.learners.erase(
-          std::remove(cluster_config_.learners.begin(),
-                      cluster_config_.learners.end(), id),
+          std::remove(cluster_config_.learners.begin(), cluster_config_.learners.end(), id),
           cluster_config_.learners.end());
 
       if (id != server_id_ && peer_map_.find(id) == peer_map_.end()) {
@@ -203,8 +195,8 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
         }
       }
 
-      LOG_INFO("Node {} applied AddNode for {} (config version {})",
-               server_id_, id, cluster_config_.version);
+      LOG_INFO("Node {} applied AddNode for {} (config version {})", server_id_, id,
+               cluster_config_.version);
     }
     return;
   }
@@ -216,12 +208,11 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
     std::unique_lock<std::shared_mutex> config_lock(membership_mtx_);
 
-    cluster_config_.nodes.erase(std::remove(cluster_config_.nodes.begin(),
-                                            cluster_config_.nodes.end(), id),
-                                cluster_config_.nodes.end());
+    cluster_config_.nodes.erase(
+        std::remove(cluster_config_.nodes.begin(), cluster_config_.nodes.end(), id),
+        cluster_config_.nodes.end());
     cluster_config_.learners.erase(
-        std::remove(cluster_config_.learners.begin(),
-                    cluster_config_.learners.end(), id),
+        std::remove(cluster_config_.learners.begin(), cluster_config_.learners.end(), id),
         cluster_config_.learners.end());
     cluster_config_.version++;
 
@@ -234,14 +225,13 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
       metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
     }
 
-    peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
-                                     [id, this](const NodeAddr& a) {
-                                       return ParseNodeId(a) == id;
-                                     }),
-                      peer_addrs_.end());
+    peer_addrs_.erase(
+        std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
+                       [id, this](const NodeAddr& a) { return ParseNodeId(a) == id; }),
+        peer_addrs_.end());
 
-    LOG_INFO("Node {} applied RemoveNode for {} (config version {})",
-             server_id_, id, cluster_config_.version);
+    LOG_INFO("Node {} applied RemoveNode for {} (config version {})", server_id_, id,
+             cluster_config_.version);
 
     if (id == server_id_) {
       LOG_INFO("Node {} removed from cluster, stopping", server_id_);

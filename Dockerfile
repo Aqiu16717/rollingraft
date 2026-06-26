@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     git \
     libsnappy-dev \
+    libssl-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -37,6 +39,7 @@ FROM ubuntu:22.04 AS runtime
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libsnappy1v5 \
+    libssl3 \
     curl \
     netcat \
     iputils-ping \

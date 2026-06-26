@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+
 #include "rollingraft/timer_service.h"
 
 namespace rollingraft {
@@ -18,10 +19,8 @@ class SimulatedTimerService : public TimerService {
   void Start() override {}
   void Stop() override;
 
-  TimerId SetTimeout(std::chrono::milliseconds delay,
-                     std::function<void()> callback) override;
-  TimerId SetInterval(std::chrono::milliseconds interval,
-                      std::function<void()> callback) override;
+  TimerId SetTimeout(std::chrono::milliseconds delay, std::function<void()> callback) override;
+  TimerId SetInterval(std::chrono::milliseconds interval, std::function<void()> callback) override;
   bool CancelTimer(TimerId id) override;
   bool IsTimerActive(TimerId id) const override;
 

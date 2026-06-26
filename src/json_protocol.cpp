@@ -17,13 +17,10 @@ using namespace rollingraft;
 
 namespace {
 
-RaftMessageType IntToMessageType(int type_id) {
-  return static_cast<RaftMessageType>(type_id);
-}
+RaftMessageType IntToMessageType(int type_id) { return static_cast<RaftMessageType>(type_id); }
 
 // Helper to serialize RaftLogEntry entries
-void SerializeEntries(nlohmann::json& j,
-                      const std::vector<RaftLogEntry>& entries) {
+void SerializeEntries(nlohmann::json& j, const std::vector<RaftLogEntry>& entries) {
   j["entries"] = nlohmann::json::array();
   for (const auto& entry : entries) {
     nlohmann::json entry_json;
@@ -35,8 +32,7 @@ void SerializeEntries(nlohmann::json& j,
 }
 
 // Helper to deserialize RaftLogEntry entries
-Status DeserializeEntries(const nlohmann::json& j,
-                          std::vector<RaftLogEntry>& entries) {
+Status DeserializeEntries(const nlohmann::json& j, std::vector<RaftLogEntry>& entries) {
   if (!j.contains("entries") || !j["entries"].is_array()) {
     return Status::OK();  // Empty entries is OK
   }
@@ -60,8 +56,7 @@ Status DeserializeEntries(const nlohmann::json& j,
 
 }  // namespace
 
-Status JsonProtocol::SerializeRequest(const RaftRequest& req,
-                                      std::string& output) const {
+Status JsonProtocol::SerializeRequest(const RaftRequest& req, std::string& output) const {
   try {
     nlohmann::json j;
     j["correlation_id"] = req.correlation_id_;
@@ -69,8 +64,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
 
     switch (req.type_) {
       case RaftMessageType::KRequestVoteRequest: {
-        const RequestVoteRequest& vote_req =
-            static_cast<const RequestVoteRequest&>(req);
+        const RequestVoteRequest& vote_req = static_cast<const RequestVoteRequest&>(req);
         j["type"] = static_cast<int>(req.type_);
         j["term"] = vote_req.term_;
         j["candidate_id"] = vote_req.candidate_id_;
@@ -80,8 +74,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
       }
 
       case RaftMessageType::KAppendEntriesRequest: {
-        const AppendEntriesRequest& append_req =
-            static_cast<const AppendEntriesRequest&>(req);
+        const AppendEntriesRequest& append_req = static_cast<const AppendEntriesRequest&>(req);
         j["type"] = static_cast<int>(req.type_);
         j["term"] = append_req.term_;
         j["leader_id"] = append_req.leader_id_;
@@ -101,15 +94,13 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
         j["last_included_index"] = snapshot_req.last_included_index_;
         j["last_included_term"] = snapshot_req.last_included_term_;
         j["offset"] = snapshot_req.offset_;
-        j["data"] =
-            std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
+        j["data"] = std::string(snapshot_req.data_.begin(), snapshot_req.data_.end());
         j["done"] = snapshot_req.done_;
         break;
       }
 
       case RaftMessageType::KClientRequest: {
-        const ClientRequest& client_req =
-            static_cast<const ClientRequest&>(req);
+        const ClientRequest& client_req = static_cast<const ClientRequest&>(req);
         j["type"] = static_cast<int>(req.type_);
         j["command"] = client_req.command;
         j["client_id"] = client_req.client_id;
@@ -119,8 +110,7 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
       }
 
       case RaftMessageType::KPreVoteRequest: {
-        const PreVoteRequest& pre_req =
-            static_cast<const PreVoteRequest&>(req);
+        const PreVoteRequest& pre_req = static_cast<const PreVoteRequest&>(req);
         j["type"] = static_cast<int>(req.type_);
         j["term"] = pre_req.term_;
         j["candidate_id"] = pre_req.candidate_id_;
@@ -142,13 +132,11 @@ Status JsonProtocol::SerializeRequest(const RaftRequest& req,
     return Status::OK();
 
   } catch (const std::exception& e) {
-    return Status::SerializeError("Failed to serialize request: " +
-                                  std::string(e.what()));
+    return Status::SerializeError("Failed to serialize request: " + std::string(e.what()));
   }
 }
 
-Status JsonProtocol::DeserializeRequest(const std::string& input,
-                                        RaftRequest& req) {
+Status JsonProtocol::DeserializeRequest(const std::string& input, RaftRequest& req) {
   try {
     auto j = nlohmann::json::parse(input);
 
@@ -160,8 +148,7 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
     RaftMessageType message_type = IntToMessageType(type_id);
 
     if (message_type == RaftMessageType::KInvalid) {
-      return Status::ProtocolError("Unknown request type: " +
-                                   std::to_string(type_id));
+      return Status::ProtocolError("Unknown request type: " + std::to_string(type_id));
     }
 
     req.correlation_id_ = j.value("correlation_id", 0);
@@ -169,10 +156,9 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteRequest: {
-        if (!j.contains("term") || !j.contains("candidate_id") ||
-            !j.contains("last_log_index") || !j.contains("last_log_term")) {
-          return Status::DeSerializeError(
-              "Missing required fields for RequestVote");
+        if (!j.contains("term") || !j.contains("candidate_id") || !j.contains("last_log_index") ||
+            !j.contains("last_log_term")) {
+          return Status::DeSerializeError("Missing required fields for RequestVote");
         }
 
         // Note: The interface expects req to be the correct type already.
@@ -186,15 +172,12 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
       }
 
       case RaftMessageType::KAppendEntriesRequest: {
-        if (!j.contains("term") || !j.contains("leader_id") ||
-            !j.contains("prev_log_index") || !j.contains("prev_log_term") ||
-            !j.contains("leader_commit")) {
-          return Status::DeSerializeError(
-              "Missing required fields for AppendEntries");
+        if (!j.contains("term") || !j.contains("leader_id") || !j.contains("prev_log_index") ||
+            !j.contains("prev_log_term") || !j.contains("leader_commit")) {
+          return Status::DeSerializeError("Missing required fields for AppendEntries");
         }
 
-        AppendEntriesRequest& append_req =
-            static_cast<AppendEntriesRequest&>(req);
+        AppendEntriesRequest& append_req = static_cast<AppendEntriesRequest&>(req);
         append_req.term_ = j["term"];
         append_req.leader_id_ = j["leader_id"];
         append_req.prev_log_index_ = j["prev_log_index"];
@@ -209,16 +192,13 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
       }
 
       case RaftMessageType::KInstallSnapshotRequest: {
-        if (!j.contains("term") || !j.contains("leader_id") ||
-            !j.contains("last_included_index") ||
-            !j.contains("last_included_term") || !j.contains("offset") ||
-            !j.contains("data") || !j.contains("done")) {
-          return Status::DeSerializeError(
-              "Missing required fields for InstallSnapshot");
+        if (!j.contains("term") || !j.contains("leader_id") || !j.contains("last_included_index") ||
+            !j.contains("last_included_term") || !j.contains("offset") || !j.contains("data") ||
+            !j.contains("done")) {
+          return Status::DeSerializeError("Missing required fields for InstallSnapshot");
         }
 
-        InstallSnapshotRequest& snapshot_req =
-            static_cast<InstallSnapshotRequest&>(req);
+        InstallSnapshotRequest& snapshot_req = static_cast<InstallSnapshotRequest&>(req);
         snapshot_req.term_ = j["term"];
         snapshot_req.leader_id_ = j["leader_id"];
         snapshot_req.last_included_index_ = j["last_included_index"];
@@ -227,16 +207,13 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
         snapshot_req.done_ = j["done"];
 
         std::string data_str = j["data"];
-        snapshot_req.data_ =
-            std::vector<char>(data_str.begin(), data_str.end());
+        snapshot_req.data_ = std::vector<char>(data_str.begin(), data_str.end());
         break;
       }
 
       case RaftMessageType::KClientRequest: {
-        if (!j.contains("command") || !j.contains("client_id") ||
-            !j.contains("seq")) {
-          return Status::DeSerializeError(
-              "Missing required fields for ClientRequest");
+        if (!j.contains("command") || !j.contains("client_id") || !j.contains("seq")) {
+          return Status::DeSerializeError("Missing required fields for ClientRequest");
         }
 
         ClientRequest& client_req = static_cast<ClientRequest&>(req);
@@ -250,10 +227,9 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
       }
 
       case RaftMessageType::KPreVoteRequest: {
-        if (!j.contains("term") || !j.contains("candidate_id") ||
-            !j.contains("last_log_index") || !j.contains("last_log_term")) {
-          return Status::DeSerializeError(
-              "Missing required fields for PreVote");
+        if (!j.contains("term") || !j.contains("candidate_id") || !j.contains("last_log_index") ||
+            !j.contains("last_log_term")) {
+          return Status::DeSerializeError("Missing required fields for PreVote");
         }
 
         PreVoteRequest& pre_req = static_cast<PreVoteRequest&>(req);
@@ -276,16 +252,13 @@ Status JsonProtocol::DeserializeRequest(const std::string& input,
     return Status::OK();
 
   } catch (const nlohmann::json::parse_error& e) {
-    return Status::DeSerializeError("JSON parse error: " +
-                                    std::string(e.what()));
+    return Status::DeSerializeError("JSON parse error: " + std::string(e.what()));
   } catch (const std::exception& e) {
-    return Status::DeSerializeError("Deserialization error: " +
-                                    std::string(e.what()));
+    return Status::DeSerializeError("Deserialization error: " + std::string(e.what()));
   }
 }
 
-Status JsonProtocol::SerializeResponse(const RaftResponse& res,
-                                       std::string& output) const {
+Status JsonProtocol::SerializeResponse(const RaftResponse& res, std::string& output) const {
   try {
     nlohmann::json j;
 
@@ -294,8 +267,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
 
     switch (res.type_) {
       case RaftMessageType::KRequestVoteResponse: {
-        const RequestVoteResponse& vote_res =
-            static_cast<const RequestVoteResponse&>(res);
+        const RequestVoteResponse& vote_res = static_cast<const RequestVoteResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["term"] = vote_res.term_;
         j["vote_granted"] = vote_res.vote_granted_;
@@ -303,8 +275,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
       }
 
       case RaftMessageType::KAppendEntriesResponse: {
-        const AppendEntriesResponse& append_res =
-            static_cast<const AppendEntriesResponse&>(res);
+        const AppendEntriesResponse& append_res = static_cast<const AppendEntriesResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["term"] = append_res.term_;
         j["success"] = append_res.success_;
@@ -322,8 +293,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
       }
 
       case RaftMessageType::KClientResponse: {
-        const ClientResponse& client_res =
-            static_cast<const ClientResponse&>(res);
+        const ClientResponse& client_res = static_cast<const ClientResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["success"] = client_res.success;
         j["response"] = client_res.response;
@@ -335,8 +305,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
       }
 
       case RaftMessageType::KPreVoteResponse: {
-        const PreVoteResponse& pre_res =
-            static_cast<const PreVoteResponse&>(res);
+        const PreVoteResponse& pre_res = static_cast<const PreVoteResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["term"] = pre_res.term_;
         j["vote_granted"] = pre_res.vote_granted_;
@@ -344,8 +313,7 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
       }
 
       case RaftMessageType::KReadIndexResponse: {
-        const ReadIndexResponse& read_res =
-            static_cast<const ReadIndexResponse&>(res);
+        const ReadIndexResponse& read_res = static_cast<const ReadIndexResponse&>(res);
         j["type"] = static_cast<int>(res.type_);
         j["term"] = read_res.term_;
         j["read_index"] = read_res.read_index_;
@@ -361,13 +329,11 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res,
     return Status::OK();
 
   } catch (const std::exception& e) {
-    return Status::SerializeError("Failed to serialize response: " +
-                                  std::string(e.what()));
+    return Status::SerializeError("Failed to serialize response: " + std::string(e.what()));
   }
 }
 
-Status JsonProtocol::DeserializeResponse(const std::string& input,
-                                         RaftResponse& res) {
+Status JsonProtocol::DeserializeResponse(const std::string& input, RaftResponse& res) {
   try {
     auto j = nlohmann::json::parse(input);
 
@@ -379,8 +345,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     RaftMessageType message_type = IntToMessageType(type_id);
 
     if (message_type == RaftMessageType::KInvalid) {
-      return Status::ProtocolError("Unknown response type: " +
-                                   std::to_string(type_id));
+      return Status::ProtocolError("Unknown response type: " + std::to_string(type_id));
     }
 
     res.correlation_id_ = j.value("correlation_id", 0);
@@ -389,8 +354,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     switch (message_type) {
       case RaftMessageType::KRequestVoteResponse: {
         if (!j.contains("term") || !j.contains("vote_granted")) {
-          return Status::DeSerializeError(
-              "Missing required fields for RequestVoteResponse");
+          return Status::DeSerializeError("Missing required fields for RequestVoteResponse");
         }
 
         RequestVoteResponse& vote_res = static_cast<RequestVoteResponse&>(res);
@@ -401,12 +365,10 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
       case RaftMessageType::KAppendEntriesResponse: {
         if (!j.contains("term") || !j.contains("success")) {
-          return Status::DeSerializeError(
-              "Missing required fields for AppendEntriesResponse");
+          return Status::DeSerializeError("Missing required fields for AppendEntriesResponse");
         }
 
-        AppendEntriesResponse& append_res =
-            static_cast<AppendEntriesResponse&>(res);
+        AppendEntriesResponse& append_res = static_cast<AppendEntriesResponse&>(res);
         append_res.term_ = j["term"];
         append_res.success_ = j["success"];
         if (j.contains("conflict_index")) {
@@ -420,20 +382,17 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
       case RaftMessageType::KInstallSnapshotResponse: {
         if (!j.contains("term")) {
-          return Status::DeSerializeError(
-              "Missing required fields for InstallSnapshotResponse");
+          return Status::DeSerializeError("Missing required fields for InstallSnapshotResponse");
         }
 
-        InstallSnapshotResponse& snapshot_res =
-            static_cast<InstallSnapshotResponse&>(res);
+        InstallSnapshotResponse& snapshot_res = static_cast<InstallSnapshotResponse&>(res);
         snapshot_res.term_ = j["term"];
         break;
       }
 
       case RaftMessageType::KClientResponse: {
         if (!j.contains("success")) {
-          return Status::DeSerializeError(
-              "Missing required fields for ClientResponse");
+          return Status::DeSerializeError("Missing required fields for ClientResponse");
         }
 
         ClientResponse& client_res = static_cast<ClientResponse&>(res);
@@ -458,8 +417,7 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
 
       case RaftMessageType::KPreVoteResponse: {
         if (!j.contains("term") || !j.contains("vote_granted")) {
-          return Status::DeSerializeError(
-              "Missing required fields for PreVoteResponse");
+          return Status::DeSerializeError("Missing required fields for PreVoteResponse");
         }
 
         PreVoteResponse& pre_res = static_cast<PreVoteResponse&>(res);
@@ -469,10 +427,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
       }
 
       case RaftMessageType::KReadIndexResponse: {
-        if (!j.contains("term") || !j.contains("read_index") ||
-            !j.contains("leader_valid")) {
-          return Status::DeSerializeError(
-              "Missing required fields for ReadIndexResponse");
+        if (!j.contains("term") || !j.contains("read_index") || !j.contains("leader_valid")) {
+          return Status::DeSerializeError("Missing required fields for ReadIndexResponse");
         }
 
         ReadIndexResponse& read_res = static_cast<ReadIndexResponse&>(res);
@@ -489,10 +445,8 @@ Status JsonProtocol::DeserializeResponse(const std::string& input,
     return Status::OK();
 
   } catch (const nlohmann::json::parse_error& e) {
-    return Status::DeSerializeError("JSON parse error: " +
-                                    std::string(e.what()));
+    return Status::DeSerializeError("JSON parse error: " + std::string(e.what()));
   } catch (const std::exception& e) {
-    return Status::DeSerializeError("Deserialization error: " +
-                                    std::string(e.what()));
+    return Status::DeSerializeError("Deserialization error: " + std::string(e.what()));
   }
 }

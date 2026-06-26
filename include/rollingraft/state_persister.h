@@ -32,7 +32,7 @@
 namespace leveldb {
 class DB;
 class WriteBatch;
-}
+}  // namespace leveldb
 
 namespace rollingraft {
 
@@ -66,22 +66,18 @@ class StatePersister {
   Status LoadState(PersistentState& state);
 
   /** Save a monolithic snapshot. */
-  Status SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
-                      uint64_t last_term);
+  Status SaveSnapshot(const std::string& snapshot_data, uint64_t last_index, uint64_t last_term);
 
   /** Load a monolithic snapshot. */
-  Status LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
-                      uint64_t& last_term);
+  Status LoadSnapshot(std::string& snapshot_data, uint64_t& last_index, uint64_t& last_term);
 
   /** Save a streaming snapshot in chunks. */
-  Status SaveSnapshotStream(
-      const std::function<bool(std::string& chunk)>& chunk_provider,
-      uint64_t last_index, uint64_t last_term);
+  Status SaveSnapshotStream(const std::function<bool(std::string& chunk)>& chunk_provider,
+                            uint64_t last_index, uint64_t last_term);
 
   /** Load a streaming snapshot in chunks. */
-  Status LoadSnapshotStream(
-      const std::function<void(const std::string& chunk)>& chunk_consumer,
-      uint64_t& last_index, uint64_t& last_term);
+  Status LoadSnapshotStream(const std::function<void(const std::string& chunk)>& chunk_consumer,
+                            uint64_t& last_index, uint64_t& last_term);
 
   /** Return true if any snapshot (old or new format) exists. */
   bool HasSnapshot() const;

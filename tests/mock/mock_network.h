@@ -23,8 +23,7 @@ class MockNetworkTransport : public NetworkTransport {
   MockNetworkTransport(const MockNetworkTransport&) = delete;
   MockNetworkTransport& operator=(const MockNetworkTransport&) = delete;
 
-  Status Initialize(const NodeAddr& listen_addr,
-                    RpcRequestHandler handler) override;
+  Status Initialize(const NodeAddr& listen_addr, RpcRequestHandler handler) override;
 
   void SetConnectionCallback(ConnectionCallback callback) override;
 
@@ -58,8 +57,8 @@ class MockNetworkTransport : public NetworkTransport {
   /**
    * Trigger a response for a specific request.
    */
-  void TriggerResponse(size_t request_index, const std::string& response_data,
-                       bool success = true, const std::string& error = "");
+  void TriggerResponse(size_t request_index, const std::string& response_data, bool success = true,
+                       const std::string& error = "");
 
   /**
    * Set auto-response for all future requests.

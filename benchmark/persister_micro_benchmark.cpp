@@ -6,10 +6,6 @@
  * Output: human-readable Markdown table to stdout, plus optional CSV.
  */
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -18,17 +14,22 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <leveldb/db.h>
-#include <leveldb/write_batch.h>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "raft_log_entry.pb.h"
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "rollingraft/hybrid_persister.h"
 #include "rollingraft/state_persister.h"
 #include "rollingraft/wal_persister.h"
+
+#include "raft_log_entry.pb.h"
+#include <leveldb/db.h>
+#include <leveldb/write_batch.h>
+#include <sys/stat.h>
 
 using namespace rollingraft;
 
@@ -37,8 +38,7 @@ using namespace rollingraft;
 // ------------------------------------------------------------------
 
 static std::string RandomString(size_t len, std::mt19937& rng) {
-  static const char kChars[] =
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  static const char kChars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   std::uniform_int_distribution<size_t> dist(0, sizeof(kChars) - 2);
   std::string s;
   s.reserve(len);
@@ -46,9 +46,7 @@ static std::string RandomString(size_t len, std::mt19937& rng) {
   return s;
 }
 
-static void RemoveDir(const std::string& path) {
-  std::filesystem::remove_all(path);
-}
+static void RemoveDir(const std::string& path) { std::filesystem::remove_all(path); }
 
 struct BenchResult {
   std::string scenario;
@@ -61,8 +59,7 @@ struct BenchResult {
   std::string unit = "ops/s";
 };
 
-static BenchResult Summarize(const std::string& scenario,
-                             const std::vector<double>& latencies_us,
+static BenchResult Summarize(const std::string& scenario, const std::vector<double>& latencies_us,
                              size_t bytes_processed, const std::string& unit) {
   BenchResult r;
   r.scenario = scenario;
@@ -77,8 +74,8 @@ static BenchResult Summarize(const std::string& scenario,
   r.p99_us = sorted[std::min(sorted.size() * 99 / 100, sorted.size() - 1)];
   r.total_ms = sum / 1000.0;
   if (unit == "MB/s" && r.total_ms > 0) {
-    r.throughput = (static_cast<double>(bytes_processed) / (1024.0 * 1024.0)) /
-                   (r.total_ms / 1000.0);
+    r.throughput =
+        (static_cast<double>(bytes_processed) / (1024.0 * 1024.0)) / (r.total_ms / 1000.0);
   } else if (unit == "ops/s" && r.total_ms > 0) {
     r.throughput = static_cast<double>(r.iterations) / (r.total_ms / 1000.0);
   }
@@ -93,10 +90,9 @@ static void PrintHeader() {
 }
 
 static void PrintRow(const BenchResult& r) {
-  std::cout << "| " << r.scenario << " | " << r.iterations << " | "
-            << std::fixed << std::setprecision(2) << r.total_ms << " | "
-            << r.avg_us << " | " << r.p50_us << " | " << r.p99_us << " | "
-            << r.throughput << " " << r.unit << " |\n";
+  std::cout << "| " << r.scenario << " | " << r.iterations << " | " << std::fixed
+            << std::setprecision(2) << r.total_ms << " | " << r.avg_us << " | " << r.p50_us << " | "
+            << r.p99_us << " | " << r.throughput << " " << r.unit << " |\n";
 }
 
 // ------------------------------------------------------------------
@@ -120,16 +116,14 @@ static BenchResult BenchProtobufSerialize(int iterations, size_t payload_bytes) 
     auto t0 = std::chrono::steady_clock::now();
     [[maybe_unused]] bool ok = proto.SerializeToString(&payload);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     total_bytes += payload.size();
   }
-  return Summarize("protobuf_serialize_" + std::to_string(payload_bytes) + "B",
-                   latencies, total_bytes, "MB/s");
+  return Summarize("protobuf_serialize_" + std::to_string(payload_bytes) + "B", latencies,
+                   total_bytes, "MB/s");
 }
 
-static BenchResult BenchProtobufDeserialize(int iterations,
-                                            size_t payload_bytes) {
+static BenchResult BenchProtobufDeserialize(int iterations, size_t payload_bytes) {
   std::mt19937 rng(42);
   std::string data = RandomString(payload_bytes, rng);
   RaftLogEntryProto proto;
@@ -149,21 +143,18 @@ static BenchResult BenchProtobufDeserialize(int iterations,
     auto t0 = std::chrono::steady_clock::now();
     [[maybe_unused]] bool ok = parsed.ParseFromString(payload);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     total_bytes += payload.size();
   }
-  return Summarize(
-      "protobuf_deserialize_" + std::to_string(payload_bytes) + "B", latencies,
-      total_bytes, "MB/s");
+  return Summarize("protobuf_deserialize_" + std::to_string(payload_bytes) + "B", latencies,
+                   total_bytes, "MB/s");
 }
 
 // ------------------------------------------------------------------
 // 2. Raw file write / fsync benchmarks
 // ------------------------------------------------------------------
 
-static BenchResult BenchRawFileAppend(int iterations, size_t record_bytes,
-                                      bool fsync_each) {
+static BenchResult BenchRawFileAppend(int iterations, size_t record_bytes, bool fsync_each) {
   std::string path = "/tmp/rollingraft_micro_raw.wal";
   RemoveDir(path);
   int fd = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
@@ -189,8 +180,7 @@ static BenchResult BenchRawFileAppend(int iterations, size_t record_bytes,
       std::cerr << "write failed\n";
       break;
     }
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
   }
   close(fd);
   RemoveDir(path);
@@ -199,8 +189,7 @@ static BenchResult BenchRawFileAppend(int iterations, size_t record_bytes,
   return Summarize(name, latencies, iterations * record_bytes, "MB/s");
 }
 
-static BenchResult BenchWALAppend(int iterations, size_t payload_bytes,
-                                  bool sync_each) {
+static BenchResult BenchWALAppend(int iterations, size_t payload_bytes, bool sync_each) {
   std::string dir = "/tmp/rollingraft_micro_wal";
   RemoveDir(dir);
   std::vector<double> latencies;
@@ -221,8 +210,7 @@ static BenchResult BenchWALAppend(int iterations, size_t payload_bytes,
       wal.AppendLogEntry(e);
       if (sync_each) wal.Sync();
       auto t1 = std::chrono::steady_clock::now();
-      latencies.push_back(
-          std::chrono::duration<double, std::micro>(t1 - t0).count());
+      latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
       total_bytes += data.size();
     }
     if (!sync_each) wal.Sync();
@@ -265,19 +253,17 @@ static BenchResult BenchWALRecovery(int num_entries, size_t payload_bytes) {
     auto t0 = std::chrono::steady_clock::now();
     wal.Open(dir);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     auto range = wal.GetLogRange();
     if (range.first != 1 || range.second != static_cast<uint64_t>(num_entries)) {
-      std::cerr << "WAL recovery range mismatch: " << range.first << ".."
-                << range.second << "\n";
+      std::cerr << "WAL recovery range mismatch: " << range.first << ".." << range.second << "\n";
     }
     wal.Close();
   }
   total_bytes = num_entries * payload_bytes;
   RemoveDir(dir);
-  std::string name = "wal_recovery_" + std::to_string(num_entries) + "_" +
-                     std::to_string(payload_bytes) + "B";
+  std::string name =
+      "wal_recovery_" + std::to_string(num_entries) + "_" + std::to_string(payload_bytes) + "B";
   return Summarize(name, latencies, total_bytes, "MB/s");
 }
 
@@ -315,20 +301,18 @@ static BenchResult BenchHybridRecovery(int num_entries, size_t payload_bytes) {
     auto t0 = std::chrono::steady_clock::now();
     p.Open(dir);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     p.Close();
   }
   total_bytes = num_entries * payload_bytes;
   RemoveDir(dir);
-  std::string name = "hybrid_recovery_" + std::to_string(num_entries) + "_" +
-                     std::to_string(payload_bytes) + "B";
+  std::string name =
+      "hybrid_recovery_" + std::to_string(num_entries) + "_" + std::to_string(payload_bytes) + "B";
   return Summarize(name, latencies, total_bytes, "MB/s");
 }
 
-static BenchResult BenchLevelDBBatch(const std::string& db_path, int iterations,
-                                     int batch_size, size_t value_size,
-                                     bool sync) {
+static BenchResult BenchLevelDBBatch(const std::string& db_path, int iterations, int batch_size,
+                                     size_t value_size, bool sync) {
   RemoveDir(db_path);
   leveldb::Options options;
   options.create_if_missing = true;
@@ -354,13 +338,11 @@ static BenchResult BenchLevelDBBatch(const std::string& db_path, int iterations,
     auto t0 = std::chrono::steady_clock::now();
     db->Write(wo, &batch);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
   }
   RemoveDir(db_path);
-  std::string name = std::string("leveldb_batch_") + std::to_string(batch_size) +
-                     "_" + (sync ? "sync_" : "nosync_") +
-                     std::to_string(value_size) + "B";
+  std::string name = std::string("leveldb_batch_") + std::to_string(batch_size) + "_" +
+                     (sync ? "sync_" : "nosync_") + std::to_string(value_size) + "B";
   return Summarize(name, latencies, iterations * value_size, "MB/s");
 }
 
@@ -368,8 +350,7 @@ static BenchResult BenchLevelDBBatch(const std::string& db_path, int iterations,
 // 4. Snapshot streaming benchmarks
 // ------------------------------------------------------------------
 
-static BenchResult BenchSnapshotStream(int total_bytes, int chunk_size,
-                                       bool sync) {
+static BenchResult BenchSnapshotStream(int total_bytes, int chunk_size, bool sync) {
   std::string dir = "/tmp/rollingraft_micro_snapshot";
   RemoveDir(dir);
   std::vector<double> latencies;
@@ -392,14 +373,12 @@ static BenchResult BenchSnapshotStream(int total_bytes, int chunk_size,
     auto t0 = std::chrono::steady_clock::now();
     sp.SaveSnapshotStream(provider, 1000, 5);
     auto t1 = std::chrono::steady_clock::now();
-    latencies.push_back(
-        std::chrono::duration<double, std::micro>(t1 - t0).count());
+    latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     bytes_processed = total_bytes;
     sp.Close();
   }
   RemoveDir(dir);
-  std::string name = std::string("snapshot_stream_") +
-                     std::to_string(chunk_size) + "_chunk_" +
+  std::string name = std::string("snapshot_stream_") + std::to_string(chunk_size) + "_chunk_" +
                      (sync ? "sync" : "nosync");
   return Summarize(name, latencies, bytes_processed, "MB/s");
 }
@@ -431,12 +410,9 @@ int main() {
   results.push_back(BenchHybridRecovery(10000, 100));
   results.push_back(BenchHybridRecovery(100000, 100));
 
-  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb1", 5000,
-                                      1, 256, false));
-  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb2", 5000,
-                                      100, 256, false));
-  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb3", 5000,
-                                      100, 256, true));
+  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb1", 5000, 1, 256, false));
+  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb2", 5000, 100, 256, false));
+  results.push_back(BenchLevelDBBatch("/tmp/rollingraft_micro_leveldb3", 5000, 100, 256, true));
 
   results.push_back(BenchSnapshotStream(10 * 1024 * 1024, 64 * 1024, false));
   results.push_back(BenchSnapshotStream(10 * 1024 * 1024, 64 * 1024, true));

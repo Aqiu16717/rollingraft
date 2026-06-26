@@ -16,6 +16,7 @@ class SimulatedClock {
   void At(TimePoint when, std::function<void()> callback);
   void After(uint64_t delay_ms, std::function<void()> callback);
   void CancelAll();
+
  private:
   std::atomic<uint64_t> current_time_ms_{0};
   std::mutex mtx_;

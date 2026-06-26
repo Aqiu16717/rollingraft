@@ -1,17 +1,19 @@
 #include <atomic>
 
-#include "asio_timer_service.h"
 #include "rollingraft/log_persister.h"
+
+#include "asio_timer_service.h"
 #include "nlohmann/json.hpp"
 #include "raft_node_impl.h"
 
 using namespace rollingraft;
 
-RaftNode::RaftNodeImpl::RaftNodeImpl(
-    const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
-    std::unique_ptr<NetworkTransport> network,
-    std::unique_ptr<TimerService> timer, std::shared_ptr<Persister> persister,
-    std::unique_ptr<Protocol> protocol)
+RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
+                                     std::shared_ptr<StateMachine> state_machine,
+                                     std::unique_ptr<NetworkTransport> network,
+                                     std::unique_ptr<TimerService> timer,
+                                     std::shared_ptr<Persister> persister,
+                                     std::unique_ptr<Protocol> protocol)
     : config_(config),
       state_machine_(std::move(state_machine)),
       network_(std::move(network)),
@@ -80,9 +82,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   }
 
   // Initialize client session manager
-  {
-    session_manager_ = std::make_unique<ClientSessionManager>();
-  }
+  { session_manager_ = std::make_unique<ClientSessionManager>(); }
 
   // Configure JSON logging if enabled
   if (config.json_logging) {
@@ -95,8 +95,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(
   // Initialize cluster config from peers
   cluster_config_.nodes.push_back(server_id_);
   for (size_t i = 0; i < peer_addrs_.size(); ++i) {
-    NodeId peer_id = has_explicit_peer_ids ? config.peer_node_ids[i]
-                                           : ParseNodeId(peer_addrs_[i]);
+    NodeId peer_id = has_explicit_peer_ids ? config.peer_node_ids[i] : ParseNodeId(peer_addrs_[i]);
     if (peer_id >= 0) {
       cluster_config_.nodes.push_back(peer_id);
     }
@@ -118,8 +117,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     return Status::Error("Already started or stopped");
   }
 
-  LOG_INFO("Starting RaftNode {} on {}...", config_.node_id,
-           config_.listen_addr);
+  LOG_INFO("Starting RaftNode {} on {}...", config_.node_id, config_.listen_addr);
 
   // 1. Initialize persistence
   if (persister_) {
@@ -134,8 +132,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     if (persister_->LoadState(state).ok()) {
       current_term_ = state.current_term;
       voted_for_ = state.voted_for;
-      LOG_INFO("Restored state: term={}, voted_for={}", current_term_,
-               voted_for_);
+      LOG_INFO("Restored state: term={}, voted_for={}", current_term_, voted_for_);
     }
 
     // Restore snapshot if exists
@@ -143,24 +140,20 @@ Status RaftNode::RaftNodeImpl::Start() {
       uint64_t snapshot_index = 0;
       uint64_t snapshot_term = 0;
       std::string snapshot_data;
-      auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index,
-                                             snapshot_term);
+      auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index, snapshot_term);
       if (status.ok() && !snapshot_data.empty()) {
-        std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(),
-                                            snapshot_data.end());
+        std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(), snapshot_data.end());
         if (state_machine_->Restore(snapshot_bytes)) {
           last_snapshot_index_ = snapshot_index;
           log_.SetStartIndex(snapshot_index + 1);
-          LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index,
-                   snapshot_term);
+          LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index, snapshot_term);
         } else {
           LOG_ERROR("Failed to restore snapshot from persister");
           // Continue without snapshot — log entries may be able to rebuild
           // state, but this is a degraded path.
         }
       } else {
-        LOG_WARN("Snapshot exists but could not be loaded: {}",
-                 status.GetMessage());
+        LOG_WARN("Snapshot exists but could not be loaded: {}", status.GetMessage());
       }
     }
 
@@ -174,14 +167,11 @@ Status RaftNode::RaftNodeImpl::Start() {
     // Wire ASIO executor for async truncation if using AsioTimerService
     if (auto* asio_timer = dynamic_cast<AsioTimerService*>(timer_.get())) {
       if (auto* io = asio_timer->GetIoContext()) {
-        log_config.executor = [io](std::function<void()> fn) {
-          asio::post(*io, std::move(fn));
-        };
+        log_config.executor = [io](std::function<void()> fn) { asio::post(*io, std::move(fn)); };
       }
     }
 
-    log_persister_ =
-        std::make_unique<LogPersister>(persister_, log_config, metrics_.get());
+    log_persister_ = std::make_unique<LogPersister>(persister_, log_config, metrics_.get());
     log_persister_->Start();
 
     // Restore log entries from disk.
@@ -205,8 +195,7 @@ Status RaftNode::RaftNodeImpl::Start() {
   }
 
   // 2. Initialize network layer
-  auto handler = [this](NodeId from, const std::string& req,
-                        std::string& resp) {
+  auto handler = [this](NodeId from, const std::string& req, std::string& resp) {
     HandleIncomingRpc(from, req, resp);
   };
 
@@ -228,19 +217,18 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // Set up transport layer metrics callback
   if (metrics_) {
-    network_->SetConnectionCallback(
-        [this](NodeId peer_id, const NodeAddr& /*addr*/, bool connected) {
-          metrics_->GetGauge("raft_transport_peer_connected",
-                             {{"peer_id", std::to_string(peer_id)}})
-              .Set(connected ? 1.0 : 0.0);
-          metrics_->GetCounter("raft_transport_connections_total",
-                               {{"peer_id", std::to_string(peer_id)},
-                                {"status", connected ? "connected" : "disconnected"}})
-              .Increment();
-        });
+    network_->SetConnectionCallback([this](NodeId peer_id, const NodeAddr& /*addr*/,
+                                           bool connected) {
+      metrics_->GetGauge("raft_transport_peer_connected", {{"peer_id", std::to_string(peer_id)}})
+          .Set(connected ? 1.0 : 0.0);
+      metrics_
+          ->GetCounter("raft_transport_connections_total",
+                       {{"peer_id", std::to_string(peer_id)},
+                        {"status", connected ? "connected" : "disconnected"}})
+          .Increment();
+    });
     network_->SetPeerStateCallback([this](NodeId peer_id, int state) {
-      metrics_->GetGauge("transport_peer_state",
-                         {{"peer_id", std::to_string(peer_id)}})
+      metrics_->GetGauge("transport_peer_state", {{"peer_id", std::to_string(peer_id)}})
           .Set(static_cast<double>(state));
     });
   }
@@ -255,8 +243,8 @@ Status RaftNode::RaftNodeImpl::Start() {
     tls_config.cert_file = config_.tls_cert_file;
     tls_config.key_file = config_.tls_key_file;
     tls_config.ca_file = config_.tls_ca_file;
-    metrics_server_ = std::make_unique<MetricsHttpServer>(
-        config_.metrics_addr, metrics_.get(), tls_config, config_.admin_token);
+    metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr, metrics_.get(),
+                                                          tls_config, config_.admin_token);
     metrics_server_->SetStatusProvider([this]() -> std::string {
       // Lock hierarchy: election_mtx_ -> replication_mtx_ -> membership_mtx_
       // -> applier_mtx_. All accessed state must be protected.
@@ -322,28 +310,27 @@ Status RaftNode::RaftNodeImpl::Start() {
           return j.dump();
         });
 
-    metrics_server_->SetRemoveMemberHandler(
-        [this](int32_t node_id) -> std::string {
-          if (node_id < 0) {
-            nlohmann::json j;
-            j["error"] = "BAD_REQUEST";
-            j["message"] = "Invalid node_id";
-            return j.dump();
-          }
-          auto status = RemoveNode(static_cast<NodeId>(node_id));
-          nlohmann::json j;
-          if (status.ok()) {
-            j["status"] = "accepted";
-            j["message"] = "Node removal proposed";
-          } else {
-            j["error"] = "NOT_LEADER";
-            j["message"] = status.GetMessage();
-            if (!GetLeaderAddr().empty()) {
-              j["leader_hint"] = GetLeaderAddr();
-            }
-          }
-          return j.dump();
-        });
+    metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
+      if (node_id < 0) {
+        nlohmann::json j;
+        j["error"] = "BAD_REQUEST";
+        j["message"] = "Invalid node_id";
+        return j.dump();
+      }
+      auto status = RemoveNode(static_cast<NodeId>(node_id));
+      nlohmann::json j;
+      if (status.ok()) {
+        j["status"] = "accepted";
+        j["message"] = "Node removal proposed";
+      } else {
+        j["error"] = "NOT_LEADER";
+        j["message"] = status.GetMessage();
+        if (!GetLeaderAddr().empty()) {
+          j["leader_hint"] = GetLeaderAddr();
+        }
+      }
+      return j.dump();
+    });
 
     metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
       auto status = TriggerSnapshot();
@@ -358,27 +345,26 @@ Status RaftNode::RaftNodeImpl::Start() {
       return j.dump();
     });
 
-    metrics_server_->SetTransferLeadershipHandler(
-        [this](int32_t target_id) -> std::string {
-          nlohmann::json j;
-          if (target_id < 0) {
-            j["error"] = "BAD_REQUEST";
-            j["message"] = "Invalid target_node_id";
-            return j.dump();
-          }
-          auto status = TransferLeadershipTo(static_cast<NodeId>(target_id));
-          if (status.ok()) {
-            j["status"] = "initiated";
-            j["message"] = "Leadership transfer initiated";
-          } else {
-            j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
-            j["message"] = status.GetMessage();
-            if (!GetLeaderAddr().empty()) {
-              j["leader_hint"] = GetLeaderAddr();
-            }
-          }
-          return j.dump();
-        });
+    metrics_server_->SetTransferLeadershipHandler([this](int32_t target_id) -> std::string {
+      nlohmann::json j;
+      if (target_id < 0) {
+        j["error"] = "BAD_REQUEST";
+        j["message"] = "Invalid target_node_id";
+        return j.dump();
+      }
+      auto status = TransferLeadershipTo(static_cast<NodeId>(target_id));
+      if (status.ok()) {
+        j["status"] = "initiated";
+        j["message"] = "Leadership transfer initiated";
+      } else {
+        j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+        j["message"] = status.GetMessage();
+        if (!GetLeaderAddr().empty()) {
+          j["leader_hint"] = GetLeaderAddr();
+        }
+      }
+      return j.dump();
+    });
 
     metrics_server_->SetConfigProvider([this]() -> std::string {
       return runtime_config_ ? runtime_config_->ToJson()
@@ -411,8 +397,8 @@ Status RaftNode::RaftNodeImpl::Start() {
       j["event"] = event.Name();
       j["node_id"] = server_id_;
       j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::steady_clock::now().time_since_epoch())
-                               .count();
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
 
       // Serialize event-specific fields based on type
       if (event.Is<NodeRoleChangedEvent>()) {
@@ -428,9 +414,8 @@ Status RaftNode::RaftNodeImpl::Start() {
         j["term"] = e.term;
       } else if (event.Is<MembershipChangedEvent>()) {
         const auto& e = event.As<MembershipChangedEvent>();
-        j["change_type"] = (e.change_type == MembershipChangedEvent::ChangeType::kAdd)
-                               ? "add"
-                               : "remove";
+        j["change_type"] =
+            (e.change_type == MembershipChangedEvent::ChangeType::kAdd) ? "add" : "remove";
         j["target_node_id"] = e.target_node_id;
         j["target_node_addr"] = e.target_node_addr;
         j["config_version"] = e.config_version;
@@ -467,9 +452,7 @@ Status RaftNode::RaftNodeImpl::Start() {
         j["current_role"] = RaftNodeRoleToString(e.current_role);
       } else if (event.Is<NodeLifecycleEvent>()) {
         const auto& e = event.As<NodeLifecycleEvent>();
-        j["state"] = (e.state == NodeLifecycleEvent::State::kStarted)
-                         ? "started"
-                         : "stopped";
+        j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
       }
 
       metrics_server_->BroadcastEvent(j.dump());
@@ -556,8 +539,7 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
   }
 
   // 7. Clean up pending proposals
-  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>>
-      callbacks_to_run;
+  std::vector<std::pair<Index, std::function<void(const ApplyResult&)>>> callbacks_to_run;
   {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     for (auto& [id, proposal] : pending_proposals_) {
@@ -646,14 +628,13 @@ Status RaftNode::RaftNodeImpl::Stop() {
     done.store(true, std::memory_order_release);
   });
 
-  auto deadline = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(config_.shutdown_timeout_ms);
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(config_.shutdown_timeout_ms);
 
   while (!done.load(std::memory_order_acquire)) {
     if (std::chrono::steady_clock::now() >= deadline) {
-      LOG_ERROR(
-          "RaftNode {} graceful shutdown timed out after {}ms, forcing stop",
-          config_.node_id, config_.shutdown_timeout_ms);
+      LOG_ERROR("RaftNode {} graceful shutdown timed out after {}ms, forcing stop", config_.node_id,
+                config_.shutdown_timeout_ms);
       shutdown_thread.detach();
       ForceShutdown();
       return Status::Error("Shutdown timeout");
@@ -690,21 +671,17 @@ Index RaftNode::RaftNodeImpl::GetCommitIndex() const {
   return commit_index_;
 }
 
-void RaftNode::RaftNodeImpl::SetRoleChangeCallback(
-    std::function<void(RaftNodeRole, uint64_t)> cb) {
+void RaftNode::RaftNodeImpl::SetRoleChangeCallback(std::function<void(RaftNodeRole, uint64_t)> cb) {
   role_change_callback_ = std::move(cb);
 }
 
-void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(
-    std::function<void(NodeId, std::string)> cb) {
+void RaftNode::RaftNodeImpl::SetLeaderChangeCallback(std::function<void(NodeId, std::string)> cb) {
   leader_change_callback_ = std::move(cb);
 }
 
-Status RaftNode::RaftNodeImpl::Propose(
-    const std::string& command,
-    std::function<void(const ApplyResult&)> callback,
-    uint64_t session_id,
-    uint64_t seq_num) {
+Status RaftNode::RaftNodeImpl::Propose(const std::string& command,
+                                       std::function<void(const ApplyResult&)> callback,
+                                       uint64_t session_id, uint64_t seq_num) {
   // Bridge pattern: election_mtx_ -> replication_mtx_
   std::unique_lock<std::mutex> lock_e(election_mtx_);
   std::unique_lock<std::mutex> lock_r(replication_mtx_);
@@ -719,8 +696,7 @@ Status RaftNode::RaftNodeImpl::Propose(
     if (metrics_) {
       metrics_
           ->GetCounter("raft_propose_total",
-                       {{"node_id", std::to_string(server_id_)},
-                        {"result", "rejected_not_leader"}})
+                       {{"node_id", std::to_string(server_id_)}, {"result", "rejected_not_leader"}})
           .Increment();
     }
     return Status::NotLeader(leader_id_, leader_addr_);
@@ -744,9 +720,9 @@ Status RaftNode::RaftNodeImpl::Propose(
         cb(result);
       }
       if (metrics_) {
-        metrics_->GetCounter("raft_propose_total",
-                             {{"node_id", std::to_string(server_id_)},
-                              {"result", "deduplicated"}})
+        metrics_
+            ->GetCounter("raft_propose_total",
+                         {{"node_id", std::to_string(server_id_)}, {"result", "deduplicated"}})
             .Increment();
       }
       return Status::OK();
@@ -770,15 +746,14 @@ Status RaftNode::RaftNodeImpl::Propose(
     if (entry_opt) {
       log_persister_->Append(*entry_opt, [this, index](Status s) {
         if (!s.ok()) {
-          LOG_WARN("Node {} log persistence failed for index {}: {}",
-                   server_id_, index, s.ToString());
+          LOG_WARN("Node {} log persistence failed for index {}: {}", server_id_, index,
+                   s.ToString());
           if (log_persister_ && !log_persister_->IsHealthy()) {
             // Disk failure: step down. Runs on persister thread with no
             // locks held, so acquiring election_mtx_ is safe.
             std::lock_guard<std::mutex> lock_e(election_mtx_);
             if (role_ == RaftNodeRole::LEADER) {
-              LOG_ERROR("Node {} stepping down due to disk failure",
-                        server_id_);
+              LOG_ERROR("Node {} stepping down due to disk failure", server_id_);
               BecomeFollowerLocked(current_term_);
             }
           }
@@ -814,9 +789,8 @@ Status RaftNode::RaftNodeImpl::Propose(
 
   if (metrics_) {
     metrics_
-        ->GetCounter(
-            "raft_propose_total",
-            {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
+        ->GetCounter("raft_propose_total",
+                     {{"node_id", std::to_string(server_id_)}, {"result", "accepted"}})
         .Increment();
   }
 
@@ -879,15 +853,14 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
       if (entry_opt) {
         log_persister_->Append(*entry_opt, [this, index](Status s) {
           if (!s.ok()) {
-            LOG_WARN("Node {} log persistence failed for index {}: {}",
-                     server_id_, index, s.ToString());
+            LOG_WARN("Node {} log persistence failed for index {}: {}", server_id_, index,
+                     s.ToString());
             if (log_persister_ && !log_persister_->IsHealthy()) {
               // Disk failure: step down. Runs on persister thread with no
               // locks held, so acquiring election_mtx_ is safe.
               std::lock_guard<std::mutex> lock_e(election_mtx_);
               if (role_ == RaftNodeRole::LEADER) {
-                LOG_ERROR("Node {} stepping down due to disk failure",
-                          server_id_);
+                LOG_ERROR("Node {} stepping down due to disk failure", server_id_);
                 BecomeFollowerLocked(current_term_);
               }
             }
@@ -936,8 +909,8 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
   return Status::OK();
 }
 
-ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
-    const std::string& command, std::unique_lock<std::mutex>& lock_r) {
+ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(const std::string& command,
+                                                         std::unique_lock<std::mutex>& lock_r) {
   // PRECONDITION: caller holds replication_mtx_ (via lock_r).
   // election_mtx_ may or may not be held; this method only accesses
   // replication state (log_, pending_proposals_, flushed_index_).
@@ -948,9 +921,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
   auto future = promise.get_future();
 
   // Create callback that will set the promise value
-  auto callback = [&promise](const ApplyResult& result) {
-    promise.set_value(result);
-  };
+  auto callback = [&promise](const ApplyResult& result) { promise.set_value(result); };
 
   // Append to local log
   auto [index, status] = log_.Append(current_term_, command);
@@ -1008,8 +979,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
 
   // Wait for commit and apply with timeout
   auto cfg = runtime_config_->Get();
-  auto wait_status = future.wait_for(
-      std::chrono::milliseconds(cfg.propose_timeout_ms));
+  auto wait_status = future.wait_for(std::chrono::milliseconds(cfg.propose_timeout_ms));
 
   lock_r.lock();
   guard.need_relock = false;
@@ -1018,19 +988,19 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(
     if (metrics_) {
       auto it = pending_proposals_.find(index);
       if (it != pending_proposals_.end()) {
-        auto latency = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - it->second.propose_time).count();
-        metrics_->GetHistogram(
-             "raft_proposal_latency_seconds",
-             std::vector<double>{0.001, 0.005, 0.01, 0.025, 0.05, 0.1,
-                                 0.25, 0.5, 1.0, 2.5, 5.0, 10.0},
-             {{"node_id", std::to_string(server_id_)}})
+        auto latency = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                     it->second.propose_time)
+                           .count();
+        metrics_
+            ->GetHistogram("raft_proposal_latency_seconds",
+                           std::vector<double>{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
+                                               2.5, 5.0, 10.0},
+                           {{"node_id", std::to_string(server_id_)}})
             .Observe(latency);
       }
       metrics_
-          ->GetCounter(
-              "raft_propose_total",
-              {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
+          ->GetCounter("raft_propose_total",
+                       {{"node_id", std::to_string(server_id_)}, {"result", "timeout"}})
           .Increment();
     }
     // Remove pending proposal on timeout
@@ -1073,8 +1043,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
                           std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
     if (!status.ok()) {
       return Status::Error("READINDEX_FORWARD",
-                           "Failed to forward ReadIndex to leader: " +
-                               status.ToString());
+                           "Failed to forward ReadIndex to leader: " + status.ToString());
     }
 
     if (!resp.leader_valid_) {
@@ -1103,9 +1072,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
       pending_reads_[read_id] = std::move(read_req);
 
       if (metrics_) {
-        metrics_
-            ->GetCounter("raft_readindex_total",
-                         {{"node_id", std::to_string(server_id_)}})
+        metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
             .Increment();
       }
 
@@ -1137,28 +1104,25 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     if (lease_valid) {
       // Lease read: skip heartbeat broadcast, acks already verified via quorum
       read_req.heartbeats_sent = false;
-      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (lease read)",
-               server_id_, read_id, commit_index_);
+      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (lease read)", server_id_, read_id,
+               commit_index_);
       if (metrics_) {
         metrics_
-            ->GetCounter("raft_readindex_lease_total",
-                         {{"node_id", std::to_string(server_id_)}})
+            ->GetCounter("raft_readindex_lease_total", {{"node_id", std::to_string(server_id_)}})
             .Increment();
       }
     } else {
       // Fallback to normal ReadIndex with heartbeat broadcast
       read_req.heartbeats_sent = true;
       read_req.acks.insert(server_id_);  // Leader acknowledges itself
-      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (heartbeat)",
-               server_id_, read_id, commit_index_);
+      LOG_INFO("Node {} ReadIndex request {} at commit_index {} (heartbeat)", server_id_, read_id,
+               commit_index_);
     }
 
     pending_reads_[read_id] = std::move(read_req);
 
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_readindex_total",
-                       {{"node_id", std::to_string(server_id_)}})
+      metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
 
@@ -1195,8 +1159,7 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
 
   // Single-node-change safety: reject if another change is in flight.
   if (pending_config_change_) {
-    return Status::Error(
-        "A membership change is already in progress; wait for it to commit");
+    return Status::Error("A membership change is already in progress; wait for it to commit");
   }
 
   // Joint consensus: build old and new configurations
@@ -1206,8 +1169,7 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
 
   nlohmann::json j_old = old_nodes;
   nlohmann::json j_new = new_nodes;
-  std::string cmd =
-      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
+  std::string cmd = "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
 
   // Propose as normal log entry
   auto [index, status] = log_.Append(current_term_, cmd);
@@ -1238,8 +1200,7 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
   match_index_[id] = 0;
   SetPeerReplicationLagMetricLocked(id);
 
-  LOG_INFO("Node {} proposing AddNode for {} at index {}", server_id_, id,
-           index);
+  LOG_INFO("Node {} proposing AddNode for {} at index {}", server_id_, id, index);
 
   // Trigger replication
   BroadcastAppendEntriesLocked();
@@ -1268,8 +1229,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 
   // Single-node-change safety: reject if another change is in flight.
   if (pending_config_change_) {
-    return Status::Error(
-        "A membership change is already in progress; wait for it to commit");
+    return Status::Error("A membership change is already in progress; wait for it to commit");
   }
 
   // Prevent removing ourselves while leader
@@ -1287,8 +1247,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 
   nlohmann::json j_old = old_nodes;
   nlohmann::json j_new = new_nodes;
-  std::string cmd =
-      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
+  std::string cmd = "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
 
   // Propose as normal log entry
   auto [index, status] = log_.Append(current_term_, cmd);
@@ -1302,8 +1261,8 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        LOG_ERROR("Node {} failed to persist RemoveNode log entry: {}",
-                  server_id_, flush_status.GetMessage());
+        LOG_ERROR("Node {} failed to persist RemoveNode log entry: {}", server_id_,
+                  flush_status.GetMessage());
         return flush_status;
       }
     }
@@ -1324,13 +1283,10 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
 
   // Remove from peer_addrs_
   peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
-                                   [id, this](const NodeAddr& a) {
-                                     return ParseNodeId(a) == id;
-                                   }),
+                                   [id, this](const NodeAddr& a) { return ParseNodeId(a) == id; }),
                     peer_addrs_.end());
 
-  LOG_INFO("Node {} proposing RemoveNode for {} at index {}", server_id_, id,
-           index);
+  LOG_INFO("Node {} proposing RemoveNode for {} at index {}", server_id_, id, index);
 
   // Trigger replication
   BroadcastAppendEntriesLocked();
@@ -1368,8 +1324,7 @@ Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
 
   // Single-node-change safety: reject if another change is in flight.
   if (pending_config_change_) {
-    return Status::Error(
-        "A membership change is already in progress; wait for it to commit");
+    return Status::Error("A membership change is already in progress; wait for it to commit");
   }
 
   // Learners do not affect quorum, so no joint consensus needed.
@@ -1387,8 +1342,8 @@ Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        LOG_ERROR("Node {} failed to persist AddLearner log entry: {}",
-                  server_id_, flush_status.GetMessage());
+        LOG_ERROR("Node {} failed to persist AddLearner log entry: {}", server_id_,
+                  flush_status.GetMessage());
         return flush_status;
       }
     }
@@ -1404,8 +1359,7 @@ Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
   match_index_[id] = 0;
   SetPeerReplicationLagMetricLocked(id);
 
-  LOG_INFO("Node {} proposing AddLearner for {} at index {}", server_id_, id,
-           index);
+  LOG_INFO("Node {} proposing AddLearner for {} at index {}", server_id_, id, index);
 
   // Trigger replication
   BroadcastAppendEntriesLocked();
@@ -1434,8 +1388,7 @@ Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
 
   // Single-node-change safety: reject if another change is in flight.
   if (pending_config_change_) {
-    return Status::Error(
-        "A membership change is already in progress; wait for it to commit");
+    return Status::Error("A membership change is already in progress; wait for it to commit");
   }
 
   // Promotion changes quorum, so use joint consensus.
@@ -1445,8 +1398,7 @@ Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
 
   nlohmann::json j_old = old_nodes;
   nlohmann::json j_new = new_nodes;
-  std::string cmd =
-      "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
+  std::string cmd = "CONFIG_CHANGE:JOINT:" + j_old.dump() + ":" + j_new.dump();
 
   // Propose as normal log entry
   auto [index, status] = log_.Append(current_term_, cmd);
@@ -1460,8 +1412,8 @@ Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
     if (entry_opt) {
       auto flush_status = log_persister_->AppendSync(*entry_opt);
       if (!flush_status.ok()) {
-        LOG_ERROR("Node {} failed to persist PromoteLearner log entry: {}",
-                  server_id_, flush_status.GetMessage());
+        LOG_ERROR("Node {} failed to persist PromoteLearner log entry: {}", server_id_,
+                  flush_status.GetMessage());
         return flush_status;
       }
     }
@@ -1470,8 +1422,7 @@ Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
   // Mark pending so no other membership change can be proposed.
   pending_config_change_ = true;
 
-  LOG_INFO("Node {} proposing PromoteLearner for {} at index {}", server_id_,
-           id, index);
+  LOG_INFO("Node {} proposing PromoteLearner for {} at index {}", server_id_, id, index);
 
   // Trigger replication
   BroadcastAppendEntriesLocked();
@@ -1504,8 +1455,7 @@ Status RaftNode::RaftNodeImpl::TransferLeadershipTo(NodeId target_id) {
     SendAppendEntriesToPeerLocked(target_id);
   }
 
-  LOG_INFO("Node {} transferring leadership to {}, stepping down", server_id_,
-           target_id);
+  LOG_INFO("Node {} transferring leadership to {}, stepping down", server_id_, target_id);
 
   // Step down. BecomeFollowerLocked acquires replication_mtx_ + snapshot_mtx_
   // internally, so we must not hold them here.
@@ -1545,15 +1495,12 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
   if (role_ == RaftNodeRole::LEADER && cfg.leader_lease_enabled) {
     auto now = std::chrono::steady_clock::now();
     valid = now < leader_lease_expiry_;
-    auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            leader_lease_expiry_ - now)
-                            .count();
+    auto remaining_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(leader_lease_expiry_ - now).count();
     remaining_seconds = std::max(0.0, remaining_ms / 1000.0);
   }
-  metrics_->GetGauge("raft_leader_lease_seconds", metrics_node_label_)
-      .Set(remaining_seconds);
-  metrics_->GetGauge("raft_leader_lease_valid", metrics_node_label_)
-      .Set(valid ? 1.0 : 0.0);
+  metrics_->GetGauge("raft_leader_lease_seconds", metrics_node_label_).Set(remaining_seconds);
+  metrics_->GetGauge("raft_leader_lease_valid", metrics_node_label_).Set(valid ? 1.0 : 0.0);
 }
 
 void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
@@ -1564,9 +1511,7 @@ void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
   if (it != match_index_.end()) {
     match = it->second;
   }
-  double lag = (last_index >= match)
-                   ? static_cast<double>(last_index - match)
-                   : 0.0;
+  double lag = (last_index >= match) ? static_cast<double>(last_index - match) : 0.0;
   auto labels = metrics_node_label_;
   labels["peer_id"] = std::to_string(peer_id);
   metrics_->GetGauge("raft_transport_peer_lag_entries", labels).Set(lag);

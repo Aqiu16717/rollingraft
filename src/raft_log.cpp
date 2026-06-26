@@ -44,8 +44,7 @@ std::vector<RaftLogEntry> RaftLog::GetEntries(Index start, Index end) const {
 
   // Clamp to valid range
   Index actual_start = std::max(start, start_index_);
-  Index actual_end =
-      std::min(end, start_index_ + static_cast<Index>(entries_.size()));
+  Index actual_end = std::min(end, start_index_ + static_cast<Index>(entries_.size()));
 
   if (actual_start >= actual_end) {
     return result;
@@ -100,8 +99,7 @@ size_t RaftLog::ToPhysicalIndex(Index logical_index) const {
 }
 
 bool RaftLog::IsInRange(Index index) const {
-  return index >= start_index_ &&
-         index < start_index_ + static_cast<Index>(entries_.size());
+  return index >= start_index_ && index < start_index_ + static_cast<Index>(entries_.size());
 }
 
 void RaftLog::SetStartIndex(Index index) {

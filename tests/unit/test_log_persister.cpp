@@ -1,10 +1,10 @@
 #include <chrono>
-#include <gtest/gtest.h>
 #include <thread>
 
 #include "rollingraft/log_persister.h"
 
 #include "mock/mock_persister.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -20,8 +20,7 @@ class LogPersisterTest : public ::testing::Test {
     config.sync_policy = LogPersistenceConfig::SyncPolicy::kSyncEveryWrite;
     config.data_dir = "/tmp";
 
-    persister_ =
-        std::make_unique<LogPersister>(std::move(mock_persister_), config);
+    persister_ = std::make_unique<LogPersister>(std::move(mock_persister_), config);
   }
 
   void TearDown() override {
@@ -29,8 +28,7 @@ class LogPersisterTest : public ::testing::Test {
     persister_.reset();
   }
 
-  RaftLogEntry MakeEntry(uint64_t index, uint64_t term,
-                         const std::string& data) {
+  RaftLogEntry MakeEntry(uint64_t index, uint64_t term, const std::string& data) {
     RaftLogEntry entry;
     entry.index_ = index;
     entry.term_ = term;
@@ -111,9 +109,7 @@ TEST_F(LogPersisterTest, FlushSyncWaitsForEmptyBuffer) {
   EXPECT_EQ(mock_persister_ptr_->EntryCount(), 5);
 }
 
-TEST_F(LogPersisterTest, HealthyByDefault) {
-  EXPECT_TRUE(persister_->IsHealthy());
-}
+TEST_F(LogPersisterTest, HealthyByDefault) { EXPECT_TRUE(persister_->IsHealthy()); }
 
 TEST_F(LogPersisterTest, UnhealthyAfterFailure) {
   persister_->Start();
@@ -137,11 +133,10 @@ TEST_F(LogPersisterTest, CallbackFiresAfterFlush) {
   bool callback_fired = false;
   Status callback_status;
 
-  persister_->Append(MakeEntry(1, 1, "cmd"),
-                     [&callback_fired, &callback_status](Status s) {
-                       callback_fired = true;
-                       callback_status = s;
-                     });
+  persister_->Append(MakeEntry(1, 1, "cmd"), [&callback_fired, &callback_status](Status s) {
+    callback_fired = true;
+    callback_status = s;
+  });
 
   // Callback should not fire immediately
   EXPECT_FALSE(callback_fired);
@@ -163,11 +158,10 @@ TEST_F(LogPersisterTest, CallbackFiresOnFailure) {
   bool callback_fired = false;
   Status callback_status;
 
-  persister_->Append(MakeEntry(1, 1, "cmd"),
-                     [&callback_fired, &callback_status](Status s) {
-                       callback_fired = true;
-                       callback_status = s;
-                     });
+  persister_->Append(MakeEntry(1, 1, "cmd"), [&callback_fired, &callback_status](Status s) {
+    callback_fired = true;
+    callback_status = s;
+  });
 
   // Force flush (will fail)
   persister_->FlushSync();
@@ -269,14 +263,12 @@ class LogPersisterGroupCommitTest : public ::testing::Test {
     config.group_commit_max_entries = 100;
     config.data_dir = "/tmp";
 
-    persister_ =
-        std::make_unique<LogPersister>(std::move(mock_persister_), config);
+    persister_ = std::make_unique<LogPersister>(std::move(mock_persister_), config);
   }
 
   void TearDown() override { persister_.reset(); }
 
-  RaftLogEntry MakeEntry(uint64_t index, uint64_t term,
-                         const std::string& data) {
+  RaftLogEntry MakeEntry(uint64_t index, uint64_t term, const std::string& data) {
     RaftLogEntry entry;
     entry.index_ = index;
     entry.term_ = term;
@@ -295,11 +287,10 @@ TEST_F(LogPersisterGroupCommitTest, CallbackFiresAfterSync) {
   bool callback_fired = false;
   Status callback_status;
 
-  persister_->Append(MakeEntry(1, 1, "cmd"),
-                     [&callback_fired, &callback_status](Status s) {
-                       callback_fired = true;
-                       callback_status = s;
-                     });
+  persister_->Append(MakeEntry(1, 1, "cmd"), [&callback_fired, &callback_status](Status s) {
+    callback_fired = true;
+    callback_status = s;
+  });
 
   // Callback should not fire immediately after flush.
   persister_->FlushSync();
@@ -335,11 +326,10 @@ TEST_F(LogPersisterGroupCommitTest, CallbackFiresOnSyncFailure) {
   bool callback_fired = false;
   Status callback_status;
 
-  persister_->Append(MakeEntry(1, 1, "cmd"),
-                     [&callback_fired, &callback_status](Status s) {
-                       callback_fired = true;
-                       callback_status = s;
-                     });
+  persister_->Append(MakeEntry(1, 1, "cmd"), [&callback_fired, &callback_status](Status s) {
+    callback_fired = true;
+    callback_status = s;
+  });
 
   persister_->FlushSync();
   mock_persister_ptr_->InjectFailure("fsync failed");
@@ -371,8 +361,7 @@ TEST_F(LogPersisterGroupCommitTest, SyncByBatchSizeThreshold) {
 
   // Wait for the background sync thread to sync.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (mock_ptr->GetSyncCount() == 0 &&
-         std::chrono::steady_clock::now() < deadline) {
+  while (mock_ptr->GetSyncCount() == 0 && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 

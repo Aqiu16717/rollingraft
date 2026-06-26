@@ -1,10 +1,11 @@
 #pragma once
 
 #include <asio.hpp>
-#include <asio/ssl.hpp>
 
 #include "rollingraft/status.h"
 #include "rollingraft/tls_config.h"
+
+#include <asio/ssl.hpp>
 
 namespace rollingraft {
 

@@ -33,8 +33,7 @@ class Protocol {
    * @param output Output buffer for serialized data
    * @return Status::OK() on success
    */
-  virtual Status SerializeRequest(const RaftRequest& req,
-                                  std::string& output) const = 0;
+  virtual Status SerializeRequest(const RaftRequest& req, std::string& output) const = 0;
 
   /**
    * Deserialize a request message.
@@ -43,8 +42,7 @@ class Protocol {
    * @param req Output request object
    * @return Status::OK() on success
    */
-  virtual Status DeserializeRequest(const std::string& input,
-                                    RaftRequest& req) = 0;
+  virtual Status DeserializeRequest(const std::string& input, RaftRequest& req) = 0;
 
   /**
    * Serialize a response message.
@@ -53,8 +51,7 @@ class Protocol {
    * @param output Output buffer for serialized data
    * @return Status::OK() on success
    */
-  virtual Status SerializeResponse(const RaftResponse& res,
-                                   std::string& output) const = 0;
+  virtual Status SerializeResponse(const RaftResponse& res, std::string& output) const = 0;
 
   /**
    * Deserialize a response message.
@@ -63,8 +60,7 @@ class Protocol {
    * @param res Output response object
    * @return Status::OK() on success
    */
-  virtual Status DeserializeResponse(const std::string& input,
-                                     RaftResponse& res) = 0;
+  virtual Status DeserializeResponse(const std::string& input, RaftResponse& res) = 0;
 };
 
 }  // namespace rollingraft

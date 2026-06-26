@@ -1,6 +1,9 @@
 #include "simulated_network.h"
+
 #include <algorithm>
+
 #include "rollingraft/network_transport.h"
+
 #include "simulated_clock.h"
 namespace rollingraft {
 SimulatedNetwork::SimulatedNetwork(SimulatedClock* clock, uint64_t seed)
@@ -19,8 +22,7 @@ void SimulatedNetwork::UnregisterEndpoint(NodeId id) {
 void SimulatedNetwork::Send(NodeId from, NodeId to, const std::string& payload,
                             uint64_t correlation_id) {
   std::lock_guard<std::mutex> lock(mtx_);
-  if (partitions_.find({std::min(from, to), std::max(from, to)}) !=
-      partitions_.end()) {
+  if (partitions_.find({std::min(from, to), std::max(from, to)}) != partitions_.end()) {
     return;
   }
   if (drop_probability_ > 0.0f) {
@@ -48,9 +50,8 @@ bool SimulatedNetwork::DeliverOne() {
   {
     std::lock_guard<std::mutex> lock(mtx_);
     uint64_t now = clock_->Now();
-    auto it = std::find_if(
-        pending_messages_.begin(), pending_messages_.end(),
-        [now](const SimulatedMessage& m) { return m.deliver_time_ms <= now; });
+    auto it = std::find_if(pending_messages_.begin(), pending_messages_.end(),
+                           [now](const SimulatedMessage& m) { return m.deliver_time_ms <= now; });
     if (it == pending_messages_.end()) return false;
     msg = std::move(*it);
     pending_messages_.erase(it);
@@ -85,9 +86,8 @@ void SimulatedNetwork::MaybeDeliver(const SimulatedMessage& msg) {
     if (it != endpoints_.end()) {
       handler = it->second;
     }
-    connected =
-        partitions_.find({std::min(msg.to, msg.from), std::max(msg.to, msg.from)}) ==
-        partitions_.end();
+    connected = partitions_.find({std::min(msg.to, msg.from), std::max(msg.to, msg.from)}) ==
+                partitions_.end();
   }
   if (handler) {
     std::string response;

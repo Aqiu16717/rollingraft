@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+
 #include <rollingraft/status.h>
 
 namespace rollingraft {
@@ -59,8 +60,7 @@ class TimerService {
    * @param callback Function to call when timer expires
    * @return Timer ID for cancellation
    */
-  virtual TimerId SetTimeout(std::chrono::milliseconds delay,
-                             std::function<void()> callback) = 0;
+  virtual TimerId SetTimeout(std::chrono::milliseconds delay, std::function<void()> callback) = 0;
 
   /**
    * Set a periodic timer.

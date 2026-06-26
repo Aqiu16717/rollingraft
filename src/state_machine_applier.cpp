@@ -3,8 +3,8 @@
 using namespace rollingraft;
 
 namespace {
-const std::vector<double> kLatencyBuckets = {
-    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0};
+const std::vector<double> kLatencyBuckets = {0.001, 0.005, 0.01, 0.025, 0.05, 0.1,
+                                             0.25,  0.5,   1.0,  2.5,   5.0,  10.0};
 }  // namespace
 
 void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
@@ -13,8 +13,8 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
 
     auto entry_opt = log_.GetEntry(last_enqueued_);
     if (!entry_opt) {
-      LOG_ERROR("Node {} failed to get log entry {} — log corruption, aborting",
-                server_id_, last_enqueued_);
+      LOG_ERROR("Node {} failed to get log entry {} — log corruption, aborting", server_id_,
+                last_enqueued_);
       std::abort();
     }
 
@@ -30,10 +30,12 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
       auto it = pending_proposals_.find(last_enqueued_);
       if (it != pending_proposals_.end()) {
         if (metrics_) {
-          auto latency = std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - it->second.propose_time).count();
-          metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
-                                 {{"node_id", std::to_string(server_id_)}})
+          auto latency = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                       it->second.propose_time)
+                             .count();
+          metrics_
+              ->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
+                             {{"node_id", std::to_string(server_id_)}})
               .Observe(latency);
         }
         ApplyResult result;
@@ -96,8 +98,7 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
   while (apply_running_.load(std::memory_order_acquire)) {
     std::unique_lock<std::mutex> lock(apply_queue_mtx_);
     apply_queue_cv_.wait(lock, [this] {
-      return !apply_queue_.empty() ||
-             !apply_running_.load(std::memory_order_acquire);
+      return !apply_queue_.empty() || !apply_running_.load(std::memory_order_acquire);
     });
 
     if (!apply_running_.load(std::memory_order_acquire)) break;
@@ -138,9 +139,8 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
 
       // Apply to StateMachine
       auto result = state_machine_->Apply(
-          std::span<const uint8_t>(
-              reinterpret_cast<const uint8_t*>(task.data.data()),
-              task.data.size()),
+          std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(task.data.data()),
+                                   task.data.size()),
           task.index);
 
       // Cache result in session manager if this was a session-based proposal
@@ -156,10 +156,12 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
       // Record proposal latency
       if (task.callback) {
         if (metrics_ && task.propose_time.has_value()) {
-          auto latency = std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - *task.propose_time).count();
-          metrics_->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
-                                 {{"node_id", std::to_string(server_id_)}})
+          auto latency =
+              std::chrono::duration<double>(std::chrono::steady_clock::now() - *task.propose_time)
+                  .count();
+          metrics_
+              ->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
+                             {{"node_id", std::to_string(server_id_)}})
               .Observe(latency);
         }
         task.callback(result);
@@ -179,21 +181,18 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
 
     // Update metrics
     if (metrics_) {
-      metrics_
-          ->GetGauge("raft_applied_index",
-                     {{"node_id", std::to_string(server_id_)}})
+      metrics_->GetGauge("raft_applied_index", {{"node_id", std::to_string(server_id_)}})
           .Set(static_cast<double>(new_last_applied));
     }
   }
 }
 
-void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
-    uint64_t read_id) {
+void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id) {
   if (metrics_) {
     metrics_
         ->GetCounter("raft_readindex_heartbeats_sent_total",
                      {{"node_id", std::to_string(server_id_)}})
-            .Increment();
+        .Increment();
   }
 
   // Heartbeat coalescing: skip peers that received a heartbeat recently
@@ -206,11 +205,10 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     (void)addr;
     auto it = last_heartbeat_sent_.find(peer_id);
     if (it != last_heartbeat_sent_.end()) {
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          now - it->second).count();
+      auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
       auto rc = runtime_config_->Get();
-      if (elapsed >= 0 &&
-          static_cast<uint32_t>(elapsed) < rc.heartbeat_interval_ms) {
+      if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < rc.heartbeat_interval_ms) {
         peers_to_skip.push_back(peer_id);
         continue;
       }
@@ -229,9 +227,8 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
 
   if (!peers_to_skip.empty() && metrics_) {
     metrics_
-        ->GetCounter("raft_heartbeat_coalesced_total",
-                     {{"node_id", std::to_string(server_id_)}})
-            .Increment(peers_to_skip.size());
+        ->GetCounter("raft_heartbeat_coalesced_total", {{"node_id", std::to_string(server_id_)}})
+        .Increment(peers_to_skip.size());
   }
 
   // Send empty AppendEntries (heartbeats) only to selected peers
@@ -242,8 +239,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     req.prev_log_index_ = next_index_[peer_id] - 1;
     req.prev_log_term_ = GetLogTermLocked(req.prev_log_index_);
     req.leader_commit_ = commit_index_;
-    req.correlation_id_ =
-        next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
+    req.correlation_id_ = next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
     // Empty entries = heartbeat
 
     std::string data;
@@ -259,8 +255,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
     network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
-        [this, peer_id, read_id](const std::string& resp, bool success,
-                                 const std::string& error) {
+        [this, peer_id, read_id](const std::string& resp, bool success, const std::string& error) {
           if (!success) {
             LOG_WARN("ReadIndex heartbeat to {} failed: {}", peer_id, error);
             return;
@@ -269,8 +264,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
           AppendEntriesResponse response;
           auto status = protocol_->DeserializeResponse(resp, response);
           if (!status.ok()) {
-            LOG_ERROR("Failed to deserialize heartbeat response: {}",
-                      status.ToString());
+            LOG_ERROR("Failed to deserialize heartbeat response: {}", status.ToString());
             return;
           }
 
@@ -292,8 +286,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(
   }
 }
 
-void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
-                                                      uint64_t read_id) {
+void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read_id) {
   if (metrics_) {
     metrics_
         ->GetCounter("raft_readindex_acks_received_total",
@@ -319,18 +312,20 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from,
   // Check if we have majority
   uint32_t majority = cluster_config_.GetMajority();
   if (read_req.acks.size() >= majority) {
-    LOG_INFO("ReadIndex {} received majority acks ({}/{})", read_id,
-             read_req.acks.size(), cluster_config_.nodes.size());
+    LOG_INFO("ReadIndex {} received majority acks ({}/{})", read_id, read_req.acks.size(),
+             cluster_config_.nodes.size());
 
     // Check if read_index is already applied
     if (last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       // Can complete immediately
       auto callback = std::move(read_req.callback);
       if (metrics_) {
-        auto latency = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - read_req.start_time).count();
-        metrics_->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
-                               {{"node_id", std::to_string(server_id_)}})
+        auto latency =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - read_req.start_time)
+                .count();
+        metrics_
+            ->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
+                           {{"node_id", std::to_string(server_id_)}})
             .Observe(latency);
       }
       pending_reads_.erase(it);
@@ -357,9 +352,8 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
   for (auto& [read_id, read_req] : pending_reads_) {
     // Check if we have majority acks (or lease read) and log is applied
     uint32_t majority = cluster_config_.GetMajority();
-    bool acks_ok = read_req.heartbeats_sent
-                       ? read_req.acks.size() >= majority
-                       : true;  // Lease read: acks already verified via quorum
+    bool acks_ok = read_req.heartbeats_sent ? read_req.acks.size() >= majority
+                                            : true;  // Lease read: acks already verified via quorum
     if (acks_ok && last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       completed_reads.push_back(read_id);
     }
@@ -371,10 +365,12 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
     if (it != pending_reads_.end()) {
       auto callback = std::move(it->second.callback);
       if (metrics_) {
-        auto latency = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - it->second.start_time).count();
-        metrics_->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
-                               {{"node_id", std::to_string(server_id_)}})
+        auto latency =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - it->second.start_time)
+                .count();
+        metrics_
+            ->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
+                           {{"node_id", std::to_string(server_id_)}})
             .Observe(latency);
       }
       pending_reads_.erase(it);

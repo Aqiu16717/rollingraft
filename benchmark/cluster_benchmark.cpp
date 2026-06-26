@@ -23,10 +23,9 @@ bool ClusterBenchmark::SetUp() {
   // Create temp data directories
   data_dirs_.clear();
   for (size_t i = 0; i < cluster_config_.num_nodes; ++i) {
-    std::string dir =
-        "/tmp/raft_benchmark_node_" + std::to_string(i + 1) + "_" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch() /
-                       std::chrono::milliseconds(1));
+    std::string dir = "/tmp/raft_benchmark_node_" + std::to_string(i + 1) + "_" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch() /
+                                     std::chrono::milliseconds(1));
     data_dirs_.push_back(dir);
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -48,8 +47,7 @@ bool ClusterBenchmark::SetUp() {
     nodes_.push_back(std::make_unique<RaftNode>(config, sm));
     auto status = nodes_[i]->Start();
     if (!status.ok()) {
-      std::cerr << "Failed to start node " << (i + 1) << ": "
-                << status.ToString() << std::endl;
+      std::cerr << "Failed to start node " << (i + 1) << ": " << status.ToString() << std::endl;
       return false;
     }
   }
@@ -59,8 +57,7 @@ bool ClusterBenchmark::SetUp() {
     std::cerr << "[BENCH] Failed to elect leader within timeout" << std::endl;
     return false;
   }
-  std::cerr << "[BENCH] Leader elected: node " << (GetLeaderIndex() + 1)
-            << std::endl;
+  std::cerr << "[BENCH] Leader elected: node " << (GetLeaderIndex() + 1) << std::endl;
 
   // Give cluster time to stabilize heartbeat before benchmark load
   std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -127,14 +124,13 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
   std::atomic<bool> success{false};
   std::string error_msg;
 
-  auto status =
-      nodes_[leader_idx]->Propose(command, [&](const ApplyResult& result) {
-        success.store(result.success, std::memory_order_release);
-        if (!result.success) {
-          error_msg = result.error_message;
-        }
-        done.store(true, std::memory_order_release);
-      });
+  auto status = nodes_[leader_idx]->Propose(command, [&](const ApplyResult& result) {
+    success.store(result.success, std::memory_order_release);
+    if (!result.success) {
+      error_msg = result.error_message;
+    }
+    done.store(true, std::memory_order_release);
+  });
 
   if (!status.ok()) {
     std::cerr << "[BENCH] Propose rejected: " << status.ToString() << std::endl;
@@ -156,8 +152,7 @@ Status ClusterBenchmark::ProposeToLeader(const std::string& command) {
       std::cerr << "." << std::flush;
     }
 
-    if (std::chrono::steady_clock::now() - wait_start >
-        std::chrono::seconds(5)) {
+    if (std::chrono::steady_clock::now() - wait_start > std::chrono::seconds(5)) {
       std::cerr << "[BENCH] TIMEOUT" << std::endl;
       return Status::Error("Timeout waiting for commit");
     }
@@ -206,8 +201,7 @@ Status ClusterBenchmark::RestartNode(size_t index) {
     return Status::Error("Invalid node index");
   }
 
-  auto config =
-      MakeConfig(static_cast<NodeId>(index + 1), addrs_[index], addrs_);
+  auto config = MakeConfig(static_cast<NodeId>(index + 1), addrs_[index], addrs_);
   auto sm = std::make_shared<MockStateMachine>();
   state_machines_[index] = sm;
 
@@ -215,9 +209,8 @@ Status ClusterBenchmark::RestartNode(size_t index) {
   return nodes_[index]->Start();
 }
 
-RaftNodeConfig ClusterBenchmark::MakeConfig(
-    NodeId id, const std::string& addr,
-    const std::vector<std::string>& all_addrs) {
+RaftNodeConfig ClusterBenchmark::MakeConfig(NodeId id, const std::string& addr,
+                                            const std::vector<std::string>& all_addrs) {
   RaftNodeConfig config;
   config.node_id = id;
   config.listen_addr = addr;
@@ -229,10 +222,8 @@ RaftNodeConfig ClusterBenchmark::MakeConfig(
       static_cast<int>(cluster_config_.election_timeout.count() * 0.5),
       static_cast<int>(cluster_config_.election_timeout.count()));
   config.election_timeout_ms = dis(gen);
-  config.heartbeat_interval_ms =
-      static_cast<int>(cluster_config_.heartbeat_interval.count());
-  config.snapshot_threshold_entries =
-      cluster_config_.snapshot_threshold_entries;
+  config.heartbeat_interval_ms = static_cast<int>(cluster_config_.heartbeat_interval.count());
+  config.snapshot_threshold_entries = cluster_config_.snapshot_threshold_entries;
   // Disable CheckQuorum and Pre-vote for benchmark stability
   config.check_quorum_enabled = false;
   config.pre_vote_enabled = false;

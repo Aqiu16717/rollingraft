@@ -3,12 +3,13 @@
  * @brief Unit tests for ClientSessionManager and session-based Propose
  */
 
-#include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/client_session_manager.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -68,8 +69,10 @@ TEST_F(ClientSessionManagerTest, HigherSeqNotDuplicate) {
 TEST_F(ClientSessionManagerTest, DifferentSessionsIndependent) {
   ClientSessionManager mgr;
   SessionResult r1, r2;
-  r1.success = true; r1.response = "A";
-  r2.success = true; r2.response = "B";
+  r1.success = true;
+  r1.response = "A";
+  r2.success = true;
+  r2.response = "B";
   mgr.RecordResult(1, 1, r1);
   mgr.RecordResult(2, 1, r2);
 

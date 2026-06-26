@@ -16,8 +16,7 @@ Status MockNetworkTransport::Start() { return Status::OK(); }
 
 Status MockNetworkTransport::Stop() { return Status::OK(); }
 
-void MockNetworkTransport::SendRpc(NodeId to, const NodeAddr& addr,
-                                   const std::string& request_data,
+void MockNetworkTransport::SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
                                    [[maybe_unused]] uint64_t correlation_id,
                                    std::chrono::milliseconds timeout,
                                    RpcResponseCallback callback) {
@@ -40,8 +39,8 @@ void MockNetworkTransport::SendRpc(NodeId to, const NodeAddr& addr,
   }
 }
 
-std::vector<MockNetworkTransport::RecordedRequest>
-MockNetworkTransport::GetRecordedRequests() const {
+std::vector<MockNetworkTransport::RecordedRequest> MockNetworkTransport::GetRecordedRequests()
+    const {
   std::lock_guard<std::mutex> lock(mutex_);
   return recorded_requests_;
 }
@@ -51,10 +50,8 @@ void MockNetworkTransport::ClearRecordedRequests() {
   recorded_requests_.clear();
 }
 
-void MockNetworkTransport::TriggerResponse(size_t request_index,
-                                           const std::string& response_data,
-                                           bool success,
-                                           const std::string& error) {
+void MockNetworkTransport::TriggerResponse(size_t request_index, const std::string& response_data,
+                                           bool success, const std::string& error) {
   RpcResponseCallback callback;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -66,8 +63,7 @@ void MockNetworkTransport::TriggerResponse(size_t request_index,
   }
 }
 
-void MockNetworkTransport::SetAutoResponse(const std::string& response_data,
-                                           bool success) {
+void MockNetworkTransport::SetAutoResponse(const std::string& response_data, bool success) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto_response_ = true;
   auto_response_data_ = response_data;
@@ -85,8 +81,7 @@ void MockNetworkTransport::SetPartitioned(NodeId peer_id, bool partitioned) {
   partitioned_peers_[peer_id] = partitioned;
 }
 
-void MockNetworkTransport::InjectResponse(NodeId from,
-                                          const std::string& response_data) {
+void MockNetworkTransport::InjectResponse(NodeId from, const std::string& response_data) {
   // This simulates receiving an RPC response from a peer
   // In a real implementation, this would call the request handler
   // For unit testing purposes, we just store it or trigger callbacks

@@ -6,9 +6,10 @@
  */
 
 #include <filesystem>
-#include <gtest/gtest.h>
 
 #include "rollingraft/persister.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -28,8 +29,7 @@ class HybridPersisterTest : public ::testing::Test {
     std::filesystem::remove_all(test_dir_);
   }
 
-  RaftLogEntry MakeEntry(uint64_t index, uint64_t term,
-                         const std::string& data) {
+  RaftLogEntry MakeEntry(uint64_t index, uint64_t term, const std::string& data) {
     RaftLogEntry entry;
     entry.index_ = index;
     entry.term_ = term;
@@ -64,8 +64,7 @@ TEST_F(HybridPersisterTest, ConsistentAfterAppendAndSnapshot) {
   // Verify snapshot metadata
   std::string loaded_data;
   uint64_t loaded_index = 0, loaded_term = 0;
-  ASSERT_TRUE(
-      persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
+  ASSERT_TRUE(persister_->LoadSnapshot(loaded_data, loaded_index, loaded_term).ok());
   EXPECT_EQ(loaded_data, snapshot_data);
   EXPECT_EQ(loaded_index, 7);
   EXPECT_EQ(loaded_term, 1);
@@ -110,8 +109,7 @@ TEST_F(HybridPersisterTest, ReopenPreservesWALAndStateConsistency) {
 
   std::string snap_data;
   uint64_t snap_index = 0, snap_term = 0;
-  ASSERT_TRUE(
-      persister_->LoadSnapshot(snap_data, snap_index, snap_term).ok());
+  ASSERT_TRUE(persister_->LoadSnapshot(snap_data, snap_index, snap_term).ok());
   EXPECT_EQ(snap_index, 3);
   EXPECT_LE(snap_index, last_log_index);
 }
@@ -140,7 +138,6 @@ TEST_F(HybridPersisterTest, TruncateSuffixMaintainsSnapshotConsistency) {
   // persister reports the state correctly.
   std::string snap_data;
   uint64_t snap_index = 0, snap_term = 0;
-  ASSERT_TRUE(
-      persister_->LoadSnapshot(snap_data, snap_index, snap_term).ok());
+  ASSERT_TRUE(persister_->LoadSnapshot(snap_data, snap_index, snap_term).ok());
   EXPECT_EQ(snap_index, 8);
 }

@@ -59,50 +59,42 @@ class Status {
   static Status OK() { return Status(); }
 
   /** Return a corruption error status. */
-  static Status Corruption(const std::string& msg,
-                           const std::string& msg2 = "") {
+  static Status Corruption(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kCorruption, msg, msg2);
   }
 
   /** Return a RequestVote RPC error status. */
-  static Status RequestVoteError(const std::string& msg,
-                                 const std::string& msg2 = "") {
+  static Status RequestVoteError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kRequestVoteError, msg, msg2);
   }
 
   /** Return an AppendEntries RPC error status. */
-  static Status AppendEntriesError(const std::string& msg,
-                                   const std::string& msg2 = "") {
+  static Status AppendEntriesError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kAppendEntriesError, msg, msg2);
   }
 
   /** Return an InstallSnapshot RPC error status. */
-  static Status InstallSnapshotError(const std::string& msg,
-                                     const std::string& msg2 = "") {
+  static Status InstallSnapshotError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kInstallSnapshotError, msg, msg2);
   }
 
   /** Return a serialization error status. */
-  static Status SerializeError(const std::string& msg,
-                               const std::string& msg2 = "") {
+  static Status SerializeError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kSerializeError, msg, msg2);
   }
 
   /** Return a deserialization error status. */
-  static Status DeSerializeError(const std::string& msg,
-                                 const std::string& msg2 = "") {
+  static Status DeSerializeError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kDeSerializeError, msg, msg2);
   }
 
   /** Return a protocol error status. */
-  static Status ProtocolError(const std::string& msg,
-                              const std::string& msg2 = "") {
+  static Status ProtocolError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kProtocolError, msg, msg2);
   }
 
   /** Return a Raft node start error status. */
-  static Status RaftNodeStartError(const std::string& msg,
-                                   const std::string& msg2 = "") {
+  static Status RaftNodeStartError(const std::string& msg, const std::string& msg2 = "") {
     return Status(Code::kRaftNodeStartError, msg, msg2);
   }
 
@@ -134,14 +126,10 @@ class Status {
   bool IsRequestVoteError() const { return code() == Code::kRequestVoteError; }
 
   /** Returns true if the status indicates an AppendEntries error. */
-  bool IsAppendEntriesError() const {
-    return code() == Code::kAppendEntriesError;
-  }
+  bool IsAppendEntriesError() const { return code() == Code::kAppendEntriesError; }
 
   /** Returns true if the status indicates an InstallSnapshot error. */
-  bool IsInstallSnapshotError() const {
-    return code() == Code::kInstallSnapshotError;
-  }
+  bool IsInstallSnapshotError() const { return code() == Code::kInstallSnapshotError; }
 
   /** Returns true if the status indicates a DeSerialize error. */
   bool IsDeSerializeError() const { return code() == Code::kDeSerializeError; }
@@ -156,9 +144,7 @@ class Status {
   bool IsNotLeader() const { return code() == Code::kNotLeader; }
 
   /** Returns true if the status indicates a RaftNodeStart error. */
-  bool IsRaftNodeStartError() const {
-    return code() == Code::kRaftNodeStartError;
-  }
+  bool IsRaftNodeStartError() const { return code() == Code::kRaftNodeStartError; }
 
   /**
    * Return a string representation of this status.
@@ -179,9 +165,7 @@ class Status {
   Code GetErrorCode() const;
 
  private:
-  Code code() const {
-    return (state_ == nullptr) ? Code::kOk : static_cast<Code>(state_[4]);
-  }
+  Code code() const { return (state_ == nullptr) ? Code::kOk : static_cast<Code>(state_[4]); }
 
   Status(Code code, const std::string& msg, const std::string& msg2);
   static const char* CopyState(const char* s);

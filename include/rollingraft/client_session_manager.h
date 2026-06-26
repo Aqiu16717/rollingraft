@@ -54,8 +54,7 @@ class ClientSessionManager {
    * @param max_sessions Maximum number of sessions to keep in memory
    * @param ttl_ms Session TTL in milliseconds (0 = no expiration)
    */
-  explicit ClientSessionManager(size_t max_sessions = 10000,
-                                uint64_t ttl_ms = 300000);
+  explicit ClientSessionManager(size_t max_sessions = 10000, uint64_t ttl_ms = 300000);
 
   /**
    * Check if a request is a duplicate and return cached result if so.
@@ -65,8 +64,7 @@ class ClientSessionManager {
    * @param result Out parameter for cached result (only valid if returns true)
    * @return true if duplicate (result cached), false if new request
    */
-  bool IsDuplicate(uint64_t session_id, uint64_t seq_num,
-                   SessionResult& result);
+  bool IsDuplicate(uint64_t session_id, uint64_t seq_num, SessionResult& result);
 
   /**
    * Record a successful execution result for a session.
@@ -75,8 +73,7 @@ class ClientSessionManager {
    * @param seq_num Sequence number that was executed
    * @param result Execution result to cache
    */
-  void RecordResult(uint64_t session_id, uint64_t seq_num,
-                    const SessionResult& result);
+  void RecordResult(uint64_t session_id, uint64_t seq_num, const SessionResult& result);
 
   /**
    * Remove expired sessions (inactive longer than TTL).

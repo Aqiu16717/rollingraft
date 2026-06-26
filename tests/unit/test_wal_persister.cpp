@@ -15,29 +15,27 @@
 
 #include <filesystem>
 #include <fstream>
-#include <gtest/gtest.h>
 #include <thread>
 #include <vector>
 
 #include "rollingraft/wal_persister.h"
+
 #include "raft_log_entry.pb.h"
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
 class WALPersisterTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    test_dir_ = "/tmp/rollingraft_wal_test_" + std::to_string(getpid()) + "_" +
-                std::to_string(counter_++);
+    test_dir_ =
+        "/tmp/rollingraft_wal_test_" + std::to_string(getpid()) + "_" + std::to_string(counter_++);
     std::filesystem::create_directories(test_dir_);
   }
 
-  void TearDown() override {
-    std::filesystem::remove_all(test_dir_);
-  }
+  void TearDown() override { std::filesystem::remove_all(test_dir_); }
 
-  RaftLogEntry MakeEntry(uint64_t index, uint64_t term,
-                         const std::string& data,
+  RaftLogEntry MakeEntry(uint64_t index, uint64_t term, const std::string& data,
                          const std::string& command = "") {
     RaftLogEntry entry;
     entry.index_ = index;
@@ -85,9 +83,9 @@ TEST_F(WALPersisterTest, AppendAndReplay) {
 
   // Append 10 entries
   for (uint64_t i = 1; i <= 10; ++i) {
-    ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i),
-                                             "cmd" + std::to_string(i)))
-                    .ok());
+    ASSERT_TRUE(
+        wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i), "cmd" + std::to_string(i)))
+            .ok());
   }
 
   auto range = wal.GetLogRange();
@@ -97,9 +95,10 @@ TEST_F(WALPersisterTest, AppendAndReplay) {
   // Replay and verify
   std::vector<WALRecord> records;
   ASSERT_TRUE(wal.Replay([&records](const WALRecord& r) {
-    records.push_back(r);
-    return true;
-  }).ok());
+                   records.push_back(r);
+                   return true;
+                 })
+                  .ok());
 
   EXPECT_EQ(records.size(), 10);
   for (size_t i = 0; i < records.size(); ++i) {
@@ -125,17 +124,13 @@ TEST_F(WALPersisterTest, CrashRecovery) {
     ASSERT_TRUE(wal.Open(test_dir_).ok());
 
     for (uint64_t i = 1; i <= 5; ++i) {
-      ASSERT_TRUE(
-          wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-              .ok());
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
     }
     ASSERT_TRUE(wal.Sync().ok());
 
     // Append more without sync (simulating uncommitted writes)
     for (uint64_t i = 6; i <= 8; ++i) {
-      ASSERT_TRUE(
-          wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-              .ok());
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
     }
 
     // Close without final sync - simulates crash
@@ -155,9 +150,10 @@ TEST_F(WALPersisterTest, CrashRecovery) {
 
     int count = 0;
     ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-      count++;
-      return true;
-    }).ok());
+                     count++;
+                     return true;
+                   })
+                    .ok());
     EXPECT_GE(count, 5);
 
     wal.Close();
@@ -174,14 +170,12 @@ TEST_F(WALPersisterTest, SegmentRotationByCount) {
   // Append many entries to trigger rotation
   // kMaxSegmentEntries = 10000, so we need to append > 10000
   for (uint64_t i = 1; i <= 15000; ++i) {
-    ASSERT_TRUE(
-        wal.AppendLogEntry(MakeEntry(i, 1, "x")).ok());
+    ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "x")).ok());
   }
 
   // Check that multiple segments exist
   int segment_count = 0;
-  for (const auto& entry :
-       std::filesystem::directory_iterator(test_dir_)) {
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     if (entry.is_regular_file() && entry.path().extension() == ".wal") {
       segment_count++;
     }
@@ -191,9 +185,10 @@ TEST_F(WALPersisterTest, SegmentRotationByCount) {
   // Verify all entries are recoverable
   int replay_count = 0;
   ASSERT_TRUE(wal.Replay([&replay_count](const WALRecord&) {
-    replay_count++;
-    return true;
-  }).ok());
+                   replay_count++;
+                   return true;
+                 })
+                  .ok());
   EXPECT_EQ(replay_count, 15000);
 
   auto range = wal.GetLogRange();
@@ -211,9 +206,7 @@ TEST_F(WALPersisterTest, TruncatePrefix) {
   ASSERT_TRUE(wal.Open(test_dir_).ok());
 
   for (uint64_t i = 1; i <= 10; ++i) {
-    ASSERT_TRUE(
-        wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-            .ok());
+    ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
   }
 
   // Truncate entries before index 5
@@ -226,11 +219,12 @@ TEST_F(WALPersisterTest, TruncatePrefix) {
   // Verify via replay
   int count = 0;
   ASSERT_TRUE(wal.Replay([&count](const WALRecord& r) {
-    if (r.type == WALRecordType::kLogEntry) {
-      count++;
-    }
-    return true;
-  }).ok());
+                   if (r.type == WALRecordType::kLogEntry) {
+                     count++;
+                   }
+                   return true;
+                 })
+                  .ok());
   // 10 entries + 1 truncate prefix record
   EXPECT_EQ(count, 10);
 
@@ -245,9 +239,7 @@ TEST_F(WALPersisterTest, TruncateSuffix) {
   ASSERT_TRUE(wal.Open(test_dir_).ok());
 
   for (uint64_t i = 1; i <= 10; ++i) {
-    ASSERT_TRUE(
-        wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-            .ok());
+    ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
   }
 
   // Truncate from index 7 onwards
@@ -273,8 +265,7 @@ TEST_F(WALPersisterTest, GarbageCollect) {
   }
 
   int segments_before = 0;
-  for (const auto& entry :
-       std::filesystem::directory_iterator(test_dir_)) {
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     if (entry.is_regular_file() && entry.path().extension() == ".wal") {
       segments_before++;
     }
@@ -285,8 +276,7 @@ TEST_F(WALPersisterTest, GarbageCollect) {
   ASSERT_TRUE(wal.GarbageCollect(15000).ok());
 
   int segments_after = 0;
-  for (const auto& entry :
-       std::filesystem::directory_iterator(test_dir_)) {
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     if (entry.is_regular_file() && entry.path().extension() == ".wal") {
       segments_after++;
     }
@@ -313,17 +303,14 @@ TEST_F(WALPersisterTest, CorruptionDetection) {
     ASSERT_TRUE(wal.Open(test_dir_).ok());
 
     for (uint64_t i = 1; i <= 5; ++i) {
-      ASSERT_TRUE(
-          wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-              .ok());
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
     }
     ASSERT_TRUE(wal.Sync().ok());
     wal.Close();
   }
 
   // Corrupt the segment file
-  for (const auto& entry :
-       std::filesystem::directory_iterator(test_dir_)) {
+  for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     if (entry.is_regular_file() && entry.path().extension() == ".wal") {
       // Read file
       std::ifstream in(entry.path(), std::ios::binary);
@@ -372,8 +359,7 @@ TEST_F(WALPersisterTest, ConcurrentAppend) {
     threads.emplace_back([&, t]() {
       for (int i = 0; i < kEntriesPerThread; ++i) {
         uint64_t index = t * kEntriesPerThread + i + 1;
-        auto status =
-            wal.AppendLogEntry(MakeEntry(index, 1, "thread" + std::to_string(t)));
+        auto status = wal.AppendLogEntry(MakeEntry(index, 1, "thread" + std::to_string(t)));
         ASSERT_TRUE(status.ok());
       }
     });
@@ -390,9 +376,10 @@ TEST_F(WALPersisterTest, ConcurrentAppend) {
   // Verify all entries via replay
   int count = 0;
   ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-    count++;
-    return true;
-  }).ok());
+                   count++;
+                   return true;
+                 })
+                  .ok());
   EXPECT_EQ(count, kNumThreads * kEntriesPerThread);
 
   wal.Close();
@@ -406,8 +393,7 @@ TEST_F(WALPersisterTest, ReopenPreservesData) {
     WALPersister wal;
     ASSERT_TRUE(wal.Open(test_dir_).ok());
     for (uint64_t i = 1; i <= 20; ++i) {
-      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i)))
-                      .ok());
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data" + std::to_string(i))).ok());
     }
     ASSERT_TRUE(wal.Sync().ok());
     wal.Close();
@@ -423,9 +409,10 @@ TEST_F(WALPersisterTest, ReopenPreservesData) {
 
     int count = 0;
     ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-      count++;
-      return true;
-    }).ok());
+                     count++;
+                     return true;
+                   })
+                    .ok());
     EXPECT_EQ(count, 20);
 
     wal.Close();
@@ -451,8 +438,7 @@ TEST_F(WALPersisterTest, CheckpointCreatedOnCloseAndUsedOnReopen) {
   bool found_checkpoint = false;
   for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     std::string name = entry.path().filename().string();
-    if (name.rfind("checkpoint.", 0) == 0 &&
-        name.size() > std::string("checkpoint.").size() + 4 &&
+    if (name.rfind("checkpoint.", 0) == 0 && name.size() > std::string("checkpoint.").size() + 4 &&
         name.substr(name.size() - 4) == ".idx") {
       found_checkpoint = true;
       break;
@@ -470,9 +456,10 @@ TEST_F(WALPersisterTest, CheckpointCreatedOnCloseAndUsedOnReopen) {
 
     int count = 0;
     ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-      count++;
-      return true;
-    }).ok());
+                     count++;
+                     return true;
+                   })
+                    .ok());
     EXPECT_EQ(count, 60000);
 
     wal.Close();
@@ -497,8 +484,7 @@ TEST_F(WALPersisterTest, CorruptedCheckpointFallsBack) {
   for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     std::string path = entry.path().string();
     std::string name = entry.path().filename().string();
-    if (name.rfind("checkpoint.", 0) == 0 &&
-        name.substr(name.size() - 4) == ".idx") {
+    if (name.rfind("checkpoint.", 0) == 0 && name.substr(name.size() - 4) == ".idx") {
       std::ofstream fs(path, std::ios::in | std::ios::out | std::ios::binary);
       ASSERT_TRUE(fs.is_open());
       fs.seekp(8, std::ios::beg);
@@ -517,9 +503,10 @@ TEST_F(WALPersisterTest, CorruptedCheckpointFallsBack) {
 
     int count = 0;
     ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-      count++;
-      return true;
-    }).ok());
+                     count++;
+                     return true;
+                   })
+                    .ok());
     EXPECT_EQ(count, 60000);
 
     wal.Close();
@@ -547,8 +534,7 @@ TEST_F(WALPersisterTest, GarbageCollectRemovesOldCheckpoints) {
   size_t checkpoints_before = 0;
   for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     std::string name = entry.path().filename().string();
-    if (name.rfind("checkpoint.", 0) == 0 &&
-        name.substr(name.size() - 4) == ".idx") {
+    if (name.rfind("checkpoint.", 0) == 0 && name.substr(name.size() - 4) == ".idx") {
       ++checkpoints_before;
     }
   }
@@ -565,8 +551,7 @@ TEST_F(WALPersisterTest, GarbageCollectRemovesOldCheckpoints) {
   size_t checkpoints_after = 0;
   for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     std::string name = entry.path().filename().string();
-    if (name.rfind("checkpoint.", 0) == 0 &&
-        name.substr(name.size() - 4) == ".idx") {
+    if (name.rfind("checkpoint.", 0) == 0 && name.substr(name.size() - 4) == ".idx") {
       ++checkpoints_after;
     }
   }
@@ -582,9 +567,10 @@ TEST_F(WALPersisterTest, GarbageCollectRemovesOldCheckpoints) {
 
     int count = 0;
     ASSERT_TRUE(wal.Replay([&count](const WALRecord&) {
-      count++;
-      return true;
-    }).ok());
+                     count++;
+                     return true;
+                   })
+                    .ok());
     EXPECT_EQ(count, static_cast<int>(range.second - range.first + 1));
 
     wal.Close();

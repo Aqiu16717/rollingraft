@@ -51,8 +51,7 @@ class HybridPersister : public Persister {
 
   Status AppendEntries(const std::vector<RaftLogEntry>& entries) override;
   Status Sync() override;
-  Status GetEntries(uint64_t start, uint64_t end,
-                    std::vector<RaftLogEntry>* out) override;
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override;
   Status GetEntry(uint64_t index, RaftLogEntry& entry) override;
   Status TruncateSuffix(uint64_t from_index) override;
   Status TruncatePrefix(uint64_t before_index) override;
@@ -62,12 +61,10 @@ class HybridPersister : public Persister {
                       uint64_t last_term) override;
   Status LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
                       uint64_t& last_term) override;
-  Status SaveSnapshotStream(
-      const std::function<bool(std::string& chunk)>& chunk_provider,
-      uint64_t last_index, uint64_t last_term) override;
-  Status LoadSnapshotStream(
-      const std::function<void(const std::string& chunk)>& chunk_consumer,
-      uint64_t& last_index, uint64_t& last_term) override;
+  Status SaveSnapshotStream(const std::function<bool(std::string& chunk)>& chunk_provider,
+                            uint64_t last_index, uint64_t last_term) override;
+  Status LoadSnapshotStream(const std::function<void(const std::string& chunk)>& chunk_consumer,
+                            uint64_t& last_index, uint64_t& last_term) override;
   bool HasSnapshot() const override;
 
  private:

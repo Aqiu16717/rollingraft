@@ -14,11 +14,9 @@ bool RaftNode::RaftNodeImpl::ShouldEnterQuiescedLocked() const {
   if (quiesced_.load(std::memory_order_acquire)) return false;
 
   auto now = std::chrono::steady_clock::now();
-  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     now - last_activity_time_)
-                     .count();
-  return elapsed >= 0 &&
-         static_cast<uint32_t>(elapsed) >= config_.quiesced_idle_threshold_ms;
+  auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - last_activity_time_).count();
+  return elapsed >= 0 && static_cast<uint32_t>(elapsed) >= config_.quiesced_idle_threshold_ms;
 }
 
 void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
@@ -29,11 +27,10 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
            config_.quiesced_idle_threshold_ms);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_quiesced_mode_entered_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_quiesced_mode_entered_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_quiesced_mode_active",
-                       {{"node_id", std::to_string(server_id_)}})
+    metrics_->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
         .Set(1.0);
   }
 
@@ -41,9 +38,9 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
   if (role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
-    heartbeat_timer_ = timer_->SetInterval(
-        std::chrono::milliseconds(config_.quiesced_heartbeat_interval_ms),
-        [this]() { OnHeartbeatTimeout(); });
+    heartbeat_timer_ =
+        timer_->SetInterval(std::chrono::milliseconds(config_.quiesced_heartbeat_interval_ms),
+                            [this]() { OnHeartbeatTimeout(); });
   }
 }
 
@@ -54,11 +51,10 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
   LOG_INFO("Node {} exited quiesced mode", server_id_);
 
   if (metrics_) {
-    metrics_->GetCounter("raft_quiesced_mode_exited_total",
-                         {{"node_id", std::to_string(server_id_)}})
+    metrics_
+        ->GetCounter("raft_quiesced_mode_exited_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_quiesced_mode_active",
-                       {{"node_id", std::to_string(server_id_)}})
+    metrics_->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
         .Set(0.0);
   }
 
@@ -67,8 +63,7 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
     auto cfg = runtime_config_->Get();
-    heartbeat_timer_ = timer_->SetInterval(
-        std::chrono::milliseconds(cfg.heartbeat_interval_ms),
-        [this]() { OnHeartbeatTimeout(); });
+    heartbeat_timer_ = timer_->SetInterval(std::chrono::milliseconds(cfg.heartbeat_interval_ms),
+                                           [this]() { OnHeartbeatTimeout(); });
   }
 }

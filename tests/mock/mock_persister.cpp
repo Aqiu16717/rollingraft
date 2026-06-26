@@ -40,8 +40,7 @@ Status MockPersister::Sync() {
   return Status::OK();
 }
 
-Status MockPersister::GetEntries(uint64_t start, uint64_t end,
-                                 std::vector<RaftLogEntry>* out) {
+Status MockPersister::GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) {
   std::lock_guard<std::mutex> lock(mutex_);
   out->clear();
   for (uint64_t i = start; i < end; ++i) {
@@ -98,8 +97,8 @@ std::pair<uint64_t, uint64_t> MockPersister::GetLastLogInfo() {
   return {last.index_, last.term_};
 }
 
-Status MockPersister::SaveSnapshot(const std::string& snapshot_data,
-                                   uint64_t last_index, uint64_t last_term) {
+Status MockPersister::SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
+                                   uint64_t last_term) {
   if (CheckFailure()) return Status::Error(failure_msg_);
   std::lock_guard<std::mutex> lock(mutex_);
   snapshot_data_ = snapshot_data;
@@ -108,8 +107,8 @@ Status MockPersister::SaveSnapshot(const std::string& snapshot_data,
   return Status::OK();
 }
 
-Status MockPersister::LoadSnapshot(std::string& snapshot_data,
-                                   uint64_t& last_index, uint64_t& last_term) {
+Status MockPersister::LoadSnapshot(std::string& snapshot_data, uint64_t& last_index,
+                                   uint64_t& last_term) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (snapshot_data_.empty()) {
     return Status::Error("No snapshot");
@@ -125,9 +124,7 @@ bool MockPersister::HasSnapshot() const {
   return !snapshot_data_.empty();
 }
 
-void MockPersister::InjectFailure(const std::string& error_msg) {
-  failure_msg_ = error_msg;
-}
+void MockPersister::InjectFailure(const std::string& error_msg) { failure_msg_ = error_msg; }
 
 void MockPersister::ClearFailure() { failure_msg_.clear(); }
 

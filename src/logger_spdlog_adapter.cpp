@@ -16,8 +16,7 @@ using namespace rollingraft;
 
 class SpdlogAdapter::Impl {
  public:
-  Impl()
-      : logger_(spdlog::basic_logger_mt("rollingraft_logger", "rollingraft.log")) {
+  Impl() : logger_(spdlog::basic_logger_mt("rollingraft_logger", "rollingraft.log")) {
     logger_->set_level(spdlog::level::info);
   }
   ~Impl() { spdlog::drop("rollingraft_logger"); }
@@ -106,20 +105,25 @@ class SpdlogAdapter::Impl {
  private:
   static std::string LevelToString(LogLevel level) {
     switch (level) {
-      case LogLevel::TRACE: return "TRACE";
-      case LogLevel::DEBUG: return "DEBUG";
-      case LogLevel::INFO: return "INFO";
-      case LogLevel::WARN: return "WARN";
-      case LogLevel::ERROR: return "ERROR";
-      case LogLevel::FATAL: return "FATAL";
+      case LogLevel::TRACE:
+        return "TRACE";
+      case LogLevel::DEBUG:
+        return "DEBUG";
+      case LogLevel::INFO:
+        return "INFO";
+      case LogLevel::WARN:
+        return "WARN";
+      case LogLevel::ERROR:
+        return "ERROR";
+      case LogLevel::FATAL:
+        return "FATAL";
     }
     return "UNKNOWN";
   }
 
   static std::string Iso8601Now() {
     auto now = std::chrono::system_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now.time_since_epoch()) % 1000;
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     std::tm tm_utc = *std::gmtime(&time_t_now);
     std::ostringstream oss;
@@ -139,17 +143,30 @@ class SpdlogAdapter::Impl {
     oss << ",\"message\":\"";
     for (char c : message) {
       switch (c) {
-        case '"': oss << "\\\""; break;
-        case '\\': oss << "\\\\"; break;
-        case '\b': oss << "\\b"; break;
-        case '\f': oss << "\\f"; break;
-        case '\n': oss << "\\n"; break;
-        case '\r': oss << "\\r"; break;
-        case '\t': oss << "\\t"; break;
+        case '"':
+          oss << "\\\"";
+          break;
+        case '\\':
+          oss << "\\\\";
+          break;
+        case '\b':
+          oss << "\\b";
+          break;
+        case '\f':
+          oss << "\\f";
+          break;
+        case '\n':
+          oss << "\\n";
+          break;
+        case '\r':
+          oss << "\\r";
+          break;
+        case '\t':
+          oss << "\\t";
+          break;
         default:
           if (static_cast<unsigned char>(c) < 0x20) {
-            oss << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                << static_cast<int>(c);
+            oss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
           } else {
             oss << c;
           }
@@ -168,9 +185,7 @@ SpdlogAdapter::SpdlogAdapter() : impl_(std::make_unique<Impl>()) {}
 
 SpdlogAdapter::~SpdlogAdapter() = default;
 
-void SpdlogAdapter::Log(LogLevel level, const std::string& message) {
-  impl_->Log(level, message);
-}
+void SpdlogAdapter::Log(LogLevel level, const std::string& message) { impl_->Log(level, message); }
 
 LogLevel SpdlogAdapter::GetLogLevel() const { return impl_->GetLogLevel(); }
 

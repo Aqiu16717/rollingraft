@@ -37,11 +37,9 @@ class ScenarioRegistry {
 };
 
 // Macro for scenario self-registration
-#define REGISTER_SCENARIO(name, factory)                     \
-  struct ScenarioRegistrar_##name {                          \
-    ScenarioRegistrar_##name() {                             \
-      ScenarioRegistry::Instance().Register(#name, factory); \
-    }                                                        \
+#define REGISTER_SCENARIO(name, factory)                                                  \
+  struct ScenarioRegistrar_##name {                                                       \
+    ScenarioRegistrar_##name() { ScenarioRegistry::Instance().Register(#name, factory); } \
   } scenario_registrar_##name;
 
 }  // namespace rollingraft

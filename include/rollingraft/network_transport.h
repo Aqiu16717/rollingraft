@@ -11,9 +11,10 @@
 
 #include <chrono>
 #include <functional>
+#include <string>
+
 #include <rollingraft/status.h>
 #include <rollingraft/types.h>
-#include <string>
 
 namespace rollingraft {
 
@@ -24,9 +25,8 @@ namespace rollingraft {
  * @param success Whether the RPC succeeded
  * @param error_msg Error message if failed
  */
-using RpcResponseCallback =
-    std::function<void(const std::string& response_data, bool success,
-                       const std::string& error_msg)>;
+using RpcResponseCallback = std::function<void(const std::string& response_data, bool success,
+                                               const std::string& error_msg)>;
 
 /**
  * Handler for incoming RPC requests.
@@ -35,8 +35,8 @@ using RpcResponseCallback =
  * @param request_data Serialized request data
  * @param response_data Output buffer for response (to be serialized)
  */
-using RpcRequestHandler = std::function<void(
-    NodeId from, const std::string& request_data, std::string& response_data)>;
+using RpcRequestHandler =
+    std::function<void(NodeId from, const std::string& request_data, std::string& response_data)>;
 
 /**
  * Callback for connection state changes.
@@ -71,8 +71,7 @@ class NetworkTransport {
    * @param handler Callback for handling received RPC requests
    * @return Status::OK() on success
    */
-  virtual Status Initialize(const NodeAddr& listen_addr,
-                            RpcRequestHandler handler) = 0;
+  virtual Status Initialize(const NodeAddr& listen_addr, RpcRequestHandler handler) = 0;
 
   /**
    * Set connection state callback (optional).
@@ -91,8 +90,7 @@ class NetworkTransport {
    *
    * @param callback Function to call on peer state changes
    */
-  virtual void SetPeerStateCallback(
-      std::function<void(NodeId, int)> callback) {
+  virtual void SetPeerStateCallback(std::function<void(NodeId, int)> callback) {
     (void)callback;  // Default no-op
   }
 
@@ -142,9 +140,8 @@ class NetworkTransport {
    * @param timeout Maximum time to wait for response
    * @param callback Callback for response or error
    */
-  virtual void SendRpc(NodeId to, const NodeAddr& addr,
-                       const std::string& request_data, uint64_t correlation_id,
-                       std::chrono::milliseconds timeout,
+  virtual void SendRpc(NodeId to, const NodeAddr& addr, const std::string& request_data,
+                       uint64_t correlation_id, std::chrono::milliseconds timeout,
                        RpcResponseCallback callback) = 0;
 };
 

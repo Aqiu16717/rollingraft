@@ -96,17 +96,13 @@ struct ClusterConfig {
    * Get the majority size for the current (new) configuration.
    * @return Number of nodes needed for quorum (nodes/2 + 1)
    */
-  uint32_t GetMajority() const {
-    return static_cast<uint32_t>(nodes.size()) / 2 + 1;
-  }
+  uint32_t GetMajority() const { return static_cast<uint32_t>(nodes.size()) / 2 + 1; }
 
   /**
    * Get the majority size for the old configuration (joint mode only).
    * @return Number of nodes needed for old quorum
    */
-  uint32_t GetOldMajority() const {
-    return static_cast<uint32_t>(old_nodes.size()) / 2 + 1;
-  }
+  uint32_t GetOldMajority() const { return static_cast<uint32_t>(old_nodes.size()) / 2 + 1; }
 
   /**
    * Check if both old and new majorities are satisfied.
@@ -140,26 +136,22 @@ struct RaftNodeConfig {
   NodeId node_id;                  // Unique node identifier
   std::string listen_addr;         // Address to listen on, e.g., "0.0.0.0:8001"
   std::vector<std::string> peers;  // Addresses of peer nodes
-  std::vector<NodeId> peer_node_ids;  // Optional: explicit node IDs for peers (must match peers.size() if set)
-  std::string data_dir;            // Directory for persistent storage
+  std::vector<NodeId>
+      peer_node_ids;     // Optional: explicit node IDs for peers (must match peers.size() if set)
+  std::string data_dir;  // Directory for persistent storage
 
   // Timing parameters
-  uint32_t election_timeout_ms =
-      300;  // Base election timeout (randomized 1x-2x)
-  uint32_t heartbeat_interval_ms =
-      50;  // Leader heartbeat interval (faster for quick replication)
+  uint32_t election_timeout_ms = 300;   // Base election timeout (randomized 1x-2x)
+  uint32_t heartbeat_interval_ms = 50;  // Leader heartbeat interval (faster for quick replication)
   uint32_t max_entries_per_append = 100;  // Max entries per AppendEntries RPC
 
   // Auto-snapshot configuration
-  uint32_t snapshot_threshold_entries =
-      10000;  // Entries since last snapshot to trigger
+  uint32_t snapshot_threshold_entries = 10000;  // Entries since last snapshot to trigger
   uint32_t snapshot_threshold_bytes =
-      10 * 1024 * 1024;  // Bytes since last snapshot to trigger (10MB)
-  uint32_t snapshot_check_interval_ms =
-      5000;  // How often to check (leader only)
+      10 * 1024 * 1024;                        // Bytes since last snapshot to trigger (10MB)
+  uint32_t snapshot_check_interval_ms = 5000;  // How often to check (leader only)
 
-  uint32_t rpc_timeout_ms =
-      500;  // RPC call timeout (shorter for faster fail detection)
+  uint32_t rpc_timeout_ms = 500;      // RPC call timeout (shorter for faster fail detection)
   uint32_t max_retry_attempts = 5;    // Max retry attempts for AppendEntries
   uint32_t base_retry_delay_ms = 10;  // Base delay for exponential backoff
   uint32_t max_retry_delay_ms = 500;  // Max retry delay
@@ -258,8 +250,7 @@ struct RaftNodeConfig {
  * @return String representation ("Follower", "Candidate", or "Leader")
  */
 inline const char* RaftNodeRoleToString(RaftNodeRole role) {
-  constexpr static const char* role_str[RaftNodeRoleEnd] = {
-      "Follower", "Candidate", "Leader"};
+  constexpr static const char* role_str[RaftNodeRoleEnd] = {"Follower", "Candidate", "Leader"};
   assert(role >= FOLLOWER && role < RaftNodeRoleEnd);
   return role_str[role];
 }
@@ -326,8 +317,7 @@ class RaftNode {
    *
    * @param callback Function called on role change (role, term)
    */
-  void SetRoleChangeCallback(
-      std::function<void(RaftNodeRole role, Term term)> callback);
+  void SetRoleChangeCallback(std::function<void(RaftNodeRole role, Term term)> callback);
 
   /**
    * Set callback for leader changes.
@@ -357,8 +347,7 @@ class RaftNode {
    *       cached result immediately without re-executing
    */
   Status Propose(const std::string& command,
-                 std::function<void(const ApplyResult& result)> callback,
-                 uint64_t session_id = 0,
+                 std::function<void(const ApplyResult& result)> callback, uint64_t session_id = 0,
                  uint64_t seq_num = 0);
 
   /**
@@ -375,9 +364,8 @@ class RaftNode {
    * @return Status::OK() if batch was accepted (not yet applied)
    * @note Callback is called asynchronously from a different thread
    */
-  Status ProposeBatch(
-      const std::vector<std::string>& commands,
-      std::function<void(const std::vector<ApplyResult>& results)> callback);
+  Status ProposeBatch(const std::vector<std::string>& commands,
+                      std::function<void(const std::vector<ApplyResult>& results)> callback);
 
   /**
    * Perform a linearizable read.

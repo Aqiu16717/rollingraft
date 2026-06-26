@@ -3,9 +3,9 @@
  * @brief Unit tests for the agent-friendly event notification system
  */
 
-#include <gtest/gtest.h>
-
 #include "rollingraft/event.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 
@@ -40,8 +40,7 @@ TEST(EventBusTest, SubscribeAllReceivesAllEvents) {
   EventBus bus;
   int event_count = 0;
 
-  auto id = bus.SubscribeAll(
-      [&event_count](const RaftEvent& /*e*/) { ++event_count; });
+  auto id = bus.SubscribeAll([&event_count](const RaftEvent& /*e*/) { ++event_count; });
 
   bus.Publish(NodeRoleChangedEvent{});
   bus.Publish(LeaderChangedEvent{});
@@ -58,14 +57,10 @@ TEST(EventBusTest, TypedSubscriberDoesNotReceiveOtherTypes) {
   int leader_change_count = 0;
 
   auto id1 = bus.Subscribe<NodeRoleChangedEvent>(
-      [&role_change_count](const NodeRoleChangedEvent& /*e*/) {
-        ++role_change_count;
-      });
+      [&role_change_count](const NodeRoleChangedEvent& /*e*/) { ++role_change_count; });
 
   auto id2 = bus.Subscribe<LeaderChangedEvent>(
-      [&leader_change_count](const LeaderChangedEvent& /*e*/) {
-        ++leader_change_count;
-      });
+      [&leader_change_count](const LeaderChangedEvent& /*e*/) { ++leader_change_count; });
 
   bus.Publish(NodeRoleChangedEvent{});
   bus.Publish(NodeRoleChangedEvent{});
@@ -137,8 +132,7 @@ TEST(EventBusTest, WildcardAndTypedBothReceive) {
   auto id1 = bus.Subscribe<NodeRoleChangedEvent>(
       [&typed_count](const NodeRoleChangedEvent& /*e*/) { ++typed_count; });
 
-  auto id2 = bus.SubscribeAll(
-      [&wildcard_count](const RaftEvent& /*e*/) { ++wildcard_count; });
+  auto id2 = bus.SubscribeAll([&wildcard_count](const RaftEvent& /*e*/) { ++wildcard_count; });
 
   bus.Publish(NodeRoleChangedEvent{});
 

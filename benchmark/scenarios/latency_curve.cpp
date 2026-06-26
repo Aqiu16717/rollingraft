@@ -53,8 +53,7 @@ class LatencyCurveScenario : public ClusterBenchmark {
     std::map<int, BenchmarkStats> results;
 
     for (int target : target_throughputs) {
-      std::cout << "\nTesting at target throughput: " << target << " ops/sec"
-                << std::endl;
+      std::cout << "\nTesting at target throughput: " << target << " ops/sec" << std::endl;
 
       auto delay_between_ops = std::chrono::microseconds(1000000 / target);
       auto start_time = std::chrono::steady_clock::now();
@@ -80,9 +79,8 @@ class LatencyCurveScenario : public ClusterBenchmark {
         auto op_end = std::chrono::steady_clock::now();
         last_op_time = op_start;
 
-        auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                              op_end - op_start)
-                              .count();
+        auto latency_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(op_end - op_start).count();
         latencies.push_back(static_cast<double>(latency_us));
 
         if (status.ok()) {
@@ -94,20 +92,18 @@ class LatencyCurveScenario : public ClusterBenchmark {
       }
 
       auto actual_end = std::chrono::steady_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-          actual_end - start_time);
+      auto duration =
+          std::chrono::duration_cast<std::chrono::milliseconds>(actual_end - start_time);
 
       BenchmarkStats stats;
       stats.total_operations = op_count;
       stats.success_count = success_count;
       stats.failure_count = failure_count;
-      stats.success_rate =
-          (op_count > 0) ? static_cast<double>(success_count) / op_count : 0.0;
+      stats.success_rate = (op_count > 0) ? static_cast<double>(success_count) / op_count : 0.0;
       stats.duration_ms = duration;
       stats.operations_per_second =
-          (duration.count() > 0)
-              ? (static_cast<double>(op_count) * 1000.0) / duration.count()
-              : 0.0;
+          (duration.count() > 0) ? (static_cast<double>(op_count) * 1000.0) / duration.count()
+                                 : 0.0;
 
       if (!latencies.empty()) {
         std::sort(latencies.begin(), latencies.end());
@@ -119,9 +115,7 @@ class LatencyCurveScenario : public ClusterBenchmark {
         stats.latency_avg_us = sum / latencies.size();
 
         auto percentile = [&](double p) -> double {
-          size_t idx =
-              static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) -
-              1;
+          size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
           if (idx >= latencies.size()) idx = latencies.size() - 1;
           return latencies[idx];
         };
@@ -130,12 +124,10 @@ class LatencyCurveScenario : public ClusterBenchmark {
         stats.latency_p999_us = percentile(99.9);
       }
 
-      std::cout << "  Actual throughput: " << stats.operations_per_second
-                << " ops/sec" << std::endl;
-      std::cout << "  P50 latency: " << stats.latency_p50_us << " us"
+      std::cout << "  Actual throughput: " << stats.operations_per_second << " ops/sec"
                 << std::endl;
-      std::cout << "  P99 latency: " << stats.latency_p99_us << " us"
-                << std::endl;
+      std::cout << "  P50 latency: " << stats.latency_p50_us << " us" << std::endl;
+      std::cout << "  P99 latency: " << stats.latency_p99_us << " us" << std::endl;
 
       results[target] = stats;
     }
@@ -153,7 +145,6 @@ class LatencyCurveScenario : public ClusterBenchmark {
   }
 };
 
-REGISTER_SCENARIO(latency_curve,
-                  []() { return std::make_unique<LatencyCurveScenario>(); });
+REGISTER_SCENARIO(latency_curve, []() { return std::make_unique<LatencyCurveScenario>(); });
 
 }  // namespace rollingraft

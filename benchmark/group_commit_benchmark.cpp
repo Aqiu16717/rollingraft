@@ -54,8 +54,7 @@ class SyntheticPersister : public Persister {
     return Status::OK();
   }
 
-  Status GetEntries(uint64_t start, uint64_t end,
-                    std::vector<RaftLogEntry>* out) override {
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override {
     std::lock_guard<std::mutex> lock(mutex_);
     out->clear();
     for (uint64_t i = start; i < end; ++i) {
@@ -107,13 +106,9 @@ static RaftLogEntry MakeEntry(uint64_t index, const std::string& data) {
   return entry;
 }
 
-static double Bench(LogPersistenceConfig::SyncPolicy policy,
-                    int entries,
-                    std::chrono::microseconds sync_latency,
-                    uint32_t interval_ms,
-                    size_t max_entries_per_sync,
-                    size_t batch_size,
-                    uint32_t batch_interval_ms) {
+static double Bench(LogPersistenceConfig::SyncPolicy policy, int entries,
+                    std::chrono::microseconds sync_latency, uint32_t interval_ms,
+                    size_t max_entries_per_sync, size_t batch_size, uint32_t batch_interval_ms) {
   auto raw_synthetic = std::make_shared<SyntheticPersister>(sync_latency);
   std::shared_ptr<Persister> synthetic = raw_synthetic;
 
@@ -153,30 +148,24 @@ static double Bench(LogPersistenceConfig::SyncPolicy policy,
     // Wait for all entries to be durably acknowledged.
     {
       std::unique_lock<std::mutex> lock(mutex);
-      cv.wait(lock, [&acked, entries] {
-        return acked.load(std::memory_order_acquire) >= entries;
-      });
+      cv.wait(lock, [&acked, entries] { return acked.load(std::memory_order_acquire) >= entries; });
     }
   }
   auto t1 = std::chrono::steady_clock::now();
 
   persister.Stop();
 
-  auto elapsed_ms =
-      std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() /
-      1000.0;
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
   double ops_per_sec = entries / (elapsed_ms / 1000.0);
 
-  std::cout << "| " << (policy == LogPersistenceConfig::SyncPolicy::kSyncEveryWrite
-                            ? "sync-every-write"
-                            : "group-commit")
+  std::cout << "| "
+            << (policy == LogPersistenceConfig::SyncPolicy::kSyncEveryWrite ? "sync-every-write"
+                                                                            : "group-commit")
             << " | " << entries << " | " << sync_latency.count() << " us"
             << " | " << interval_ms << " ms"
-            << " | " << max_entries_per_sync
-            << " | " << batch_size
-            << " | " << batch_interval_ms << " ms"
-            << " | " << raw_synthetic->SyncCount()
-            << " | " << std::fixed << elapsed_ms << " ms"
+            << " | " << max_entries_per_sync << " | " << batch_size << " | " << batch_interval_ms
+            << " ms"
+            << " | " << raw_synthetic->SyncCount() << " | " << std::fixed << elapsed_ms << " ms"
             << " | " << static_cast<int>(ops_per_sec) << " ops/s |\n";
 
   return ops_per_sec;
@@ -204,19 +193,17 @@ int main() {
   const size_t kGroupCommitMaxEntries = static_cast<size_t>(kEntries);
   const uint32_t kGroupCommitIntervalMs = 1000;  // rely on entry threshold
 
-  double every_write_ops = Bench(
-      LogPersistenceConfig::SyncPolicy::kSyncEveryWrite, kEntries, kSyncLatency,
-      0, 1, kFlushBatchSize, kFlushIntervalMs);
-  double group_commit_ops = Bench(
-      LogPersistenceConfig::SyncPolicy::kSyncAdaptive, kEntries, kSyncLatency,
-      kGroupCommitIntervalMs, kGroupCommitMaxEntries, kFlushBatchSize,
-      kFlushIntervalMs);
+  double every_write_ops = Bench(LogPersistenceConfig::SyncPolicy::kSyncEveryWrite, kEntries,
+                                 kSyncLatency, 0, 1, kFlushBatchSize, kFlushIntervalMs);
+  double group_commit_ops =
+      Bench(LogPersistenceConfig::SyncPolicy::kSyncAdaptive, kEntries, kSyncLatency,
+            kGroupCommitIntervalMs, kGroupCommitMaxEntries, kFlushBatchSize, kFlushIntervalMs);
 
   std::cout << "\n";
   if (every_write_ops > 0) {
     double ratio = group_commit_ops / every_write_ops;
-    std::cout << "Group commit throughput improvement: " << std::fixed
-              << std::setprecision(1) << ratio << "x\n";
+    std::cout << "Group commit throughput improvement: " << std::fixed << std::setprecision(1)
+              << ratio << "x\n";
     if (ratio >= 10.0) {
       std::cout << "✅ Meets >=10× target.\n";
     } else {

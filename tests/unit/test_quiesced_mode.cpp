@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
-
 #include "rollingraft/raft_node.h"
+
+#include <gtest/gtest.h>
 
 using namespace rollingraft;
 

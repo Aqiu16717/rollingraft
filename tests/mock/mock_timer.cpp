@@ -13,8 +13,7 @@ TimerId MockTimerService::SetTimeout(std::chrono::milliseconds delay,
                                      std::function<void()> callback) {
   std::lock_guard<std::mutex> lock(mutex_);
   TimerId id = next_id_++;
-  timers_[id] = {current_time_ + delay, std::chrono::milliseconds(0),
-                 std::move(callback), false};
+  timers_[id] = {current_time_ + delay, std::chrono::milliseconds(0), std::move(callback), false};
   return id;
 }
 
@@ -22,8 +21,7 @@ TimerId MockTimerService::SetInterval(std::chrono::milliseconds interval,
                                       std::function<void()> callback) {
   std::lock_guard<std::mutex> lock(mutex_);
   TimerId id = next_id_++;
-  timers_[id] = {current_time_ + interval, interval, std::move(callback),
-                 false};
+  timers_[id] = {current_time_ + interval, interval, std::move(callback), false};
   return id;
 }
 

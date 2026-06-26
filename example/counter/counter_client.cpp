@@ -26,9 +26,8 @@ struct ClientConfig {
 };
 
 // Calculate exponential backoff delay
-std::chrono::milliseconds CalculateBackoff(
-    int attempt, std::chrono::milliseconds initial,
-    std::chrono::milliseconds max_delay) {
+std::chrono::milliseconds CalculateBackoff(int attempt, std::chrono::milliseconds initial,
+                                           std::chrono::milliseconds max_delay) {
   // Exponential: 100ms, 200ms, 400ms, 800ms, 1000ms (capped)
   auto delay = initial * (1 << attempt);
   return std::min(delay, max_delay);
@@ -59,33 +58,30 @@ class CounterClient {
       // Check total timeout
       auto elapsed = std::chrono::steady_clock::now() - start_time;
       if (elapsed > config_.operation_timeout) {
-        std::cerr << "[Client] Operation timeout after "
-                  << config_.operation_timeout.count() << "ms" << std::endl;
+        std::cerr << "[Client] Operation timeout after " << config_.operation_timeout.count()
+                  << "ms" << std::endl;
         return;
       }
 
       rollingraft::ClientResponse resp;
-      std::string target_addr =
-          current_leader.empty() ? servers_[connect_idx_] : current_leader;
+      std::string target_addr = current_leader.empty() ? servers_[connect_idx_] : current_leader;
 
-      std::cout << "[Client] Sending '" << cmd << "' to " << target_addr
-                << " (attempt " << (attempt + 1) << "/" << config_.max_retries
-                << ")..." << std::endl;
+      std::cout << "[Client] Sending '" << cmd << "' to " << target_addr << " (attempt "
+                << (attempt + 1) << "/" << config_.max_retries << ")..." << std::endl;
 
       rollingraft::Status status = rollingraft::RpcCall(target_addr, req, resp);
 
       if (status.ok()) {
         if (resp.success) {
           // Success!
-          std::cout << "[Client] Success. Response: " << resp.response
-                    << std::endl;
+          std::cout << "[Client] Success. Response: " << resp.response << std::endl;
           current_leader = target_addr;  // Remember working leader
           return;
         } else {
           // Not leader - redirect
           if (!resp.leader_addr.empty()) {
-            std::cout << "[Client] Redirected to Leader: " << resp.leader_id
-                      << " (" << resp.leader_addr << ")" << std::endl;
+            std::cout << "[Client] Redirected to Leader: " << resp.leader_id << " ("
+                      << resp.leader_addr << ")" << std::endl;
             current_leader = resp.leader_addr;
             // Retry immediately with new leader
             continue;
@@ -96,12 +92,11 @@ class CounterClient {
         }
       } else {
         // Network error - retry with backoff
-        std::cerr << "[Client] RPC failed: " << status.GetMessage()
-                  << ", retrying in " << delay.count() << "ms..." << std::endl;
+        std::cerr << "[Client] RPC failed: " << status.GetMessage() << ", retrying in "
+                  << delay.count() << "ms..." << std::endl;
 
         std::this_thread::sleep_for(delay);
-        delay = CalculateBackoff(attempt + 1, config_.initial_retry_delay,
-                                 config_.max_retry_delay);
+        delay = CalculateBackoff(attempt + 1, config_.initial_retry_delay, config_.max_retry_delay);
 
         // Try next server if no known leader
         if (current_leader.empty()) {
@@ -131,8 +126,7 @@ class CounterClient {
 
 void PrintClientUsage(const char* prog) {
   std::cout << "Usage: " << prog << " <server1_addr> [server2_addr ...]\n";
-  std::cout << "Example: " << prog
-            << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n";
+  std::cout << "Example: " << prog << " 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003\n";
   std::cout << "Commands:\n";
   std::cout << "  inc       - Increment counter by 1\n";
   std::cout << "  dec       - Decrement counter by 1\n";
@@ -152,8 +146,7 @@ int main(int argc, char* argv[]) {
     server_addrs.push_back(argv[i]);
   }
 
-  std::cout << "[Client] Initialized with " << server_addrs.size()
-            << " nodes.\n";
+  std::cout << "[Client] Initialized with " << server_addrs.size() << " nodes.\n";
   std::cout << "[Client] Client ID will be auto-generated.\n";
 
   CounterClient client(server_addrs);

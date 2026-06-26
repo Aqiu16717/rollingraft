@@ -9,9 +9,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
+    libprotobuf-dev \
     libsnappy-dev \
     libssl-dev \
     pkg-config \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -38,6 +40,7 @@ FROM ubuntu:22.04 AS runtime
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
+    libprotobuf23 \
     libsnappy1v5 \
     libssl3 \
     curl \

@@ -86,3 +86,18 @@ TEST(MetricsTest, ThreadSafetyStress) {
 
   EXPECT_EQ(counter.GetValue(), 8000);
 }
+
+TEST(MetricsTest, RemoveGauge) {
+  MetricsRegistry registry;
+  registry.GetGauge("temperature", {{"room", "kitchen"}}).Set(25.0);
+  registry.GetGauge("temperature", {{"room", "bedroom"}}).Set(20.0);
+
+  std::string output = registry.FormatPrometheus();
+  EXPECT_NE(output.find("temperature{room=\"kitchen\"} 25"), std::string::npos);
+  EXPECT_NE(output.find("temperature{room=\"bedroom\"} 20"), std::string::npos);
+
+  registry.RemoveGauge("temperature", {{"room", "kitchen"}});
+  output = registry.FormatPrometheus();
+  EXPECT_EQ(output.find("temperature{room=\"kitchen\"}"), std::string::npos);
+  EXPECT_NE(output.find("temperature{room=\"bedroom\"} 20"), std::string::npos);
+}

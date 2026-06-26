@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "rollingraft/log_persister.h"
+#include "rollingraft/metrics.h"
 #include "rollingraft/status.h"
 
 namespace rollingraft {
@@ -310,6 +311,34 @@ TEST_F(GroupCommitControllerTest, SyncEveryWriteNeverBackgroundSyncs) {
 
   auto now = steady_clock::now();
   EXPECT_FALSE(controller.ShouldSyncNow(now));
+}
+
+TEST_F(GroupCommitControllerTest, MetricsExposePendingAndUnsynced) {
+  MetricsRegistry metrics;
+  auto config = MakeConfig(LogPersistenceConfig::SyncPolicy::kSyncAdaptive,
+                           1000, 1000, 1024 * 1024);
+  GroupCommitController controller(config, &metrics);
+
+  Status error;
+  std::vector<GroupCommitController::DurableCallback> callbacks;
+  controller.RegisterFlushedBatch(7, 1234, callbacks, error);
+  controller.RegisterFlushedBatch(3, 567, callbacks, error);
+
+  auto output = metrics.FormatPrometheus();
+  EXPECT_NE(output.find("raft_group_commit_pending_epochs"), std::string::npos)
+      << output;
+  EXPECT_NE(output.find("raft_group_commit_unsynced_entries"), std::string::npos)
+      << output;
+
+  // Acquire the full range and complete the sync.
+  auto range = controller.AcquireSyncRange();
+  ASSERT_TRUE(range.has_value());
+  controller.OnSyncSuccess(range->second);
+
+  output = metrics.FormatPrometheus();
+  EXPECT_NE(output.find("raft_group_commit_unsynced_entries 0"),
+            std::string::npos)
+      << output;
 }
 
 }  // namespace rollingraft

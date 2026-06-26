@@ -124,6 +124,18 @@ class MetricsRegistry {
       const std::string& name, const std::vector<double>& buckets,
       const std::map<std::string, std::string>& labels = {});
 
+  /** Remove a previously registered counter (no-op if absent). */
+  void RemoveCounter(const std::string& name,
+                     const std::map<std::string, std::string>& labels = {});
+
+  /** Remove a previously registered gauge (no-op if absent). */
+  void RemoveGauge(const std::string& name,
+                   const std::map<std::string, std::string>& labels = {});
+
+  /** Remove a previously registered histogram (no-op if absent). */
+  void RemoveHistogram(const std::string& name,
+                       const std::map<std::string, std::string>& labels = {});
+
   std::string FormatPrometheus() const;
 
  private:

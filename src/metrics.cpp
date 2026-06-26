@@ -47,6 +47,27 @@ Histogram& MetricsRegistry::GetHistogram(
   return ref;
 }
 
+void MetricsRegistry::RemoveCounter(
+    const std::string& name,
+    const std::map<std::string, std::string>& labels) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  counters_.erase(MetricKey{name, labels});
+}
+
+void MetricsRegistry::RemoveGauge(
+    const std::string& name,
+    const std::map<std::string, std::string>& labels) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  gauges_.erase(MetricKey{name, labels});
+}
+
+void MetricsRegistry::RemoveHistogram(
+    const std::string& name,
+    const std::map<std::string, std::string>& labels) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  histograms_.erase(MetricKey{name, labels});
+}
+
 static std::string FormatLabels(
     const std::map<std::string, std::string>& labels) {
   if (labels.empty()) return "";

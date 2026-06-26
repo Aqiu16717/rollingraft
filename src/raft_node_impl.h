@@ -203,6 +203,10 @@ class RaftNode::RaftNodeImpl {
   uint64_t GetLogTermLocked(uint64_t index);
   static NodeId ParseNodeId(const NodeAddr& addr);
 
+  // Metrics helpers (must hold appropriate locks; see design-metrics.md)
+  void UpdateLeaderLeaseMetricLocked();
+  void SetPeerReplicationLagMetricLocked(NodeId peer_id);
+
   // Membership change
   void ApplyConfigChangeLocked(const std::string& cmd);
   void MaybeAutoPromoteLearnersLocked();
@@ -378,6 +382,10 @@ class RaftNode::RaftNodeImpl {
   // ========== Metrics ==========
   std::unique_ptr<MetricsRegistry> metrics_;
   std::unique_ptr<MetricsHttpServer> metrics_server_;
+
+  // Pre-built label map {"node_id": "<server_id_>"} to avoid repeated heap
+  // allocations on the hot path.
+  std::map<std::string, std::string> metrics_node_label_;
 
   // ========== Runtime Config ==========
   std::unique_ptr<RuntimeConfig> runtime_config_;

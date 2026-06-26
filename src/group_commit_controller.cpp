@@ -20,8 +20,14 @@ using std::chrono::steady_clock;
 
 }  // namespace
 
-GroupCommitController::GroupCommitController(const LogPersistenceConfig& config)
-    : config_(config), last_sync_time_(steady_clock::now()) {}
+GroupCommitController::GroupCommitController(
+    const LogPersistenceConfig& config,
+    MetricsRegistry* metrics,
+    const std::map<std::string, std::string>& metric_labels)
+    : config_(config),
+      metrics_(metrics),
+      metric_labels_(metric_labels),
+      last_sync_time_(steady_clock::now()) {}
 
 uint64_t GroupCommitController::RegisterFlushedBatch(
     size_t entry_count,
@@ -37,8 +43,13 @@ uint64_t GroupCommitController::RegisterFlushedBatch(
   }
 
   uint64_t epoch = next_epoch_++;
-  pending_.push_back(
-      PendingEpoch{epoch, entry_count, byte_size, std::move(callbacks)});
+  pending_.push_back(PendingEpoch{epoch,
+                                  entry_count,
+                                  byte_size,
+                                  steady_clock::now(),
+                                  std::move(callbacks)});
+
+  UpdateMetricsLocked();
 
   LOG_DEBUG("GroupCommit: registered epoch={}, entries={}, bytes={}, pending={}",
             epoch, entry_count, byte_size, pending_.size());
@@ -87,12 +98,21 @@ void GroupCommitController::OnSyncSuccess(uint64_t end_epoch) {
     sync_in_progress_end_ = 0;
     sync_requested_ = false;
 
+    auto now = steady_clock::now();
     while (!pending_.empty() && pending_.front().epoch <= end_epoch) {
       auto& front = pending_.front();
       durable_epoch_ = front.epoch;
       to_fire.emplace_back(std::move(front.callbacks), Status::OK());
+      // Measure lag for the oldest synced epoch.
+      if (metrics_) {
+        auto lag_ms = duration_cast<milliseconds>(now - front.flush_time).count();
+        metrics_->GetGauge("raft_group_commit_lag_ms", metric_labels_)
+            .Set(static_cast<double>(lag_ms));
+      }
       pending_.pop_front();
     }
+
+    UpdateMetricsLocked();
 
     LOG_DEBUG("GroupCommit: sync success up to epoch={}, durable_epoch={}",
               end_epoch, durable_epoch_);
@@ -132,6 +152,8 @@ void GroupCommitController::OnSyncFailure(uint64_t end_epoch, Status error) {
       to_fire.emplace_back(std::move(front.callbacks), error);
       pending_.pop_front();
     }
+
+    UpdateMetricsLocked();
   }
 
   for (auto& [callbacks, status] : to_fire) {
@@ -247,6 +269,21 @@ size_t GroupCommitController::UnsyncedByteCountLocked() const {
     total += p.byte_size;
   }
   return total;
+}
+
+void GroupCommitController::UpdateMetricsLocked() const {
+  if (!metrics_) {
+    return;
+  }
+  Stats stats;
+  stats.pending_epochs = pending_.size();
+  stats.unsynced_entries = UnsyncedEntryCountLocked();
+  stats.unsynced_bytes = UnsyncedByteCountLocked();
+
+  metrics_->GetGauge("raft_group_commit_pending_epochs", metric_labels_)
+      .Set(static_cast<double>(stats.pending_epochs));
+  metrics_->GetGauge("raft_group_commit_unsynced_entries", metric_labels_)
+      .Set(static_cast<double>(stats.unsynced_entries));
 }
 
 }  // namespace rollingraft

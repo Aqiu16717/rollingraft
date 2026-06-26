@@ -492,3 +492,71 @@ TEST_F(MetricsEndpointTest, MetricsShowTransportPeerState) {
   EXPECT_NE(output.find("raft_transport_peer_connected"), std::string::npos)
       << "Missing raft_transport_peer_connected gauge";
 }
+
+TEST_F(MetricsEndpointTest, MetricsShowLeaderLeaseValid) {
+  StartCluster();
+  WaitForLeader();
+
+  // Wait for the leader to collect quorum acks and establish a lease.
+  auto start = std::chrono::steady_clock::now();
+  bool found_valid = false;
+  while (std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::steady_clock::now() - start)
+             .count() < 3) {
+    for (int i = 0; i < 3; ++i) {
+      std::string out = FetchMetrics(metrics_addrs_[i]);
+      if (out.find("raft_leader_lease_valid") != std::string::npos) {
+        if (nodes_[i]->IsLeader() &&
+            out.find("raft_leader_lease_valid{node_id=\"" +
+                      std::to_string(i + 1) + "\"} 1") != std::string::npos) {
+          found_valid = true;
+          break;
+        }
+      }
+    }
+    if (found_valid) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  EXPECT_TRUE(found_valid) << "Leader never reported raft_leader_lease_valid=1";
+}
+
+TEST_F(MetricsEndpointTest, MetricsShowPeerLag) {
+  StartCluster();
+  WaitForLeader();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  int leader_idx = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (nodes_[i].get() == leader) leader_idx = i;
+  }
+  ASSERT_GE(leader_idx, 0);
+
+  // Propose a handful of commands to create replication lag lines.
+  for (int i = 0; i < 5; ++i) {
+    std::atomic<bool> done{false};
+    leader->Propose("peer_lag_cmd_" + std::to_string(i),
+                    [&done](const ApplyResult& result) { done = result.success; });
+    auto start = std::chrono::steady_clock::now();
+    while (!done && std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() - start)
+                            .count() < 3) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
+  EXPECT_NE(output.find("raft_transport_peer_lag_entries"), std::string::npos)
+      << "Missing raft_transport_peer_lag_entries gauge";
+
+  // Each follower should have a lag line.
+  for (int i = 0; i < 3; ++i) {
+    if (i == leader_idx) continue;
+    std::string label = "node_id=\"" + std::to_string(leader_idx + 1) +
+                        "\",peer_id=\"" + std::to_string(i + 1) + "\"";
+    EXPECT_NE(output.find(label), std::string::npos)
+        << "Missing peer lag line for peer " << (i + 1) << " in:\n" << output;
+  }
+}

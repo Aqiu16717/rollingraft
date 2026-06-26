@@ -59,7 +59,12 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
         ->GetGauge("raft_current_term",
                    {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(current_term_));
+    metrics_
+        ->GetGauge("raft_leader_lease_seconds",
+                   {{"node_id", std::to_string(server_id_)}})
+        .Set(0.0);
   }
+  UpdateLeaderLeaseMetricLocked();
   LOG_INFO("Node {} became Follower at term {}", server_id_, current_term_);
 }
 
@@ -162,6 +167,7 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
     (void)addr;
     next_index_[peer_id] = last_index + 1;
     match_index_[peer_id] = 0;
+    SetPeerReplicationLagMetricLocked(peer_id);
     quorum_acks_[peer_id] = now;
     last_contact_time_[peer_id] = now;
   }

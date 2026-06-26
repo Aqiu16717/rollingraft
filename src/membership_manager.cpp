@@ -136,6 +136,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
         if (role_ == RaftNodeRole::LEADER) {
           next_index_[id] = log_.GetLastLogInfo().first + 1;
           match_index_[id] = 0;
+          SetPeerReplicationLagMetricLocked(id);
         }
       }
 
@@ -198,6 +199,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
         if (role_ == RaftNodeRole::LEADER) {
           next_index_[id] = log_.GetLastLogInfo().first + 1;
           match_index_[id] = 0;
+          SetPeerReplicationLagMetricLocked(id);
         }
       }
 
@@ -226,6 +228,11 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     peer_map_.erase(id);
     next_index_.erase(id);
     match_index_.erase(id);
+    if (metrics_) {
+      auto labels = metrics_node_label_;
+      labels["peer_id"] = std::to_string(id);
+      metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
+    }
 
     peer_addrs_.erase(std::remove_if(peer_addrs_.begin(), peer_addrs_.end(),
                                      [id, this](const NodeAddr& a) {

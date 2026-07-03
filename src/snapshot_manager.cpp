@@ -5,48 +5,48 @@ using namespace rollingraft;
 constexpr size_t kSnapshotChunkSize = 64 * 1024;  // 64KB chunks
 
 void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
-  // PRECONDITION: snapshot_mtx_ is held by caller
-  if (snapshot_check_timer_ != 0) {
+  // PRECONDITION: group_->snapshot_mtx_ is held by caller
+  if (group_->snapshot_check_timer_ != 0) {
     return;  // Already running
   }
 
   auto cfg = infra_->runtime_config_->Get();
-  snapshot_check_timer_ =
+  group_->snapshot_check_timer_ =
       infra_->timer_->SetInterval(std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
                                   [this]() { MaybeTriggerAutoSnapshotLocked(); });
 
-  LOG_INFO("Node {} started auto-snapshot check (every {}ms)", server_id_,
+  LOG_INFO("Node {} started auto-snapshot check (every {}ms)", group_->server_id_,
            cfg.snapshot_check_interval_ms);
 }
 
 void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
-  // PRECONDITION: snapshot_mtx_ is held by caller
-  if (snapshot_check_timer_ != 0) {
-    infra_->timer_->CancelTimer(snapshot_check_timer_);
-    snapshot_check_timer_ = 0;
+  // PRECONDITION: group_->snapshot_mtx_ is held by caller
+  if (group_->snapshot_check_timer_ != 0) {
+    infra_->timer_->CancelTimer(group_->snapshot_check_timer_);
+    group_->snapshot_check_timer_ = 0;
   }
 }
 
-// Core snapshot logic. PRECONDITION: election_mtx_, replication_mtx_,
-// snapshot_mtx_ are held by caller.
+// Core snapshot logic. PRECONDITION: group_->election_mtx_, group_->replication_mtx_,
+// group_->snapshot_mtx_ are held by caller.
 void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
-  auto [last_index, last_term] = log_.GetLastLogInfo();
+  auto [last_index, last_term] = group_->log_.GetLastLogInfo();
   (void)last_term;
-  Index entries_since_snapshot = last_index - last_snapshot_index_;
+  Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
 
   if (metrics_) {
     metrics_
         ->GetCounter("raft_snapshots_created_total",
-                     {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
+                     {{"node_id", std::to_string(group_->server_id_)}, {"trigger", trigger}})
         .Increment();
   }
-  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)", server_id_, trigger,
+  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)", group_->server_id_, trigger,
            entries_since_snapshot);
 
   // Create snapshot
-  auto snapshot = state_machine_->CreateSnapshot();
+  auto snapshot = group_->state_machine_->CreateSnapshot();
   if (!snapshot) {
-    LOG_ERROR("Node {} failed to create {}-snapshot", server_id_, trigger);
+    LOG_ERROR("Node {} failed to create {}-snapshot", group_->server_id_, trigger);
     return;
   }
 
@@ -75,7 +75,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
       LOG_ERROR(
           "Node {} {}-snapshot exceeds max size ({} > {} bytes). "
           "Increase max_snapshot_size_bytes or implement streaming persister.",
-          server_id_, trigger, total_size, kMaxSnapshotSize);
+          group_->server_id_, trigger, total_size, kMaxSnapshotSize);
       return;
     }
     check_offset += bytes_read;
@@ -94,15 +94,15 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
 
     auto status = persister_->SaveSnapshotStream(chunk_provider, snapshot_index, snapshot_term);
     if (!status.ok()) {
-      LOG_ERROR("Node {} failed to persist {}-snapshot: {}", server_id_, trigger,
+      LOG_ERROR("Node {} failed to persist {}-snapshot: {}", group_->server_id_, trigger,
                 status.ToString());
       return;
     }
   }
 
   // Truncate log - entries before snapshot_index are now covered by snapshot
-  log_.SetStartIndex(snapshot_index + 1);
-  last_snapshot_index_ = snapshot_index;
+  group_->log_.SetStartIndex(snapshot_index + 1);
+  group_->last_snapshot_index_ = snapshot_index;
 
   // Schedule async truncation of persisted log after releasing locks.
   // TruncatePrefix I/O can be slow; performing it asynchronously prevents
@@ -113,7 +113,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
     if (snapshot_index + 1 > cfg.log_retention_entries) {
       compact_before = snapshot_index + 1 - cfg.log_retention_entries;
     }
-    NodeId my_id = server_id_;
+    NodeId my_id = group_->server_id_;
     log_persister_->TruncatePrefixAsync(compact_before, [my_id](Status status) {
       if (!status.ok()) {
         LOG_WARN("Node {} async truncate failed: {}", my_id, status.ToString());
@@ -124,39 +124,41 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   if (metrics_) {
     metrics_
         ->GetCounter("raft_log_compactions_total",
-                     {{"node_id", std::to_string(server_id_)}, {"trigger", trigger}})
+                     {{"node_id", std::to_string(group_->server_id_)}, {"trigger", trigger}})
         .Increment();
     metrics_
-        ->GetCounter("raft_log_entries_compacted_total", {{"node_id", std::to_string(server_id_)}})
+        ->GetCounter("raft_log_entries_compacted_total",
+                     {{"node_id", std::to_string(group_->server_id_)}})
         .Increment(entries_since_snapshot);
   }
 
   LOG_INFO(
       "Node {} {}-snapshot completed at index {} term {} ({} bytes, "
       "{} entries truncated)",
-      server_id_, trigger, snapshot_index, snapshot_term, total_size, entries_since_snapshot);
+      group_->server_id_, trigger, snapshot_index, snapshot_term, total_size,
+      entries_since_snapshot);
 }
 
 void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
-  // Bridge pattern: acquire election_mtx_ -> replication_mtx_ -> snapshot_mtx_
-  // Auto-snapshot reads role_ (election), log_ stats (replication), and
-  // updates last_snapshot_index_ (snapshot).
-  std::lock_guard<std::mutex> lock_e(election_mtx_);
-  std::lock_guard<std::mutex> lock_r(replication_mtx_);
-  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+  // Bridge pattern: acquire group_->election_mtx_ -> group_->replication_mtx_ ->
+  // group_->snapshot_mtx_ Auto-snapshot reads group_->role_ (election), group_->log_ stats
+  // (replication), and updates group_->last_snapshot_index_ (snapshot).
+  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+  std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
 
-  if (role_ != RaftNodeRole::LEADER) {
+  if (group_->role_ != RaftNodeRole::LEADER) {
     return;  // Only leader triggers auto-snapshot
   }
 
-  auto [last_index, last_term] = log_.GetLastLogInfo();
+  auto [last_index, last_term] = group_->log_.GetLastLogInfo();
   (void)last_term;
 
   // Calculate entries since last snapshot
-  Index entries_since_snapshot = last_index - last_snapshot_index_;
+  Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
 
   // Get byte size for logging
-  auto [entry_count, byte_size] = log_.GetLogStats();
+  auto [entry_count, byte_size] = group_->log_.GetLogStats();
   (void)entry_count;
 
   bool should_trigger = false;
@@ -181,16 +183,16 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
 }
 
 Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
-  std::lock_guard<std::mutex> lock_e(election_mtx_);
-  std::lock_guard<std::mutex> lock_r(replication_mtx_);
-  std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+  std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
 
   if (!IsRunning()) {
     return Status::Error("Node not running");
   }
 
-  if (role_ != RaftNodeRole::LEADER) {
-    return Status::NotLeader(leader_id_, leader_addr_);
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return Status::NotLeader(group_->leader_id_, group_->leader_addr_);
   }
 
   DoSnapshotLocked("manual");
@@ -200,22 +202,22 @@ Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
 // ========== Election Handling ==========
 
 void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
-  // PRECONDITION: caller holds election_mtx_, replication_mtx_, and
-  // snapshot_mtx_
-  auto& state = snapshot_sends_[peer_id];
+  // PRECONDITION: caller holds group_->election_mtx_, group_->replication_mtx_, and
+  // group_->snapshot_mtx_
+  auto& state = group_->snapshot_sends_[peer_id];
 
   // Already in progress? Skip
   if (state.in_progress) {
-    LOG_DEBUG("Node {}: snapshot send to {} already in progress", server_id_, peer_id);
+    LOG_DEBUG("Node {}: snapshot send to {} already in progress", group_->server_id_, peer_id);
     return;
   }
 
   // Create new snapshot if needed
   if (!state.snapshot) {
-    LOG_INFO("Node {}: creating snapshot for {}", server_id_, peer_id);
-    state.snapshot = state_machine_->CreateSnapshot();
+    LOG_INFO("Node {}: creating snapshot for {}", group_->server_id_, peer_id);
+    state.snapshot = group_->state_machine_->CreateSnapshot();
     if (!state.snapshot) {
-      LOG_ERROR("Node {}: failed to create snapshot", server_id_);
+      LOG_ERROR("Node {}: failed to create snapshot", group_->server_id_);
       return;
     }
     state.offset = 0;
@@ -225,27 +227,28 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_snapshot_sends_started_total", {{"node_id", std::to_string(server_id_)},
-                                                           {"peer_id", std::to_string(peer_id)}})
+        ->GetCounter(
+            "raft_snapshot_sends_started_total",
+            {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(peer_id)}})
         .Increment();
   }
   state.in_progress = true;
-  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", server_id_, peer_id,
-           state.last_included_index, state.last_included_term);
+  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", group_->server_id_,
+           peer_id, state.last_included_index, state.last_included_term);
 
   SendNextSnapshotChunkLocked(peer_id);
 }
 
 void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
-  // PRECONDITION: caller holds election_mtx_ and snapshot_mtx_
-  auto it_state = snapshot_sends_.find(peer_id);
-  if (it_state == snapshot_sends_.end()) return;
+  // PRECONDITION: caller holds group_->election_mtx_ and group_->snapshot_mtx_
+  auto it_state = group_->snapshot_sends_.find(peer_id);
+  if (it_state == group_->snapshot_sends_.end()) return;
 
   auto& state = it_state->second;
 
   // Safety checks
   if (!state.snapshot || !state.in_progress) {
-    LOG_ERROR("Node {}: invalid snapshot state for {}", server_id_, peer_id);
+    LOG_ERROR("Node {}: invalid snapshot state for {}", group_->server_id_, peer_id);
     return;
   }
 
@@ -261,8 +264,8 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   // Build request
   InstallSnapshotRequest req;
-  req.term_ = current_term_;
-  req.leader_id_ = server_id_;
+  req.term_ = group_->current_term_;
+  req.leader_id_ = group_->server_id_;
   req.last_included_index_ = state.last_included_index;
   req.last_included_term_ = state.last_included_term;
   req.offset_ = static_cast<uint32_t>(state.offset);
@@ -274,27 +277,28 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   std::string data;
   auto status = infra_->protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
-    LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}", server_id_,
+    LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}", group_->server_id_,
               status.ToString());
     state.in_progress = false;
     return;
   }
 
   // Get peer address
-  auto it_addr = peer_map_.find(peer_id);
-  if (it_addr == peer_map_.end()) {
-    LOG_ERROR("Node {}: peer {} not found", server_id_, peer_id);
+  auto it_addr = group_->peer_map_.find(peer_id);
+  if (it_addr == group_->peer_map_.end()) {
+    LOG_ERROR("Node {}: peer {} not found", group_->server_id_, peer_id);
     state.in_progress = false;
     return;
   }
 
   if (metrics_) {
     metrics_
-        ->GetCounter("raft_snapshot_chunks_sent_total", {{"node_id", std::to_string(server_id_)}})
+        ->GetCounter("raft_snapshot_chunks_sent_total",
+                     {{"node_id", std::to_string(group_->server_id_)}})
         .Increment();
   }
-  LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}", server_id_,
-            peer_id, state.offset, bytes_read, is_last);
+  LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
+            group_->server_id_, peer_id, state.offset, bytes_read, is_last);
 
   // Send
   infra_->network_->SendRpc(
@@ -309,11 +313,11 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
             LOG_ERROR(
                 "Node {}: failed to deserialize "
                 "InstallSnapshotResponse: {}",
-                server_id_, status.ToString());
+                group_->server_id_, status.ToString());
             success = false;
           }
         } else {
-          LOG_WARN("Node {}: InstallSnapshot to {} failed: {}", server_id_, peer_id, error);
+          LOG_WARN("Node {}: InstallSnapshot to {} failed: {}", group_->server_id_, peer_id, error);
         }
         HandleInstallSnapshotResponse(peer_id, response, success);
       });
@@ -322,19 +326,19 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
                                                            const InstallSnapshotResponse& resp,
                                                            bool rpc_success) {
-  // Phase 1: Election state check under election_mtx_ only.
-  // Must NOT hold replication_mtx_ or snapshot_mtx_ here because
+  // Phase 1: Election state check under group_->election_mtx_ only.
+  // Must NOT hold group_->replication_mtx_ or group_->snapshot_mtx_ here because
   // BecomeFollowerLocked acquires both internally.
   {
-    std::lock_guard<std::mutex> lock_e(election_mtx_);
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     if (!IsRunning()) return;
-    if (role_ != RaftNodeRole::LEADER) return;
+    if (group_->role_ != RaftNodeRole::LEADER) return;
 
-    if (resp.term_ > current_term_) {
+    if (resp.term_ > group_->current_term_) {
       LOG_INFO(
           "Node {}: follower {} has higher term {} vs {}, reverting to "
           "Follower",
-          server_id_, from, resp.term_, current_term_);
+          group_->server_id_, from, resp.term_, group_->current_term_);
       BecomeFollowerLocked(resp.term_);
       return;
     }
@@ -342,23 +346,23 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
 
   // Phase 2: Snapshot + replication work under full hierarchy.
   {
-    std::lock_guard<std::mutex> lock_e(election_mtx_);
-    std::lock_guard<std::mutex> lock_r(replication_mtx_);
-    std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
 
-    auto it = snapshot_sends_.find(from);
-    if (it == snapshot_sends_.end()) return;
+    auto it = group_->snapshot_sends_.find(from);
+    if (it == group_->snapshot_sends_.end()) return;
 
     auto& state = it->second;
     state.in_progress = false;
 
     // RPC failed: retry with backoff
     if (!rpc_success) {
-      LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_, from);
+      LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", group_->server_id_, from);
       infra_->timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
-        std::lock_guard<std::mutex> lock_e(election_mtx_);
-        std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
-        if (role_ == RaftNodeRole::LEADER) {
+        std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+        std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+        if (group_->role_ == RaftNodeRole::LEADER) {
           SendNextSnapshotChunkLocked(from);
         }
       });
@@ -372,22 +376,22 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
       // Simpler: check if last chunk was smaller than chunk size
       if (state.last_chunk_size < kSnapshotChunkSize) {
         // Transfer complete
-        LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}", server_id_,
-                 from, state.last_included_index);
+        LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}",
+                 group_->server_id_, from, state.last_included_index);
 
         if (metrics_) {
           metrics_
-              ->GetCounter(
-                  "raft_snapshot_sends_completed_total",
-                  {{"node_id", std::to_string(server_id_)}, {"peer_id", std::to_string(from)}})
+              ->GetCounter("raft_snapshot_sends_completed_total",
+                           {{"node_id", std::to_string(group_->server_id_)},
+                            {"peer_id", std::to_string(from)}})
               .Increment();
         }
-        match_index_[from] = state.last_included_index;
-        next_index_[from] = state.last_included_index + 1;
+        group_->match_index_[from] = state.last_included_index;
+        group_->next_index_[from] = state.last_included_index + 1;
         SetPeerReplicationLagMetricLocked(from);
 
         // Clean up
-        snapshot_sends_.erase(it);
+        group_->snapshot_sends_.erase(it);
 
         // Try to commit (snapshot doesn't increase commit directly,
         // but we may be able to commit entries after the snapshot)

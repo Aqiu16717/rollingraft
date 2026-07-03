@@ -32,44 +32,10 @@
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
+#include "raft_group.h"
 #include "shared_node_infra.h"
 
 namespace rollingraft {
-
-// ========== Pending Proposals ==========
-struct PendingProposal {
-  Index index;                                         // Log index
-  std::function<void(const ApplyResult&)> callback;    // Completion callback
-  std::chrono::steady_clock::time_point propose_time;  // Proposal timestamp
-};
-
-// ========== Client Session (for idempotency) ==========
-struct ClientSession {
-  uint64_t last_seq;                                  // Last processed seq
-  std::string last_response;                          // Cached response
-  Index last_index;                                   // Log index
-  Term last_term;                                     // Term when executed
-  std::chrono::steady_clock::time_point last_active;  // For cleanup
-};
-
-// ========== Snapshot Transfer State (Leader side) ==========
-struct SnapshotSendState {
-  std::shared_ptr<Snapshot> snapshot;  // Snapshot handle
-  uint64_t offset = 0;                 // Current offset
-  Index last_included_index = 0;       // Snapshot metadata
-  Term last_included_term = 0;         // Snapshot metadata
-  bool in_progress = false;            // Transfer in progress
-  size_t last_chunk_size = 0;          // For progress tracking
-};
-
-// ========== Pending ReadIndex Request ==========
-struct PendingReadIndex {
-  Index read_index;                                  // The commit index to wait for
-  std::function<void()> callback;                    // Completion callback
-  std::chrono::steady_clock::time_point start_time;  // Request timestamp
-  std::set<NodeId> acks;                             // Nodes that acknowledged
-  bool heartbeats_sent = false;                      // Whether heartbeats were sent
-};
 
 // ========== RaftNode Implementation ==========
 class RaftNode::RaftNodeImpl {
@@ -125,7 +91,7 @@ class RaftNode::RaftNodeImpl {
   void HandleReadIndexRequest(const ReadIndexRequest&, ReadIndexResponse&);
 
  private:
-  // State transitions (must hold election_mtx_ when calling)
+  // State transitions (must hold group_->election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
@@ -162,11 +128,12 @@ class RaftNode::RaftNodeImpl {
   void HandleAppendEntriesResponse(NodeId from, const AppendEntriesResponse& resp);
   void HandleHeartbeatResponse(NodeId from, const AppendEntriesResponse& resp);
   void ScheduleAppendEntriesRetry(NodeId peer_id, bool is_heartbeat = false);
-  void ScheduleAppendEntriesRetryLocked(NodeId peer_id);  // Precondition: caller holds
-                                                          // election_mtx_ + replication_mtx_
+  void ScheduleAppendEntriesRetryLocked(
+      NodeId peer_id);  // Precondition: caller holds
+                        // group_->election_mtx_ + group_->replication_mtx_
 
   // CheckQuorum: leader steps down if it hasn't received quorum acks
-  void CheckQuorumLocked();  // Precondition: caller holds election_mtx_
+  void CheckQuorumLocked();  // Precondition: caller holds group_->election_mtx_
 
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);
@@ -188,7 +155,6 @@ class RaftNode::RaftNodeImpl {
 
   // Utility methods
   uint64_t GetLogTermLocked(uint64_t index);
-  static NodeId ParseNodeId(const NodeAddr& addr);
 
   // Metrics helpers (must hold appropriate locks; see design-metrics.md)
   void UpdateLeaderLeaseMetricLocked();
@@ -205,102 +171,17 @@ class RaftNode::RaftNodeImpl {
   // RPC entry point
   void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
 
+  // Async apply loop
+  void ApplyLoop();
+
   // State check
   bool IsRunning() const { return state_ == NodeState::kRunning; }
 
  private:
-  // ========== Node Identity ==========
-  NodeId server_id_;
-  std::vector<NodeAddr> peer_addrs_;
-  std::unordered_map<NodeId, NodeAddr> peer_map_;
-
-  // ========== Raft Persistent State ==========
-  Term current_term_ = 0;
-  NodeId voted_for_ = -1;
-  RaftLog log_;
-
-  // ========== Raft Volatile State ==========
-  Index commit_index_ = 0;
-  std::atomic<Index> last_applied_{0};
-  Index flushed_index_ = 0;  // Highest log index durably persisted
-  NodeId leader_id_ = -1;
-  NodeAddr leader_addr_;
-  RaftNodeRole role_ = RaftNodeRole::FOLLOWER;
-  uint32_t vote_count_ = 0;
-
-  // ========== Leader State ==========
-  std::unordered_map<NodeId, Index> next_index_;
-  std::unordered_map<NodeId, Index> match_index_;
-  std::unordered_map<uint64_t, ClientSession> client_sessions_;  // Legacy RPC idempotency
-
-  // Client session manager for Propose() API idempotency
-  std::unique_ptr<ClientSessionManager> session_manager_;
-  // Tracks which log entries have session info for result caching on apply
-  std::unordered_map<Index, std::pair<uint64_t, uint64_t>> proposal_sessions_;
-
-  // Retry tracking for AppendEntries
-  struct RetryState {
-    int attempts = 0;
-    std::chrono::steady_clock::time_point last_retry;
-  };
-  std::unordered_map<NodeId, RetryState> retry_state_;
-
-  // Pipeline replication: ordered inflight window per peer.
-  // Each entry tracks [start_index, count] of a sent batch.
-  // Replaces the simple kMaxPendingAppends=3 counter.
-  struct InflightEntry {
-    Index start_index;
-    size_t count;
-  };
-  std::unordered_map<NodeId, std::deque<InflightEntry>> inflight_;
-
-  // Heartbeat coalescing: track last heartbeat sent to each peer.
-  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> last_heartbeat_sent_;
-
-  // Leader lease: expiry timestamp for local reads without heartbeat broadcast.
-  // Updated when leader receives majority acks from voters.
-  std::chrono::steady_clock::time_point leader_lease_expiry_;
-
-  // Pre-vote state
-  uint32_t pre_vote_count_ = 0;
-  bool pre_vote_running_ = false;
-  Term pre_vote_term_ = 0;
-
-  // CheckQuorum state
-  bool check_quorum_enabled_ = true;  // Enabled by default
-  bool pre_vote_enabled_ = true;      // Enabled by default
-  std::chrono::steady_clock::time_point last_leader_contact_;
-  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> quorum_acks_;
-
-  // Quiesced mode state
-  std::atomic<bool> quiesced_{false};
-  std::chrono::steady_clock::time_point last_activity_time_;
-  uint32_t consecutive_quiesced_timeouts_ = 0;
-
-  // Dead node detection: last time we received a valid response from each peer
-  std::unordered_map<NodeId, std::chrono::steady_clock::time_point> last_contact_time_;
-
-  // Membership change safety: true while a CONFIG_CHANGE log entry
-  // has been proposed but not yet committed. Prevents concurrent
-  // membership changes which violate single-node-change safety.
-  bool pending_config_change_ = false;
-
-  // ========== Cluster Config ==========
-  ClusterConfig cluster_config_;
-  // Note: config_mutex_ replaced by membership_mtx_ (std::shared_mutex)
-  // to allow concurrent config reads without serializing with writes.
-
-  // ========== Timer State ==========
-  TimerId election_timer_ = 0;
-  TimerId heartbeat_timer_ = 0;
-  TimerId snapshot_check_timer_ = 0;
-
-  // ========== Snapshot State ==========
-  Index last_snapshot_index_ = 0;  // For auto-snapshot trigger
+  // ========== Group-local state machine ==========
+  std::shared_ptr<RaftGroup> group_;
 
   // ========== Dependencies ==========
-  RaftNodeConfig config_;
-  std::shared_ptr<StateMachine> state_machine_;
   std::shared_ptr<SharedNodeInfra> infra_;
   std::shared_ptr<Persister> persister_;
   std::unique_ptr<LogPersister> log_persister_;
@@ -319,63 +200,8 @@ class RaftNode::RaftNodeImpl {
   std::atomic<NodeState> state_{NodeState::kInitialized};
   std::atomic<uint64_t> next_correlation_id_{1};
 
-  // ========== Thread Synchronization ==========
-  // Lock hierarchy (strict left-to-right):
-  //   election_mtx_ -> replication_mtx_ -> snapshot_mtx_ ->
-  //   membership_mtx_ -> applier_mtx_
-  // Violating this order WILL cause deadlocks.
-  //
-  // Cross-manager call rules:
-  // * Read-only snapshot: acquire in hierarchy order (Pattern A)
-  // * Mutations: drop caller lock, then call downstream (Pattern B)
-  // * Callbacks: always invoke outside all locks (Pattern C)
-  //
-  mutable std::mutex election_mtx_;
-  mutable std::mutex replication_mtx_;
-  mutable std::mutex snapshot_mtx_;
-  mutable std::shared_mutex membership_mtx_;  // Read-heavy config access
-  mutable std::mutex applier_mtx_;
-
-  // ========== Pending Proposals ==========
-  std::unordered_map<uint64_t, PendingProposal> pending_proposals_;
-
-  // ========== Async Apply Thread ==========
-  struct ApplyTask {
-    Index index;
-    std::string data;
-    std::function<void(const ApplyResult&)> callback;
-    bool is_config_change = false;
-    std::optional<std::chrono::steady_clock::time_point> propose_time;
-    uint64_t session_id = 0;
-    uint64_t seq_num = 0;
-  };
-  std::thread apply_thread_;
-  std::deque<ApplyTask> apply_queue_;
-  std::mutex apply_queue_mtx_;
-  std::condition_variable apply_queue_cv_;
-  std::atomic<bool> apply_running_{false};
-  Index last_enqueued_ = 0;  // Last index enqueued for async apply
-
-  void ApplyLoop();
-
-  // ========== Pending ReadIndex Requests ==========
-  std::unordered_map<uint64_t, PendingReadIndex> pending_reads_;
-  uint64_t next_read_id_ = 1;
-
-  // ========== Snapshot Transfer State ==========
-  std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
-  std::string snapshot_temp_path_;  // Follower side: temp file for streaming
-
-  // Pre-built label map {"node_id": "<server_id_>"} to avoid repeated heap
-  // allocations on the hot path.
-  std::map<std::string, std::string> metrics_node_label_;
-
   // ========== Event Bus ==========
   EventBus event_bus_;
-
-  // ========== Callbacks ==========
-  std::function<void(RaftNodeRole, uint64_t)> role_change_callback_;
-  std::function<void(NodeId, std::string)> leader_change_callback_;
 };
 
 }  // namespace rollingraft

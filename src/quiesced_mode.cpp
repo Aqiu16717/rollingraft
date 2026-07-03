@@ -30,7 +30,8 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
     metrics_
         ->GetCounter("raft_quiesced_mode_entered_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
         .Set(1.0);
   }
 
@@ -38,9 +39,9 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
   if (role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
-    heartbeat_timer_ =
-        timer_->SetInterval(std::chrono::milliseconds(config_.quiesced_heartbeat_interval_ms),
-                            [this]() { OnHeartbeatTimeout(); });
+    heartbeat_timer_ = infra_->timer_->SetInterval(
+        std::chrono::milliseconds(config_.quiesced_heartbeat_interval_ms),
+        [this]() { OnHeartbeatTimeout(); });
   }
 }
 
@@ -54,7 +55,8 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
     metrics_
         ->GetCounter("raft_quiesced_mode_exited_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(server_id_)}})
         .Set(0.0);
   }
 
@@ -62,8 +64,8 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
   if (role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(replication_mtx_);
     StopHeartbeatTimerLocked();
-    auto cfg = runtime_config_->Get();
-    heartbeat_timer_ = timer_->SetInterval(std::chrono::milliseconds(cfg.heartbeat_interval_ms),
-                                           [this]() { OnHeartbeatTimeout(); });
+    auto cfg = infra_->runtime_config_->Get();
+    heartbeat_timer_ = infra_->timer_->SetInterval(
+        std::chrono::milliseconds(cfg.heartbeat_interval_ms), [this]() { OnHeartbeatTimeout(); });
   }
 }

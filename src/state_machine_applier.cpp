@@ -181,7 +181,7 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
 
     // Update metrics
     if (metrics_) {
-      metrics_->GetGauge("raft_applied_index", {{"node_id", std::to_string(server_id_)}})
+      infra_->metrics_->GetGauge("raft_applied_index", {{"node_id", std::to_string(server_id_)}})
           .Set(static_cast<double>(new_last_applied));
     }
   }
@@ -207,7 +207,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     if (it != last_heartbeat_sent_.end()) {
       auto elapsed =
           std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
-      auto rc = runtime_config_->Get();
+      auto rc = infra_->runtime_config_->Get();
       if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < rc.heartbeat_interval_ms) {
         peers_to_skip.push_back(peer_id);
         continue;
@@ -243,7 +243,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     // Empty entries = heartbeat
 
     std::string data;
-    auto status = protocol_->SerializeRequest(req, data);
+    auto status = infra_->protocol_->SerializeRequest(req, data);
     if (!status.ok()) {
       LOG_ERROR("Failed to serialize heartbeat: {}", status.ToString());
       continue;
@@ -252,9 +252,9 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     auto it_addr = peer_map_.find(peer_id);
     if (it_addr == peer_map_.end()) continue;
 
-    network_->SendRpc(
+    infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
-        std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
+        std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
         [this, peer_id, read_id](const std::string& resp, bool success, const std::string& error) {
           if (!success) {
             LOG_WARN("ReadIndex heartbeat to {} failed: {}", peer_id, error);
@@ -262,7 +262,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
           }
 
           AppendEntriesResponse response;
-          auto status = protocol_->DeserializeResponse(resp, response);
+          auto status = infra_->protocol_->DeserializeResponse(resp, response);
           if (!status.ok()) {
             LOG_ERROR("Failed to deserialize heartbeat response: {}", status.ToString());
             return;

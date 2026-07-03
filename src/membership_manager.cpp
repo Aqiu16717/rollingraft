@@ -222,7 +222,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
     if (metrics_) {
       auto labels = metrics_node_label_;
       labels["peer_id"] = std::to_string(id);
-      metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
+      infra_->metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
     }
 
     peer_addrs_.erase(
@@ -235,7 +235,7 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
     if (id == server_id_) {
       LOG_INFO("Node {} removed from cluster, stopping", server_id_);
-      timer_->SetTimeout(std::chrono::milliseconds(0), [this]() { Stop(); });
+      infra_->timer_->SetTimeout(std::chrono::milliseconds(0), [this]() { Stop(); });
     }
     return;
   }

@@ -10,10 +10,10 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
     return;  // Already running
   }
 
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
   snapshot_check_timer_ =
-      timer_->SetInterval(std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
-                          [this]() { MaybeTriggerAutoSnapshotLocked(); });
+      infra_->timer_->SetInterval(std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
+                                  [this]() { MaybeTriggerAutoSnapshotLocked(); });
 
   LOG_INFO("Node {} started auto-snapshot check (every {}ms)", server_id_,
            cfg.snapshot_check_interval_ms);
@@ -22,7 +22,7 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
 void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
   // PRECONDITION: snapshot_mtx_ is held by caller
   if (snapshot_check_timer_ != 0) {
-    timer_->CancelTimer(snapshot_check_timer_);
+    infra_->timer_->CancelTimer(snapshot_check_timer_);
     snapshot_check_timer_ = 0;
   }
 }
@@ -59,7 +59,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   constexpr size_t kReadChunkSize = 64 * 1024;  // 64KB chunks
   std::vector<uint8_t> buffer(kReadChunkSize);
 
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
   const size_t kMaxSnapshotSize = cfg.max_snapshot_size_bytes > 0
                                       ? cfg.max_snapshot_size_bytes
                                       : 100 * 1024 * 1024;  // 100MB default
@@ -108,7 +108,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   // TruncatePrefix I/O can be slow; performing it asynchronously prevents
   // blocking the Raft event loop while holding manager locks.
   if (log_persister_) {
-    auto cfg = runtime_config_->Get();
+    auto cfg = infra_->runtime_config_->Get();
     uint64_t compact_before = 1;
     if (snapshot_index + 1 > cfg.log_retention_entries) {
       compact_before = snapshot_index + 1 - cfg.log_retention_entries;
@@ -161,7 +161,7 @@ void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
 
   bool should_trigger = false;
 
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
 
   // Check entry count threshold
   if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
@@ -272,7 +272,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   // Serialize
   std::string data;
-  auto status = protocol_->SerializeRequest(req, data);
+  auto status = infra_->protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
     LOG_ERROR("Node {}: failed to serialize InstallSnapshotRequest: {}", server_id_,
               status.ToString());
@@ -297,14 +297,14 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
             peer_id, state.offset, bytes_read, is_last);
 
   // Send
-  network_->SendRpc(
+  infra_->network_->SendRpc(
       peer_id, it_addr->second, data, req.correlation_id_,
-      std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
+      std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
       [this, peer_id](const std::string& resp, bool success, const std::string& error) {
         // Deserialize response first (outside lock)
         InstallSnapshotResponse response;
         if (success) {
-          auto status = protocol_->DeserializeResponse(resp, response);
+          auto status = infra_->protocol_->DeserializeResponse(resp, response);
           if (!status.ok()) {
             LOG_ERROR(
                 "Node {}: failed to deserialize "
@@ -355,7 +355,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
     // RPC failed: retry with backoff
     if (!rpc_success) {
       LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", server_id_, from);
-      timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
+      infra_->timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
         std::lock_guard<std::mutex> lock_e(election_mtx_);
         std::lock_guard<std::mutex> lock_s(snapshot_mtx_);
         if (role_ == RaftNodeRole::LEADER) {

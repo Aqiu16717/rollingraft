@@ -135,8 +135,8 @@ RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> s
     throw std::invalid_argument("RaftNodeConfig validation failed: " + status.ToString());
   }
 
-  raft_node_impl_ = std::make_unique<RaftNodeImpl>(
-      config, sm,
+  auto infra = std::make_shared<SharedNodeInfra>();
+  infra->network_ =
       config.network_factory
           ? config.network_factory()
           : (config.tls_enabled
@@ -144,10 +144,14 @@ RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> s
                                                         .cert_file = config.tls_cert_file,
                                                         .key_file = config.tls_key_file,
                                                         .ca_file = config.tls_ca_file})
-                 : CreateDefaultNetworkTransport()),
-      config.timer_factory ? config.timer_factory() : TimerService::CreateDefault(),
-      config.persister_factory ? std::shared_ptr<Persister>(config.persister_factory()) : nullptr,
-      config.protocol_factory ? config.protocol_factory() : std::make_unique<JsonProtocol>());
+                 : CreateDefaultNetworkTransport());
+  infra->timer_ = config.timer_factory ? config.timer_factory() : TimerService::CreateDefault();
+  infra->protocol_ =
+      config.protocol_factory ? config.protocol_factory() : std::make_unique<JsonProtocol>();
+
+  raft_node_impl_ = std::make_unique<RaftNodeImpl>(
+      config, sm, std::move(infra),
+      config.persister_factory ? std::shared_ptr<Persister>(config.persister_factory()) : nullptr);
 }
 
 RaftNode::~RaftNode() = default;

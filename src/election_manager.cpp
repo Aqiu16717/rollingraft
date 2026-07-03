@@ -53,11 +53,12 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   }
 
   if (metrics_) {
-    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::FOLLOWER));
-    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(current_term_));
-    metrics_->GetGauge("raft_leader_lease_seconds", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetGauge("raft_leader_lease_seconds", {{"node_id", std::to_string(server_id_)}})
         .Set(0.0);
   }
   UpdateLeaderLeaseMetricLocked();
@@ -99,11 +100,11 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_elections_total", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetCounter("raft_elections_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::CANDIDATE));
-    metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetGauge("raft_current_term", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(current_term_));
   }
   LOG_INFO("Node {} became Candidate at term {}", server_id_, current_term_);
@@ -207,9 +208,10 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_leader_elected_total", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetCounter("raft_leader_elected_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
-    metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(server_id_)}})
         .Set(static_cast<double>(RaftNodeRole::LEADER));
   }
   LOG_INFO("Node {} became Leader at term {} (cleared {} client sessions)", server_id_,
@@ -223,7 +225,7 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   CancelElectionTimerLocked();
 
   // Read dynamic config snapshot (thread-safe via RuntimeConfig)
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
 
   uint32_t base_timeout = cfg.election_timeout_ms;
   // Quiesced mode: extend election timeout to reduce false elections
@@ -238,15 +240,15 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
 
   uint32_t timeout = dis(gen);
 
-  election_timer_ =
-      timer_->SetTimeout(std::chrono::milliseconds(timeout), [this]() { OnElectionTimeout(); });
+  election_timer_ = infra_->timer_->SetTimeout(std::chrono::milliseconds(timeout),
+                                               [this]() { OnElectionTimeout(); });
 
   LOG_DEBUG("Node {} election timer reset to {}ms", server_id_, timeout);
 }
 
 void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
   if (election_timer_ != 0) {
-    timer_->CancelTimer(election_timer_);
+    infra_->timer_->CancelTimer(election_timer_);
     election_timer_ = 0;
   }
 }
@@ -258,7 +260,8 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   if (role_ == RaftNodeRole::LEADER) return;
 
   if (metrics_) {
-    metrics_->GetCounter("raft_election_timeouts_total", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetCounter("raft_election_timeouts_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
@@ -315,10 +318,10 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
 
   // Schedule a pre-vote timeout. If we don't get majority by then,
   // reset and wait for the next election timeout.
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
   uint32_t pre_vote_timeout = cfg.election_timeout_ms / 2;
   if (pre_vote_timeout < 10) pre_vote_timeout = 10;
-  timer_->SetTimeout(std::chrono::milliseconds(pre_vote_timeout), [this]() {
+  infra_->timer_->SetTimeout(std::chrono::milliseconds(pre_vote_timeout), [this]() {
     std::lock_guard<std::mutex> lock(election_mtx_);
     if (pre_vote_running_) {
       LOG_INFO("Node {} PreVote timed out, resetting", server_id_);
@@ -352,22 +355,23 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
 
   // Serialize request
   std::string data;
-  auto status = protocol_->SerializeRequest(req, data);
+  auto status = infra_->protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
     LOG_ERROR("Failed to serialize RequestVoteRequest: {}", status.ToString());
     return;
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_requestvote_sent_total", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetCounter("raft_requestvote_sent_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
   Term original_term = current_term_;  // Save current term for comparison
 
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
 
-  network_->SendRpc(
+  infra_->network_->SendRpc(
       peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),
       [this, peer_id, original_term](const std::string& resp, bool success,
                                      const std::string& error) {
@@ -377,7 +381,7 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
         }
 
         RequestVoteResponse response;
-        auto status = protocol_->DeserializeResponse(resp, response);
+        auto status = infra_->protocol_->DeserializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize RequestVoteResponse: {}", status.ToString());
           return;
@@ -460,37 +464,38 @@ void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id, const NodeA
   req.correlation_id_ = next_correlation_id_.fetch_add(1, std::memory_order_relaxed);
 
   std::string data;
-  auto status = protocol_->SerializeRequest(req, data);
+  auto status = infra_->protocol_->SerializeRequest(req, data);
   if (!status.ok()) {
     LOG_ERROR("Failed to serialize PreVoteRequest: {}", status.ToString());
     return;
   }
 
   if (metrics_) {
-    metrics_->GetCounter("raft_prevote_sent_total", {{"node_id", std::to_string(server_id_)}})
+    infra_->metrics_
+        ->GetCounter("raft_prevote_sent_total", {{"node_id", std::to_string(server_id_)}})
         .Increment();
   }
 
   Term original_pre_vote_term = pre_vote_term_;
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
 
-  network_->SendRpc(peer_id, addr, data, req.correlation_id_,
-                    std::chrono::milliseconds(cfg.rpc_timeout_ms),
-                    [this, peer_id, original_pre_vote_term](const std::string& resp, bool success,
-                                                            const std::string& error) {
-                      if (!success) {
-                        LOG_WARN("PreVote to {} failed: {}", peer_id, error);
-                        return;
-                      }
+  infra_->network_->SendRpc(
+      peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),
+      [this, peer_id, original_pre_vote_term](const std::string& resp, bool success,
+                                              const std::string& error) {
+        if (!success) {
+          LOG_WARN("PreVote to {} failed: {}", peer_id, error);
+          return;
+        }
 
-                      PreVoteResponse response;
-                      auto status = protocol_->DeserializeResponse(resp, response);
-                      if (!status.ok()) {
-                        LOG_ERROR("Failed to deserialize PreVoteResponse: {}", status.ToString());
-                        return;
-                      }
-                      HandlePreVoteResponse(peer_id, response, original_pre_vote_term);
-                    });
+        PreVoteResponse response;
+        auto status = infra_->protocol_->DeserializeResponse(resp, response);
+        if (!status.ok()) {
+          LOG_ERROR("Failed to deserialize PreVoteResponse: {}", status.ToString());
+          return;
+        }
+        HandlePreVoteResponse(peer_id, response, original_pre_vote_term);
+      });
 }
 
 void RaftNode::RaftNodeImpl::HandlePreVoteResponse(NodeId from, const PreVoteResponse& resp,

@@ -24,7 +24,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
     switch (message_type) {
       case RaftMessageType::KRequestVoteRequest: {
         RequestVoteRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize RequestVoteRequest: {}", status.ToString());
           return;
@@ -32,7 +32,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         RequestVoteResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandleRequestVote(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize RequestVoteResponse: {}", status.ToString());
           return;
@@ -42,7 +42,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
 
       case RaftMessageType::KAppendEntriesRequest: {
         AppendEntriesRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize AppendEntriesRequest: {}", status.ToString());
           return;
@@ -50,7 +50,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         AppendEntriesResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandleAppendEntries(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize AppendEntriesResponse: {}", status.ToString());
           return;
@@ -60,7 +60,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
 
       case RaftMessageType::KInstallSnapshotRequest: {
         InstallSnapshotRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize InstallSnapshotRequest: {}", status.ToString());
           return;
@@ -68,7 +68,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         InstallSnapshotResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandleInstallSnapshot(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize InstallSnapshotResponse: {}", status.ToString());
           return;
@@ -78,7 +78,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
 
       case RaftMessageType::KClientRequest: {
         ClientRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize ClientRequest: {}", status.ToString());
           return;
@@ -86,7 +86,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         ClientResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandleClientRequest(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize ClientResponse: {}", status.ToString());
           return;
@@ -96,7 +96,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
 
       case RaftMessageType::KPreVoteRequest: {
         PreVoteRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize PreVoteRequest: {}", status.ToString());
           return;
@@ -104,7 +104,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         PreVoteResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandlePreVote(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize PreVoteResponse: {}", status.ToString());
           return;
@@ -114,7 +114,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
 
       case RaftMessageType::KReadIndexRequest: {
         ReadIndexRequest req;
-        auto status = protocol_->DeserializeRequest(data, req);
+        auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize ReadIndexRequest: {}", status.ToString());
           return;
@@ -122,7 +122,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         ReadIndexResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         HandleReadIndexRequest(req, resp);
-        status = protocol_->SerializeResponse(resp, response);
+        status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
           LOG_ERROR("Failed to serialize ReadIndexResponse: {}", status.ToString());
           return;
@@ -192,7 +192,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     auto now = std::chrono::steady_clock::now();
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - last_leader_contact_).count();
-    auto cfg = runtime_config_->Get();
+    auto cfg = infra_->runtime_config_->Get();
     if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       LOG_INFO("Node {} reject vote: leader contact {}ms ago (< {}ms)", server_id_, elapsed,
                cfg.election_timeout_ms);
@@ -204,7 +204,8 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   if (voted_for_ == -1 || voted_for_ == req.candidate_id_) {
     voted_for_ = req.candidate_id_;
     if (metrics_) {
-      metrics_->GetCounter("raft_votes_granted_total", {{"node_id", std::to_string(server_id_)}})
+      infra_->metrics_
+          ->GetCounter("raft_votes_granted_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
     resp.vote_granted_ = true;
@@ -271,7 +272,7 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req, PreVoteRes
     auto now = std::chrono::steady_clock::now();
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - last_leader_contact_).count();
-    auto cfg = runtime_config_->Get();
+    auto cfg = infra_->runtime_config_->Get();
     if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       LOG_INFO("Node {} reject PreVote: leader contact {}ms ago (< {}ms)", server_id_, elapsed,
                cfg.election_timeout_ms);
@@ -682,7 +683,7 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req, Clien
 
     // Wait for ReadIndex with timeout (use rpc_timeout_ms)
     auto wait_status =
-        future.wait_for(std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
+        future.wait_for(std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms));
 
     lock_e.lock();
     lock_r.lock();

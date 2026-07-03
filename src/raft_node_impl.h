@@ -32,6 +32,7 @@
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
+#include "shared_node_infra.h"
 
 namespace rollingraft {
 
@@ -74,8 +75,7 @@ struct PendingReadIndex {
 class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
-               std::unique_ptr<NetworkTransport> network, std::unique_ptr<TimerService> timer,
-               std::shared_ptr<Persister> persister, std::unique_ptr<Protocol> protocol);
+               std::shared_ptr<SharedNodeInfra> infra, std::shared_ptr<Persister> persister);
   ~RaftNodeImpl();
 
   Status Start();
@@ -301,11 +301,18 @@ class RaftNode::RaftNodeImpl {
   // ========== Dependencies ==========
   RaftNodeConfig config_;
   std::shared_ptr<StateMachine> state_machine_;
-  std::unique_ptr<NetworkTransport> network_;
-  std::unique_ptr<TimerService> timer_;
+  std::shared_ptr<SharedNodeInfra> infra_;
   std::shared_ptr<Persister> persister_;
   std::unique_ptr<LogPersister> log_persister_;
-  std::unique_ptr<Protocol> protocol_;
+
+  // Cached pointers into infra_ so existing code paths can keep using
+  // network_->, timer_->, metrics_->, etc. without churn.
+  NetworkTransport* network_ = nullptr;
+  TimerService* timer_ = nullptr;
+  Protocol* protocol_ = nullptr;
+  MetricsRegistry* metrics_ = nullptr;
+  MetricsHttpServer* metrics_server_ = nullptr;
+  RuntimeConfig* runtime_config_ = nullptr;
 
   // ========== Runtime State ==========
   enum class NodeState { kInitialized = 0, kRunning = 1, kStopping = 2, kStopped = 3 };
@@ -359,16 +366,9 @@ class RaftNode::RaftNodeImpl {
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;  // Leader side
   std::string snapshot_temp_path_;  // Follower side: temp file for streaming
 
-  // ========== Metrics ==========
-  std::unique_ptr<MetricsRegistry> metrics_;
-  std::unique_ptr<MetricsHttpServer> metrics_server_;
-
   // Pre-built label map {"node_id": "<server_id_>"} to avoid repeated heap
   // allocations on the hot path.
   std::map<std::string, std::string> metrics_node_label_;
-
-  // ========== Runtime Config ==========
-  std::unique_ptr<RuntimeConfig> runtime_config_;
 
   // ========== Event Bus ==========
   EventBus event_bus_;

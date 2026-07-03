@@ -10,17 +10,13 @@ using namespace rollingraft;
 
 RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
                                      std::shared_ptr<StateMachine> state_machine,
-                                     std::unique_ptr<NetworkTransport> network,
-                                     std::unique_ptr<TimerService> timer,
-                                     std::shared_ptr<Persister> persister,
-                                     std::unique_ptr<Protocol> protocol)
-    : config_(config),
+                                     std::shared_ptr<SharedNodeInfra> infra,
+                                     std::shared_ptr<Persister> persister)
+    : peer_addrs_(config.peers),
+      config_(config),
       state_machine_(std::move(state_machine)),
-      network_(std::move(network)),
-      timer_(std::move(timer)),
-      persister_(std::move(persister)),
-      protocol_(std::move(protocol)),
-      peer_addrs_(config.peers) {
+      infra_(std::move(infra)),
+      persister_(std::move(persister)) {
   server_id_ = config.node_id;
   metrics_node_label_ = {{"node_id", std::to_string(server_id_)}};
 
@@ -40,11 +36,17 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
   if (!state_machine_) {
     throw std::invalid_argument("StateMachine cannot be null");
   }
-  if (!network_) {
+  if (!infra_) {
+    throw std::invalid_argument("SharedNodeInfra cannot be null");
+  }
+  if (!infra_->network_) {
     throw std::invalid_argument("NetworkTransport cannot be null");
   }
-  if (!timer_) {
+  if (!infra_->timer_) {
     throw std::invalid_argument("TimerService cannot be null");
+  }
+  if (!infra_->protocol_) {
+    throw std::invalid_argument("Protocol cannot be null");
   }
 
   if (persister_) {
@@ -57,7 +59,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
 
   // Initialize metrics if enabled
   if (config.metrics_enabled) {
-    metrics_ = std::make_unique<MetricsRegistry>();
+    infra_->metrics_ = std::make_unique<MetricsRegistry>();
   }
 
   // Initialize runtime config with defaults from RaftNodeConfig
@@ -78,8 +80,17 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
     defaults.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
     defaults.leader_lease_enabled = config.leader_lease_enabled;
     defaults.transport_batching_enabled = config.transport_batching_enabled;
-    runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
+    infra_->runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
   }
+
+  // Cache raw pointers into infra_ so the rest of the implementation can
+  // keep using network_->, timer_->, metrics_->, etc.
+  network_ = infra_->network_.get();
+  timer_ = infra_->timer_.get();
+  protocol_ = infra_->protocol_.get();
+  metrics_ = infra_->metrics_.get();
+  metrics_server_ = infra_->metrics_server_.get();
+  runtime_config_ = infra_->runtime_config_.get();
 
   // Initialize client session manager
   { session_manager_ = std::make_unique<ClientSessionManager>(); }
@@ -160,18 +171,18 @@ Status RaftNode::RaftNodeImpl::Start() {
     // Initialize and start LogPersister
     LogPersistenceConfig log_config;
     log_config.batch_size = config_.max_entries_per_append;
-    auto rc = runtime_config_->Get();
+    auto rc = infra_->runtime_config_->Get();
     log_config.batch_interval_ms = rc.heartbeat_interval_ms / 2;
     log_config.data_dir = config_.data_dir;
 
     // Wire ASIO executor for async truncation if using AsioTimerService
-    if (auto* asio_timer = dynamic_cast<AsioTimerService*>(timer_.get())) {
+    if (auto* asio_timer = dynamic_cast<AsioTimerService*>(timer_)) {
       if (auto* io = asio_timer->GetIoContext()) {
         log_config.executor = [io](std::function<void()> fn) { asio::post(*io, std::move(fn)); };
       }
     }
 
-    log_persister_ = std::make_unique<LogPersister>(persister_, log_config, metrics_.get());
+    log_persister_ = std::make_unique<LogPersister>(persister_, log_config, metrics_);
     log_persister_->Start();
 
     // Restore log entries from disk.
@@ -199,16 +210,16 @@ Status RaftNode::RaftNodeImpl::Start() {
     HandleIncomingRpc(from, req, resp);
   };
 
-  auto status = network_->Initialize(config_.listen_addr, handler);
+  auto status = infra_->network_->Initialize(config_.listen_addr, handler);
   if (!status.ok()) {
     if (persister_) persister_->Close();
     state_ = NodeState::kInitialized;
     return status;
   }
 
-  network_->SetBatchingEnabled(runtime_config_->Get().transport_batching_enabled);
+  infra_->network_->SetBatchingEnabled(infra_->runtime_config_->Get().transport_batching_enabled);
 
-  status = network_->Start();
+  status = infra_->network_->Start();
   if (!status.ok()) {
     if (persister_) persister_->Close();
     state_ = NodeState::kInitialized;
@@ -217,24 +228,25 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   // Set up transport layer metrics callback
   if (metrics_) {
-    network_->SetConnectionCallback([this](NodeId peer_id, const NodeAddr& /*addr*/,
-                                           bool connected) {
-      metrics_->GetGauge("raft_transport_peer_connected", {{"peer_id", std::to_string(peer_id)}})
-          .Set(connected ? 1.0 : 0.0);
-      metrics_
-          ->GetCounter("raft_transport_connections_total",
-                       {{"peer_id", std::to_string(peer_id)},
-                        {"status", connected ? "connected" : "disconnected"}})
-          .Increment();
-    });
-    network_->SetPeerStateCallback([this](NodeId peer_id, int state) {
-      metrics_->GetGauge("transport_peer_state", {{"peer_id", std::to_string(peer_id)}})
+    infra_->network_->SetConnectionCallback(
+        [this](NodeId peer_id, const NodeAddr& /*addr*/, bool connected) {
+          infra_->metrics_
+              ->GetGauge("raft_transport_peer_connected", {{"peer_id", std::to_string(peer_id)}})
+              .Set(connected ? 1.0 : 0.0);
+          metrics_
+              ->GetCounter("raft_transport_connections_total",
+                           {{"peer_id", std::to_string(peer_id)},
+                            {"status", connected ? "connected" : "disconnected"}})
+              .Increment();
+        });
+    infra_->network_->SetPeerStateCallback([this](NodeId peer_id, int state) {
+      infra_->metrics_->GetGauge("transport_peer_state", {{"peer_id", std::to_string(peer_id)}})
           .Set(static_cast<double>(state));
     });
   }
 
   // 3. Start timer service
-  timer_->Start();
+  infra_->timer_->Start();
 
   // 4. Start metrics HTTP server
   if (metrics_ && !config_.metrics_addr.empty()) {
@@ -243,9 +255,10 @@ Status RaftNode::RaftNodeImpl::Start() {
     tls_config.cert_file = config_.tls_cert_file;
     tls_config.key_file = config_.tls_key_file;
     tls_config.ca_file = config_.tls_ca_file;
-    metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr, metrics_.get(),
-                                                          tls_config, config_.admin_token);
-    metrics_server_->SetStatusProvider([this]() -> std::string {
+    infra_->metrics_server_ = std::make_unique<MetricsHttpServer>(config_.metrics_addr, metrics_,
+                                                                  tls_config, config_.admin_token);
+    metrics_server_ = infra_->metrics_server_.get();
+    infra_->metrics_server_->SetStatusProvider([this]() -> std::string {
       // Lock hierarchy: election_mtx_ -> replication_mtx_ -> membership_mtx_
       // -> applier_mtx_. All accessed state must be protected.
       std::lock_guard<std::mutex> lock_e(election_mtx_);
@@ -287,7 +300,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     });
 
     // Control plane handlers (#19 API implementation)
-    metrics_server_->SetAddMemberHandler(
+    infra_->metrics_server_->SetAddMemberHandler(
         [this](int32_t node_id, const std::string& addr) -> std::string {
           if (node_id < 0 || addr.empty()) {
             nlohmann::json j;
@@ -310,7 +323,7 @@ Status RaftNode::RaftNodeImpl::Start() {
           return j.dump();
         });
 
-    metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
+    infra_->metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
       if (node_id < 0) {
         nlohmann::json j;
         j["error"] = "BAD_REQUEST";
@@ -332,7 +345,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       return j.dump();
     });
 
-    metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
+    infra_->metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
       auto status = TriggerSnapshot();
       nlohmann::json j;
       if (status.ok()) {
@@ -345,7 +358,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       return j.dump();
     });
 
-    metrics_server_->SetTransferLeadershipHandler([this](int32_t target_id) -> std::string {
+    infra_->metrics_server_->SetTransferLeadershipHandler([this](int32_t target_id) -> std::string {
       nlohmann::json j;
       if (target_id < 0) {
         j["error"] = "BAD_REQUEST";
@@ -366,21 +379,21 @@ Status RaftNode::RaftNodeImpl::Start() {
       return j.dump();
     });
 
-    metrics_server_->SetConfigProvider([this]() -> std::string {
-      return runtime_config_ ? runtime_config_->ToJson()
+    infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
+      return runtime_config_ ? infra_->runtime_config_->ToJson()
                              : "{\"error\":\"runtime_config_not_initialized\"}";
     });
 
-    metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+    infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
       if (!runtime_config_) {
         return "{\"error\":\"runtime_config_not_initialized\"}";
       }
-      auto old_cfg = runtime_config_->Get();
-      auto status = runtime_config_->UpdateFromJson(json);
+      auto old_cfg = infra_->runtime_config_->Get();
+      auto status = infra_->runtime_config_->UpdateFromJson(json);
       if (status.ok()) {
-        auto new_cfg = runtime_config_->Get();
+        auto new_cfg = infra_->runtime_config_->Get();
         if (new_cfg.transport_batching_enabled != old_cfg.transport_batching_enabled) {
-          network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
+          infra_->network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
         }
         return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
       }
@@ -455,10 +468,10 @@ Status RaftNode::RaftNodeImpl::Start() {
         j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
       }
 
-      metrics_server_->BroadcastEvent(j.dump());
+      infra_->metrics_server_->BroadcastEvent(j.dump());
     });
 
-    metrics_server_->Start();
+    infra_->metrics_server_->Start();
   }
 
   // 5. Enter Follower state
@@ -485,8 +498,9 @@ Status RaftNode::RaftNodeImpl::Start() {
 void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
   // 1. Stop metrics server
   if (metrics_server_) {
-    metrics_server_->Stop();
-    metrics_server_.reset();
+    infra_->metrics_server_->Stop();
+    infra_->metrics_server_.reset();
+    metrics_server_ = nullptr;
   }
 
   // 2. Stop timers. election_mtx_ must be held when mutating
@@ -501,12 +515,12 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
 
   // 3. Stop TimerService
   if (timer_) {
-    timer_->Stop();
+    infra_->timer_->Stop();
   }
 
   // 4. Stop NetworkTransport
   if (network_) {
-    auto status = network_->Stop();
+    auto status = infra_->network_->Stop();
     if (!status.ok()) {
       LOG_WARN("NetworkTransport stop failed: {}", status.ToString());
     }
@@ -573,7 +587,8 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
   state_ = NodeState::kStopped;
 
   // Best-effort cleanup: release resources without blocking.
-  metrics_server_.reset();
+  infra_->metrics_server_.reset();
+  metrics_server_ = nullptr;
   {
     std::lock_guard<std::mutex> lock_e(election_mtx_);
     CancelElectionTimerLocked();
@@ -581,7 +596,7 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
   StopHeartbeatTimerLocked();
   StopSnapshotCheckTimerLocked();
 
-  // Note: We intentionally do NOT call timer_->Stop() or network_->Stop()
+  // Note: We intentionally do NOT call infra_->timer_->Stop() or infra_->network_->Stop()
   // here because they may be the source of the hang. The underlying
   // io_context threads will be detached by their own timeout logic.
 
@@ -886,7 +901,7 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
     PendingProposal proposal;
     proposal.index = index;
     proposal.callback = [i, results, remaining, callback,
-                         timer = timer_.get()](const ApplyResult& result) {
+                         timer = timer_](const ApplyResult& result) {
       (*results)[i] = result;
       if (remaining->fetch_sub(1, std::memory_order_acq_rel) == 1) {
         // Last one: post batch completion to timer thread (outside lock)
@@ -978,7 +993,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(const std::string& comm
   lock_r.unlock();
 
   // Wait for commit and apply with timeout
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
   auto wait_status = future.wait_for(std::chrono::milliseconds(cfg.propose_timeout_ms));
 
   lock_r.lock();
@@ -1040,7 +1055,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     ReadIndexRequest req;
     ReadIndexResponse resp;
     auto status = RpcCall(leader_addr, req, resp,
-                          std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
+                          std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms));
     if (!status.ok()) {
       return Status::Error("READINDEX_FORWARD",
                            "Failed to forward ReadIndex to leader: " + status.ToString());
@@ -1072,7 +1087,8 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
       pending_reads_[read_id] = std::move(read_req);
 
       if (metrics_) {
-        metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
+        infra_->metrics_
+            ->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
             .Increment();
       }
 
@@ -1097,7 +1113,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     read_req.start_time = std::chrono::steady_clock::now();
 
     // Check if leader lease is valid (O(1) timestamp check)
-    auto cfg = runtime_config_->Get();
+    auto cfg = infra_->runtime_config_->Get();
     auto now = std::chrono::steady_clock::now();
     bool lease_valid = cfg.leader_lease_enabled && now < leader_lease_expiry_;
 
@@ -1122,7 +1138,8 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     pending_reads_[read_id] = std::move(read_req);
 
     if (metrics_) {
-      metrics_->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
+      infra_->metrics_
+          ->GetCounter("raft_readindex_total", {{"node_id", std::to_string(server_id_)}})
           .Increment();
     }
 
@@ -1278,7 +1295,7 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   if (metrics_) {
     auto labels = metrics_node_label_;
     labels["peer_id"] = std::to_string(id);
-    metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
+    infra_->metrics_->RemoveGauge("raft_transport_peer_lag_entries", labels);
   }
 
   // Remove from peer_addrs_
@@ -1489,7 +1506,7 @@ NodeId RaftNode::RaftNodeImpl::ParseNodeId(const NodeAddr& addr) {
 
 void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
   if (!metrics_) return;
-  auto cfg = runtime_config_->Get();
+  auto cfg = infra_->runtime_config_->Get();
   bool valid = false;
   double remaining_seconds = 0.0;
   if (role_ == RaftNodeRole::LEADER && cfg.leader_lease_enabled) {
@@ -1499,8 +1516,9 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
         std::chrono::duration_cast<std::chrono::milliseconds>(leader_lease_expiry_ - now).count();
     remaining_seconds = std::max(0.0, remaining_ms / 1000.0);
   }
-  metrics_->GetGauge("raft_leader_lease_seconds", metrics_node_label_).Set(remaining_seconds);
-  metrics_->GetGauge("raft_leader_lease_valid", metrics_node_label_).Set(valid ? 1.0 : 0.0);
+  infra_->metrics_->GetGauge("raft_leader_lease_seconds", metrics_node_label_)
+      .Set(remaining_seconds);
+  infra_->metrics_->GetGauge("raft_leader_lease_valid", metrics_node_label_).Set(valid ? 1.0 : 0.0);
 }
 
 void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
@@ -1514,5 +1532,5 @@ void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
   double lag = (last_index >= match) ? static_cast<double>(last_index - match) : 0.0;
   auto labels = metrics_node_label_;
   labels["peer_id"] = std::to_string(peer_id);
-  metrics_->GetGauge("raft_transport_peer_lag_entries", labels).Set(lag);
+  infra_->metrics_->GetGauge("raft_transport_peer_lag_entries", labels).Set(lag);
 }

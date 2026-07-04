@@ -77,7 +77,8 @@ struct PendingReadIndex {
  */
 class RaftGroup {
  public:
-  explicit RaftGroup(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine);
+  explicit RaftGroup(uint64_t group_id, const RaftNodeConfig& config,
+                     std::shared_ptr<StateMachine> state_machine);
 
   // Basic accessors used by the wrapper.
   NodeId server_id() const { return server_id_; }
@@ -108,6 +109,9 @@ class RaftGroup {
     uint64_t session_id = 0;
     uint64_t seq_num = 0;
   };
+
+  // ========== Per-Group Identity ==========
+  uint64_t group_id_ = 0;
 
   // ========== Per-Group Configuration & StateMachine ==========
   RaftNodeConfig config_;

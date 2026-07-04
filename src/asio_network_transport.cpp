@@ -470,7 +470,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   mutable std::mutex mutex_;
   RpcRequestHandler request_handler_;
-  std::function<void(NodeId, uint64_t, const std::string&, std::string&)> group_request_handler_;
+  GroupRequestHandler group_request_handler_;
   std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
   char header_buffer_[4] = {};
@@ -879,11 +879,9 @@ class AsioNetworkTransport : public NetworkTransport {
 
   /**
    * Register a handler for multi-raft group messages.
-   * This is a spike/stub API; in full multi-raft it will route to the
-   * appropriate RaftGroup. For now group_id==0 stays on the existing path.
+   * group_id==0 stays on the existing single-group path.
    */
-  void SetGroupRequestHandler(
-      std::function<void(NodeId, uint64_t, const std::string&, std::string&)> handler) {
+  void SetGroupRequestHandler(GroupRequestHandler handler) override {
     std::lock_guard<std::mutex> lock(mutex_);
     group_request_handler_ = std::move(handler);
   }
@@ -1112,7 +1110,7 @@ class AsioNetworkTransport : public NetworkTransport {
   NodeAddr listen_addr_;
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   RpcRequestHandler request_handler_;
-  std::function<void(NodeId, uint64_t, const std::string&, std::string&)> group_request_handler_;
+  GroupRequestHandler group_request_handler_;
   ConnectionCallback connection_callback_;
   std::function<void(NodeId, int)> peer_state_callback_;
 

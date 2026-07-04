@@ -201,6 +201,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   }
 
   AppendEntriesRequest req;
+  req.group_id = group_->group_id_;
   req.term_ = group_->current_term_;
   req.leader_id_ = group_->server_id_;
   req.prev_log_index_ = next_idx - 1;

@@ -264,6 +264,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
 
   // Build request
   InstallSnapshotRequest req;
+  req.group_id = group_->group_id_;
   req.term_ = group_->current_term_;
   req.leader_id_ = group_->server_id_;
   req.last_included_index_ = state.last_included_index;

@@ -55,17 +55,13 @@ Status MultiRaftPersister::SaveState(const PersistentState& state) {
   return inner_->SaveState(state);
 }
 
-Status MultiRaftPersister::LoadState(PersistentState& state) {
-  return inner_->LoadState(state);
-}
+Status MultiRaftPersister::LoadState(PersistentState& state) { return inner_->LoadState(state); }
 
 Status MultiRaftPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
   return inner_->AppendEntries(entries);
 }
 
-Status MultiRaftPersister::Sync() {
-  return inner_->Sync();
-}
+Status MultiRaftPersister::Sync() { return inner_->Sync(); }
 
 Status MultiRaftPersister::GetEntries(uint64_t start, uint64_t end,
                                       std::vector<RaftLogEntry>* out) {
@@ -110,9 +106,7 @@ Status MultiRaftPersister::LoadSnapshotStream(
   return inner_->LoadSnapshotStream(chunk_consumer, last_index, last_term);
 }
 
-bool MultiRaftPersister::HasSnapshot() const {
-  return inner_->HasSnapshot();
-}
+bool MultiRaftPersister::HasSnapshot() const { return inner_->HasSnapshot(); }
 
 void MultiRaftPersister::SetSyncOnWrite(bool sync) {
   sync_on_write_ = sync;

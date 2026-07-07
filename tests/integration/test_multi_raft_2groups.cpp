@@ -195,9 +195,8 @@ class MultiRaft2GroupsTest : public ::testing::Test {
         auto sm = std::make_shared<MockStateMachine>();
         group_sms.push_back(sm);
         auto status = stores_[i]->CreateGroup(group_id, options, sm);
-        ASSERT_TRUE(status.ok())
-            << "Restart CreateGroup " << group_id << " on node " << (i + 1) << " failed: "
-            << status.ToString();
+        ASSERT_TRUE(status.ok()) << "Restart CreateGroup " << group_id << " on node " << (i + 1)
+                                 << " failed: " << status.ToString();
       }
       state_machines_[group_id] = std::move(group_sms);
     }

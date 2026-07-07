@@ -486,8 +486,14 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     CancelElectionTimerLocked();
   }
-  StopHeartbeatTimerLocked();
-  StopSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    StopHeartbeatTimerLocked();
+  }
+  {
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    StopSnapshotCheckTimerLocked();
+  }
 
   // 2a. Cancel the legacy single-group tick timer before stopping the service.
   if (manage_network_ && tick_timer_ != 0 && timer_) {
@@ -575,8 +581,14 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     CancelElectionTimerLocked();
   }
-  StopHeartbeatTimerLocked();
-  StopSnapshotCheckTimerLocked();
+  {
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    StopHeartbeatTimerLocked();
+  }
+  {
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    StopSnapshotCheckTimerLocked();
+  }
 
   if (manage_network_ && tick_timer_ != 0 && timer_) {
     timer_->CancelTimer(tick_timer_);

@@ -11,6 +11,7 @@
 #include "rollingraft/raft_node.h"
 #include "rollingraft/state_machine.h"
 #include "rollingraft/status.h"
+#include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
 #include "raft_node_impl.h"
@@ -100,6 +101,11 @@ class RaftStore {
 
   std::unordered_map<uint64_t, std::shared_ptr<RaftNode::RaftNodeImpl>> groups_;
   mutable std::shared_mutex groups_mtx_;
+
+  // Shared coarse-grained tick timer.  RaftStore dispatches a tick to every
+  // group on each interval, allowing group-local timeouts (election, etc.) to
+  // be driven from a single timer instead of one timer per group.
+  TimerId tick_timer_ = 0;
 
   std::atomic<bool> initialized_{false};
   std::atomic<bool> running_{false};

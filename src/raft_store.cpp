@@ -13,6 +13,7 @@
 
 #include "asio_timer_service.h"
 #include "json_protocol.h"
+#include "multi_raft_persister.h"
 #include "nlohmann/json.hpp"
 
 namespace rollingraft {
@@ -110,6 +111,17 @@ Status RaftStore::Start() {
   }
 
   infra_->timer_->Start();
+
+  // Start the shared coarse-grained tick timer.  Each group receives a tick
+  // every kTickIntervalMs, driving group-local timeouts from a single timer.
+  tick_timer_ = infra_->timer_->SetInterval(std::chrono::milliseconds(10), [this]() {
+    std::shared_lock<std::shared_mutex> lock(groups_mtx_);
+    for (const auto& [group_id, group] : groups_) {
+      (void)group_id;
+      group->OnStoreTick();
+    }
+  });
+
   return infra_->network_->Start();
 }
 
@@ -133,6 +145,10 @@ Status RaftStore::Stop() {
   }
 
   if (infra_) {
+    if (tick_timer_ != 0 && infra_->timer_) {
+      infra_->timer_->CancelTimer(tick_timer_);
+      tick_timer_ = 0;
+    }
     if (infra_->network_) {
       infra_->network_->Stop();
     }
@@ -159,8 +175,14 @@ Status RaftStore::CreateGroup(uint64_t group_id, const RaftGroupOptions& options
     return status;
   }
 
-  auto group = std::make_shared<RaftNode::RaftNodeImpl>(
-      config, std::move(state_machine), infra_, nullptr, group_id, /*manage_network=*/false);
+  std::shared_ptr<Persister> persister;
+  if (!config_.data_dir.empty()) {
+    persister = std::make_shared<MultiRaftPersister>(group_id, config_.data_dir);
+  }
+
+  auto group = std::make_shared<RaftNode::RaftNodeImpl>(config, std::move(state_machine), infra_,
+                                                        persister, group_id,
+                                                        /*manage_network=*/false);
 
   status = group->Start();
   if (!status.ok()) {

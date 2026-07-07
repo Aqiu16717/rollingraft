@@ -237,6 +237,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
   // Send empty AppendEntries (heartbeats) only to selected peers
   for (NodeId peer_id : peers_to_send) {
     AppendEntriesRequest req;
+    req.group_id = group_->group_id_;
     req.term_ = group_->current_term_;
     req.leader_id_ = group_->server_id_;
     req.prev_log_index_ = group_->next_index_[peer_id] - 1;

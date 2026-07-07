@@ -476,8 +476,12 @@ class RaftNode {
    */
   Status TransferLeadershipTo(NodeId target_id);
 
- private:
+  // Exposed for multi-raft store access. The implementation remains private;
+  // only the type name is public so RaftStore can hold std::shared_ptr
+  // pointers without breaking the PIMPL encapsulation of the wrapper API.
   class RaftNodeImpl;
+
+ private:
   std::unique_ptr<RaftNodeImpl> raft_node_impl_;  // PIMPL idiom
 };
 

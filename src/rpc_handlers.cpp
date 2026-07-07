@@ -31,6 +31,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         RequestVoteResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandleRequestVote(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -49,6 +50,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         AppendEntriesResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandleAppendEntries(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -67,6 +69,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         InstallSnapshotResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandleInstallSnapshot(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -85,6 +88,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         ClientResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandleClientRequest(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -103,6 +107,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         PreVoteResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandlePreVote(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {
@@ -121,6 +126,7 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         }
         ReadIndexResponse resp;
         resp.correlation_id_ = req.correlation_id_;
+        resp.group_id = req.group_id;
         HandleReadIndexRequest(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {

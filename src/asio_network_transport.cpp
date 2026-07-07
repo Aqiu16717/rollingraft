@@ -470,7 +470,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   mutable std::mutex mutex_;
   RpcRequestHandler request_handler_;
-  std::function<void(NodeId, uint64_t, const std::string&, std::string&)> group_request_handler_;
+  GroupRequestHandler group_request_handler_;
   std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
   char header_buffer_[4] = {};
@@ -879,11 +879,9 @@ class AsioNetworkTransport : public NetworkTransport {
 
   /**
    * Register a handler for multi-raft group messages.
-   * This is a spike/stub API; in full multi-raft it will route to the
-   * appropriate RaftGroup. For now group_id==0 stays on the existing path.
+   * group_id==0 stays on the existing single-group path.
    */
-  void SetGroupRequestHandler(
-      std::function<void(NodeId, uint64_t, const std::string&, std::string&)> handler) {
+  void SetGroupRequestHandler(GroupRequestHandler handler) override {
     std::lock_guard<std::mutex> lock(mutex_);
     group_request_handler_ = std::move(handler);
   }
@@ -967,13 +965,16 @@ class AsioNetworkTransport : public NetworkTransport {
         acceptor_->close(ec);
       }
 
-      // Close all peer connections
+      // Close all peer connections. Close() posts cleanup handlers to the
+      // io_context; we must stop the io_context *after* posting so those
+      // handlers run, then wait for worker threads to drain before clearing
+      // peers_. This prevents IO threads from invoking methods on destroyed
+      // PeerConnection/TcpConnection objects.
       for (auto& [id, peer] : peers_) {
         peer->Close();
       }
-      peers_.clear();
 
-      // Stop io_context
+      // Stop io_context. Already-posted close handlers will still execute.
       work_guard_.reset();
       io_context_.stop();
     }
@@ -985,27 +986,28 @@ class AsioNetworkTransport : public NetworkTransport {
       LOG_WARN("AsioNetworkTransport no-op post failed: {}", e.what());
     }
 
-    // Wait for all worker threads to exit run() with timeout.
-    bool all_exited = false;
-    for (int i = 0; i < 200; ++i) {
-      auto exited = io_threads_exited_.load(std::memory_order_acquire);
-      if (exited == io_threads_.size()) {
-        all_exited = true;
-        break;
-      }
+    // Wait for all worker threads to exit run().  Detaching threads that have
+    // not exited can lead to use-after-free if they later invoke callbacks on
+    // objects that have been destroyed, so we keep waiting rather than timing
+    // out in normal operation.  Under extreme load this may take longer than
+    // the old 2s cap, but it keeps shutdown safe.
+    while (io_threads_exited_.load(std::memory_order_acquire) != io_threads_.size()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     for (auto& t : io_threads_) {
       if (t.joinable()) {
-        if (all_exited) {
-          t.join();
-        } else {
-          t.detach();
-        }
+        t.join();
       }
     }
     io_threads_.clear();
+
+    // Now that all IO threads have exited, it is safe to destroy peer
+    // connection objects without racing with posted handlers.
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      peers_.clear();
+    }
 
     LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();
@@ -1112,7 +1114,7 @@ class AsioNetworkTransport : public NetworkTransport {
   NodeAddr listen_addr_;
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   RpcRequestHandler request_handler_;
-  std::function<void(NodeId, uint64_t, const std::string&, std::string&)> group_request_handler_;
+  GroupRequestHandler group_request_handler_;
   ConnectionCallback connection_callback_;
   std::function<void(NodeId, int)> peer_state_callback_;
 

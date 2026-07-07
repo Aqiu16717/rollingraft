@@ -41,7 +41,8 @@ namespace rollingraft {
 class RaftNode::RaftNodeImpl {
  public:
   RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
-               std::shared_ptr<SharedNodeInfra> infra, std::shared_ptr<Persister> persister);
+               std::shared_ptr<SharedNodeInfra> infra, std::shared_ptr<Persister> persister,
+               uint64_t group_id = 0, bool manage_network = true);
   ~RaftNodeImpl();
 
   Status Start();
@@ -81,6 +82,9 @@ class RaftNode::RaftNodeImpl {
   // Snapshot & leadership transfer
   Status TriggerSnapshot();
   Status TransferLeadershipTo(NodeId target_id);
+
+  // RPC entry point (public so RaftStore can route multi-raft group messages)
+  void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
 
   // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
@@ -168,9 +172,6 @@ class RaftNode::RaftNodeImpl {
   void OnElectionTimeout();
   void OnHeartbeatTimeout();
 
-  // RPC entry point
-  void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
-
   // Async apply loop
   void ApplyLoop();
 
@@ -199,6 +200,7 @@ class RaftNode::RaftNodeImpl {
   enum class NodeState { kInitialized = 0, kRunning = 1, kStopping = 2, kStopped = 3 };
   std::atomic<NodeState> state_{NodeState::kInitialized};
   std::atomic<uint64_t> next_correlation_id_{1};
+  bool manage_network_ = true;
 
   // ========== Event Bus ==========
   EventBus event_bus_;

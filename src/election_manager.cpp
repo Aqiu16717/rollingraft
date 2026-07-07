@@ -355,6 +355,7 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
   auto [last_index, last_term] = group_->log_.GetLastLogInfo();
 
   RequestVoteRequest req;
+  req.group_id = group_->group_id_;
   req.term_ = group_->current_term_;
   req.candidate_id_ = group_->server_id_;
   req.last_log_index_ = last_index;
@@ -468,6 +469,7 @@ void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id, const NodeA
   auto [last_index, last_term] = group_->log_.GetLastLogInfo();
 
   PreVoteRequest req;
+  req.group_id = group_->group_id_;
   req.term_ = group_->pre_vote_term_;
   req.candidate_id_ = group_->server_id_;
   req.last_log_index_ = last_index;

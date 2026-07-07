@@ -35,8 +35,10 @@ NodeId ExtractNodeIdFromAddr(const NodeAddr& addr) {
 
 }  // namespace
 
-RaftGroup::RaftGroup(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine)
-    : config_(config),
+RaftGroup::RaftGroup(uint64_t group_id, const RaftNodeConfig& config,
+                     std::shared_ptr<StateMachine> state_machine)
+    : group_id_(group_id),
+      config_(config),
       state_machine_(std::move(state_machine)),
       server_id_(config.node_id),
       peer_addrs_(config.peers) {

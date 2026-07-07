@@ -39,6 +39,17 @@ using RpcRequestHandler =
     std::function<void(NodeId from, const std::string& request_data, std::string& response_data)>;
 
 /**
+ * Handler for multi-raft group-scoped incoming RPC requests.
+ *
+ * @param from Source node ID
+ * @param group_id Target group ID extracted from the RPC body
+ * @param request_data Serialized request data
+ * @param response_data Output buffer for response (to be serialized)
+ */
+using GroupRequestHandler = std::function<void(
+    NodeId from, uint64_t group_id, const std::string& request_data, std::string& response_data)>;
+
+/**
  * Callback for connection state changes.
  *
  * @param peer_id Peer node ID
@@ -93,6 +104,18 @@ class NetworkTransport {
   virtual void SetPeerStateCallback(std::function<void(NodeId, int)> callback) {
     (void)callback;  // Default no-op
   }
+
+  /**
+   * Register a handler for multi-raft group-scoped incoming RPC requests.
+   *
+   * Transports that do not support multi-raft can leave this as a no-op.
+   * When set, the transport extracts group_id from each inbound RPC and
+   * routes it through this handler. group_id == 0 keeps the legacy single-group
+   * path.
+   *
+   * @param handler Function to call for group-scoped RPCs
+   */
+  virtual void SetGroupRequestHandler(GroupRequestHandler handler) { (void)handler; }
 
   /**
    * Enable or disable write coalescing (batching) for outbound messages.

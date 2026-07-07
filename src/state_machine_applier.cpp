@@ -35,7 +35,7 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
                              .count();
           metrics_
               ->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
-                             {{"node_id", std::to_string(group_->server_id_)}})
+                             group_->metrics_node_label_)
               .Observe(latency);
         }
         ApplyResult result;
@@ -162,7 +162,7 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
                   .count();
           metrics_
               ->GetHistogram("raft_proposal_latency_seconds", kLatencyBuckets,
-                             {{"node_id", std::to_string(group_->server_id_)}})
+                             group_->metrics_node_label_)
               .Observe(latency);
         }
         task.callback(result);
@@ -182,8 +182,7 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
 
     // Update metrics
     if (metrics_) {
-      infra_->metrics_
-          ->GetGauge("raft_applied_index", {{"node_id", std::to_string(group_->server_id_)}})
+      infra_->metrics_->GetGauge("raft_applied_index", group_->metrics_node_label_)
           .Set(static_cast<double>(new_last_applied));
     }
   }
@@ -191,9 +190,7 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
 
 void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id) {
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_readindex_heartbeats_sent_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    metrics_->GetCounter("raft_readindex_heartbeats_sent_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -228,9 +225,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
   }
 
   if (!peers_to_skip.empty() && metrics_) {
-    metrics_
-        ->GetCounter("raft_heartbeat_coalesced_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    metrics_->GetCounter("raft_heartbeat_coalesced_total", group_->metrics_node_label_)
         .Increment(peers_to_skip.size());
   }
 
@@ -292,9 +287,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
 
 void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read_id) {
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_readindex_acks_received_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    metrics_->GetCounter("raft_readindex_acks_received_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -329,7 +322,7 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read
                 .count();
         metrics_
             ->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
-                           {{"node_id", std::to_string(group_->server_id_)}})
+                           group_->metrics_node_label_)
             .Observe(latency);
       }
       group_->pending_reads_.erase(it);
@@ -374,15 +367,13 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
                 .count();
         metrics_
             ->GetHistogram("raft_readindex_latency_seconds", kLatencyBuckets,
-                           {{"node_id", std::to_string(group_->server_id_)}})
+                           group_->metrics_node_label_)
             .Observe(latency);
       }
       group_->pending_reads_.erase(it);
 
       if (metrics_) {
-        metrics_
-            ->GetCounter("raft_readindex_completed_total",
-                         {{"node_id", std::to_string(group_->server_id_)}})
+        metrics_->GetCounter("raft_readindex_completed_total", group_->metrics_node_label_)
             .Increment();
       }
 

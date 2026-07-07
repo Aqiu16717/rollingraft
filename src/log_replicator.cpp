@@ -114,11 +114,9 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
              dead_id, group_->config_.dead_node_timeout_ms);
 
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_dead_nodes_detected_total",
-                       {{"node_id", std::to_string(group_->server_id_)},
-                        {"peer_id", std::to_string(dead_id)}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["peer_id"] = std::to_string(dead_id);
+      metrics_->GetCounter("raft_dead_nodes_detected_total", labels).Increment();
     }
 
     // Drop locks before calling RemoveNode (it acquires its own locks)
@@ -262,11 +260,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   }
 
   if (metrics_) {
-    metrics_
-        ->GetCounter(
-            "raft_appendentries_sent_total",
-            {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(peer_id)}})
-        .Increment();
+    auto labels = group_->metrics_node_label_;
+    labels["peer_id"] = std::to_string(peer_id);
+    metrics_->GetCounter("raft_appendentries_sent_total", labels).Increment();
   }
 
   {
@@ -339,11 +335,9 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   delay = std::min(delay, cfg.max_retry_delay_ms);
 
   if (metrics_) {
-    metrics_
-        ->GetCounter(
-            "raft_appendentries_retries_total",
-            {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(peer_id)}})
-        .Increment();
+    auto labels = group_->metrics_node_label_;
+    labels["peer_id"] = std::to_string(peer_id);
+    metrics_->GetCounter("raft_appendentries_retries_total", labels).Increment();
   }
   LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms", group_->server_id_,
            retry.attempts, peer_id, delay);
@@ -397,11 +391,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
 
   if (resp.success_) {
     if (metrics_) {
-      metrics_
-          ->GetCounter(
-              "raft_appendentries_success_total",
-              {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(from)}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["peer_id"] = std::to_string(from);
+      metrics_->GetCounter("raft_appendentries_success_total", labels).Increment();
     }
     // Update progress based on the actual start index of this batch.
     Index new_match = head.start_index + resp.entries_count_ - 1;
@@ -461,11 +453,9 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
     }
   } else {
     if (metrics_) {
-      metrics_
-          ->GetCounter(
-              "raft_appendentries_failure_total",
-              {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(from)}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["peer_id"] = std::to_string(from);
+      metrics_->GetCounter("raft_appendentries_failure_total", labels).Increment();
     }
     // Log mismatch: clear all inflight entries for this peer because
     // subsequent in-flight batches are now invalid (prefix missing).
@@ -585,9 +575,7 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
     LOG_WARN("Node {} lost quorum (acks={}/{}), stepping down from leadership", group_->server_id_,
              ack_count, majority);
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_checkquorum_stepdown_total",
-                       {{"node_id", std::to_string(group_->server_id_)}})
+      metrics_->GetCounter("raft_checkquorum_stepdown_total", group_->metrics_node_label_)
           .Increment();
     }
     BecomeFollowerLocked(group_->current_term_);
@@ -652,11 +640,8 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     if (can_commit) {
       group_->commit_index_ = index;
       if (metrics_) {
-        infra_->metrics_
-            ->GetCounter("raft_commits_total", {{"node_id", std::to_string(group_->server_id_)}})
-            .Increment();
-        infra_->metrics_
-            ->GetGauge("raft_commit_index", {{"node_id", std::to_string(group_->server_id_)}})
+        infra_->metrics_->GetCounter("raft_commits_total", group_->metrics_node_label_).Increment();
+        infra_->metrics_->GetGauge("raft_commit_index", group_->metrics_node_label_)
             .Set(static_cast<double>(group_->commit_index_));
       }
       LOG_INFO("Node {} commit index advanced to {}", group_->server_id_, group_->commit_index_);

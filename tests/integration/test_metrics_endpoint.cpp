@@ -1,6 +1,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <regex>
 #include <thread>
 #include <vector>
 
@@ -182,8 +183,14 @@ TEST_F(MetricsEndpointTest, MetricsShowRoleAndTerm) {
     }
   }
 
-  EXPECT_NE(leader_output.find("raft_role{node_id="), std::string::npos);
-  EXPECT_NE(leader_output.find("raft_current_term{node_id="), std::string::npos);
+  // Labels are sorted alphabetically (group_id before node_id), so use regex
+  // to match regardless of label order.
+  EXPECT_TRUE(
+      std::regex_search(leader_output, std::regex("raft_role\\{[^}]*node_id=\"[^\"]+\"[^}]*\\}")))
+      << "raft_role metric not found in leader output";
+  EXPECT_TRUE(std::regex_search(leader_output,
+                                std::regex("raft_current_term\\{[^}]*node_id=\"[^\"]+\"[^}]*\\}")))
+      << "raft_current_term metric not found in leader output";
 }
 
 TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
@@ -482,8 +489,9 @@ TEST_F(MetricsEndpointTest, MetricsShowLeaderLeaseValid) {
       std::string out = FetchMetrics(metrics_addrs_[i]);
       if (out.find("raft_leader_lease_valid") != std::string::npos) {
         if (nodes_[i]->IsLeader() &&
-            out.find("raft_leader_lease_valid{node_id=\"" + std::to_string(i + 1) + "\"} 1") !=
-                std::string::npos) {
+            std::regex_search(
+                out, std::regex("raft_leader_lease_valid\\{[^}]*node_id=\"" +
+                                std::to_string(i + 1) + "\"[^}]*\\} 1")) {
           found_valid = true;
           break;
         }

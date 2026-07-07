@@ -29,13 +29,9 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
            group_->config_.quiesced_idle_threshold_ms);
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_quiesced_mode_entered_total",
-                     group_->metrics_node_label_)
+    metrics_->GetCounter("raft_quiesced_mode_entered_total", group_->metrics_node_label_)
         .Increment();
-    infra_->metrics_
-        ->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_)
-        .Set(1.0);
+    infra_->metrics_->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_).Set(1.0);
   }
 
   // If leader, reschedule heartbeat timer with quiesced interval
@@ -55,13 +51,9 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
   LOG_INFO("Node {} exited quiesced mode", group_->server_id_);
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_quiesced_mode_exited_total",
-                     group_->metrics_node_label_)
+    metrics_->GetCounter("raft_quiesced_mode_exited_total", group_->metrics_node_label_)
         .Increment();
-    infra_->metrics_
-        ->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_)
-        .Set(0.0);
+    infra_->metrics_->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_).Set(0.0);
   }
 
   // If leader, restore normal heartbeat interval

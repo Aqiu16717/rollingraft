@@ -256,6 +256,13 @@ void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
   }
 }
 
+void RaftNode::RaftNodeImpl::OnStoreTick() {
+  // Currently a no-op placeholder.  Future PRs can migrate group-local
+  // timeouts (election, heartbeat, snapshot check) from one timer per group
+  // to this single shared tick, reducing resource usage for very large
+  // numbers of groups.  The tick infrastructure is in place in RaftStore.
+}
+
 void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
 

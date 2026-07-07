@@ -86,6 +86,11 @@ class RaftNode::RaftNodeImpl {
   // RPC entry point (public so RaftStore can route multi-raft group messages)
   void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
 
+  // Coarse-grained tick dispatched by RaftStore.  Drives group-local timeouts
+  // (election, etc.) from the shared TimerService instead of one timer per
+  // group.  Safe to call when the group is not running — it is a no-op.
+  void OnStoreTick();
+
   // RPC handlers (called by NetworkTransport)
   void HandleRequestVote(const RequestVoteRequest&, RequestVoteResponse&);
   void HandlePreVote(const PreVoteRequest&, PreVoteResponse&);

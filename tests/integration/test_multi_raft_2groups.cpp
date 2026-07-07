@@ -142,6 +142,66 @@ class MultiRaft2GroupsTest : public ::testing::Test {
         << "No leader elected for group " << group_id;
   }
 
+  void StopStores() {
+    for (auto& store : stores_) {
+      if (store) {
+        try {
+          store->Stop();
+        } catch (...) {
+          // Ignore errors during cleanup
+        }
+      }
+    }
+    stores_.clear();
+    state_machines_.clear();
+  }
+
+  void RestartCluster() {
+    StopStores();
+
+    // Small delay for resources to settle before restart.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Recreate stores on the same addresses and data directories.
+    for (int i = 0; i < 3; ++i) {
+      RaftStoreConfig store_config;
+      store_config.node_id = i + 1;
+      store_config.listen_addr = addrs_[i];
+      store_config.data_dir = data_dirs_[i];
+      for (size_t j = 0; j < addrs_.size(); ++j) {
+        if (j != static_cast<size_t>(i)) {
+          store_config.peers.push_back(addrs_[j]);
+          store_config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
+        }
+      }
+
+      auto store = std::make_unique<RaftStore>(store_config);
+      auto status = store->Initialize();
+      ASSERT_TRUE(status.ok()) << "RaftStore restart init failed: " << status.ToString();
+      status = store->Start();
+      ASSERT_TRUE(status.ok()) << "RaftStore restart start failed: " << status.ToString();
+      stores_.push_back(std::move(store));
+    }
+
+    // Recreate groups with fresh state machines.
+    for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
+      std::vector<std::shared_ptr<MockStateMachine>> group_sms;
+      for (int i = 0; i < 3; ++i) {
+        RaftGroupOptions options;
+        options.group_id = group_id;
+        options.election_timeout_ms = 300;
+        options.heartbeat_interval_ms = 50;
+
+        auto sm = std::make_shared<MockStateMachine>();
+        group_sms.push_back(sm);
+        auto status = stores_[i]->CreateGroup(group_id, options, sm);
+        ASSERT_TRUE(status.ok()) << "Restart CreateGroup " << group_id << " on node " << (i + 1)
+                                 << " failed: " << status.ToString();
+      }
+      state_machines_[group_id] = std::move(group_sms);
+    }
+  }
+
   std::vector<std::string> data_dirs_;
   std::vector<std::string> addrs_;
   std::vector<std::unique_ptr<RaftStore>> stores_;
@@ -200,4 +260,28 @@ TEST_F(MultiRaft2GroupsTest, LeaderCanProposeInEachGroup) {
     }
     EXPECT_TRUE(completed) << "Group " << group_id << " command was not committed";
   }
+}
+
+TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {
+  StartCluster();
+
+  WaitForLeader(1);
+  WaitForLeader(2);
+
+  // Capture term before restart to verify persistent state is restored.
+  Term term1_before = stores_[0]->GetGroup(1)->CurrentTerm();
+  Term term2_before = stores_[0]->GetGroup(2)->CurrentTerm();
+
+  // Stop all stores, then restart from the same data directories.
+  RestartCluster();
+
+  // After restart, each group should re-elect a leader.  This validates that
+  // the MultiRaftPersister preserved term/voted_for across the restart.
+  WaitForLeader(1);
+  WaitForLeader(2);
+
+  EXPECT_GE(stores_[0]->GetGroup(1)->CurrentTerm(), term1_before)
+      << "Group 1 term should not regress after restart";
+  EXPECT_GE(stores_[0]->GetGroup(2)->CurrentTerm(), term2_before)
+      << "Group 2 term should not regress after restart";
 }

@@ -489,9 +489,8 @@ TEST_F(MetricsEndpointTest, MetricsShowLeaderLeaseValid) {
       std::string out = FetchMetrics(metrics_addrs_[i]);
       if (out.find("raft_leader_lease_valid") != std::string::npos) {
         if (nodes_[i]->IsLeader() &&
-            std::regex_search(
-                out, std::regex("raft_leader_lease_valid\\{[^}]*node_id=\"" +
-                                std::to_string(i + 1) + "\"[^}]*\\} 1")) {
+            std::regex_search(out, std::regex("raft_leader_lease_valid\\{[^}]*node_id=\"" +
+                                              std::to_string(i + 1) + "\"[^}]*\\} 1"))) {
           found_valid = true;
           break;
         }

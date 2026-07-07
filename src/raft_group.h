@@ -180,10 +180,15 @@ class RaftGroup {
   // ========== Cluster Config ==========
   ClusterConfig cluster_config_;
 
-  // ========== Timer State ==========
-  TimerId election_timer_ = 0;
-  TimerId heartbeat_timer_ = 0;
-  TimerId snapshot_check_timer_ = 0;
+  // ========== Tick-driven Timer State ==========
+  // These deadlines are evaluated by OnStoreTick() (driven by RaftStore's
+  // shared tick for multi-raft, or by RaftNodeImpl's own tick for legacy).
+  bool election_timer_enabled_ = false;
+  std::chrono::steady_clock::time_point election_deadline_;
+  bool heartbeat_timer_enabled_ = false;
+  std::chrono::steady_clock::time_point heartbeat_deadline_;
+  bool snapshot_check_timer_enabled_ = false;
+  std::chrono::steady_clock::time_point snapshot_check_deadline_;
 
   // ========== Snapshot State ==========
   Index last_snapshot_index_ = 0;

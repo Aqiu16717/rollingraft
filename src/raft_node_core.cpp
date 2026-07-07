@@ -214,6 +214,13 @@ Status RaftNode::RaftNodeImpl::Start() {
     // 3. Start timer service
     infra_->timer_->Start();
 
+    // 3a. For the legacy single-group path, drive group-local timeouts from a
+    // single coarse tick instead of registering three independent timers.
+    if (manage_network_) {
+      tick_timer_ =
+          infra_->timer_->SetInterval(std::chrono::milliseconds(10), [this]() { OnStoreTick(); });
+    }
+
     // 4. Start metrics HTTP server
     if (metrics_ && !group_->config_.metrics_addr.empty()) {
       MetricsHttpServer::TlsConfig tls_config;
@@ -474,14 +481,19 @@ void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
   }
 
   // 2. Stop timers. group_->election_mtx_ must be held when mutating
-  // group_->election_timer_ to avoid racing with OnElectionTimeout on the
-  // io_context thread.
+  // election timer state to avoid racing with OnStoreTick on the io_context thread.
   {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     CancelElectionTimerLocked();
   }
   StopHeartbeatTimerLocked();
   StopSnapshotCheckTimerLocked();
+
+  // 2a. Cancel the legacy single-group tick timer before stopping the service.
+  if (manage_network_ && tick_timer_ != 0 && timer_) {
+    timer_->CancelTimer(tick_timer_);
+    tick_timer_ = 0;
+  }
 
   // 3. Stop TimerService (only if this wrapper owns the shared infra)
   if (manage_network_ && timer_) {
@@ -565,6 +577,11 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
   }
   StopHeartbeatTimerLocked();
   StopSnapshotCheckTimerLocked();
+
+  if (manage_network_ && tick_timer_ != 0 && timer_) {
+    timer_->CancelTimer(tick_timer_);
+    tick_timer_ = 0;
+  }
 
   // Note: We intentionally do NOT call infra_->timer_->Stop() or infra_->network_->Stop()
   // here because they may be the source of the hang. The underlying

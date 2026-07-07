@@ -108,7 +108,7 @@ class RaftNode::RaftNodeImpl {
   // Timer management (must hold appropriate manager mtx when calling)
   void ResetElectionTimerLocked();
   void CancelElectionTimerLocked();
-  void StartHeartbeatTimerLocked();
+  void StartHeartbeatTimerLocked(uint32_t interval_ms = 0);
   void StopHeartbeatTimerLocked();
   void StartSnapshotCheckTimerLocked();
   void StopSnapshotCheckTimerLocked();
@@ -173,15 +173,23 @@ class RaftNode::RaftNodeImpl {
   void ApplyConfigChangeLocked(const std::string& cmd);
   void MaybeAutoPromoteLearnersLocked();
 
-  // Timeout handlers
+  // Timeout handlers (tick-driven)
   void OnElectionTimeout();
+  void OnElectionTimeoutLocked();  // Precondition: caller holds group_->election_mtx_
   void OnHeartbeatTimeout();
+  void OnHeartbeatTimeoutLocked();  // Precondition: caller holds election_mtx_ + replication_mtx_
+  void CheckHeartbeatTimeoutLocked();
+  void CheckSnapshotTimeoutLocked();
 
   // Async apply loop
   void ApplyLoop();
 
   // State check
   bool IsRunning() const { return state_ == NodeState::kRunning; }
+
+  // Coarse tick for the legacy single-group path.  Multi-raft groups are
+  // ticked by RaftStore's shared timer instead.
+  TimerId tick_timer_ = 0;
 
  private:
   // ========== Group-local state machine ==========

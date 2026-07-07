@@ -2,19 +2,43 @@
 
 using namespace rollingraft;
 
-void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked() {
+void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked(uint32_t interval_ms) {
   // PRECONDITION: group_->replication_mtx_ is held by caller
-  auto cfg = infra_->runtime_config_->Get();
-  group_->heartbeat_timer_ = infra_->timer_->SetInterval(
-      std::chrono::milliseconds(cfg.heartbeat_interval_ms), [this]() { OnHeartbeatTimeout(); });
+  // If interval_ms == 0, use the runtime-configured heartbeat interval.
+  uint32_t interval = interval_ms;
+  if (interval == 0) {
+    auto cfg = infra_->runtime_config_->Get();
+    interval = cfg.heartbeat_interval_ms;
+  }
+  group_->heartbeat_deadline_ =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(interval);
+  group_->heartbeat_timer_enabled_ = true;
 }
 
 void RaftNode::RaftNodeImpl::StopHeartbeatTimerLocked() {
   // PRECONDITION: group_->replication_mtx_ is held by caller
-  if (group_->heartbeat_timer_ != 0) {
-    infra_->timer_->CancelTimer(group_->heartbeat_timer_);
-    group_->heartbeat_timer_ = 0;
+  group_->heartbeat_timer_enabled_ = false;
+}
+
+void RaftNode::RaftNodeImpl::CheckHeartbeatTimeoutLocked() {
+  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+
+  if (!group_->heartbeat_timer_enabled_ ||
+      std::chrono::steady_clock::now() < group_->heartbeat_deadline_) {
+    return;
   }
+
+  // Re-schedule before running the handler so that a long handler does not
+  // delay the next tick.  Use quiesced interval when in quiesced mode.
+  auto cfg = infra_->runtime_config_->Get();
+  uint32_t interval = cfg.heartbeat_interval_ms;
+  if (group_->quiesced_.load(std::memory_order_acquire)) {
+    interval = group_->config_.quiesced_heartbeat_interval_ms;
+  }
+  group_->heartbeat_deadline_ += std::chrono::milliseconds(interval);
+
+  OnHeartbeatTimeoutLocked();
 }
 
 void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
@@ -22,7 +46,10 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
   // to safely access both group_->role_ (election) and group_->next_index_ (replication).
   std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
   std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+  OnHeartbeatTimeoutLocked();
+}
 
+void RaftNode::RaftNodeImpl::OnHeartbeatTimeoutLocked() {
   if (!IsRunning()) return;
   if (group_->role_ != RaftNodeRole::LEADER) return;
 

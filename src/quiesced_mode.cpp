@@ -38,9 +38,7 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
   if (group_->role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     StopHeartbeatTimerLocked();
-    group_->heartbeat_timer_ = infra_->timer_->SetInterval(
-        std::chrono::milliseconds(group_->config_.quiesced_heartbeat_interval_ms),
-        [this]() { OnHeartbeatTimeout(); });
+    StartHeartbeatTimerLocked(group_->config_.quiesced_heartbeat_interval_ms);
   }
 }
 
@@ -60,8 +58,6 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
   if (group_->role_ == RaftNodeRole::LEADER) {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     StopHeartbeatTimerLocked();
-    auto cfg = infra_->runtime_config_->Get();
-    group_->heartbeat_timer_ = infra_->timer_->SetInterval(
-        std::chrono::milliseconds(cfg.heartbeat_interval_ms), [this]() { OnHeartbeatTimeout(); });
+    StartHeartbeatTimerLocked();
   }
 }

@@ -25,7 +25,10 @@ using namespace rollingraft;
 class MultiRaft2GroupsTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    data_dirs_ = {"/tmp/raft_test_store_1", "/tmp/raft_test_store_2", "/tmp/raft_test_store_3"};
+    // Use process-scoped temp directories so multiple gtest filters / ctest
+    // processes can run concurrently without deleting each other's state.
+    std::string base = "/tmp/raft_test_store_pid" + std::to_string(getpid());
+    data_dirs_ = {base + "_1", base + "_2", base + "_3"};
 
     for (const auto& dir : data_dirs_) {
       std::filesystem::remove_all(dir);
@@ -37,6 +40,9 @@ class MultiRaft2GroupsTest : public ::testing::Test {
   }
 
   void TearDown() override {
+    // Let in-flight heartbeats settle before tearing down shared transport.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
     for (auto& store : stores_) {
       if (store) {
         try {
@@ -56,7 +62,12 @@ class MultiRaft2GroupsTest : public ::testing::Test {
   }
 
   void StartCluster() {
-    auto ports = AllocateEphemeralPorts(3);
+    // Use process-scoped fixed ports to avoid cross-talk when ctest runs
+    // multiple integration test processes concurrently.  Each process gets a
+    // block of 10 ports so neighbouring pids do not overlap.
+    uint16_t base_port = 20000 + static_cast<uint16_t>((getpid() % 4000) * 10);
+    std::vector<uint16_t> ports = {base_port, static_cast<uint16_t>(base_port + 1),
+                                   static_cast<uint16_t>(base_port + 2)};
     addrs_ = FormatAddrs(ports);
 
     // Start one RaftStore per physical node.

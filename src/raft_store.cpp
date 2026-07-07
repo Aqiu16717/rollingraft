@@ -119,13 +119,17 @@ Status RaftStore::Stop() {
     return Status::OK();
   }
 
+  // Stop all groups first (they own timers/threads that may interact with
+  // the network).  Intentionally do NOT clear groups_ here: the group objects
+  // must outlive the running network so that any late in-flight RPC callbacks
+  // never reference destroyed RaftNodeImpl state.  groups_ is cleared when the
+  // RaftStore destructor runs, after the network has been stopped.
   {
     std::lock_guard<std::shared_mutex> lock(groups_mtx_);
     for (auto& [group_id, group] : groups_) {
       (void)group_id;
       group->Stop();
     }
-    groups_.clear();
   }
 
   if (infra_) {

@@ -965,13 +965,16 @@ class AsioNetworkTransport : public NetworkTransport {
         acceptor_->close(ec);
       }
 
-      // Close all peer connections
+      // Close all peer connections. Close() posts cleanup handlers to the
+      // io_context; we must stop the io_context *after* posting so those
+      // handlers run, then wait for worker threads to drain before clearing
+      // peers_. This prevents IO threads from invoking methods on destroyed
+      // PeerConnection/TcpConnection objects.
       for (auto& [id, peer] : peers_) {
         peer->Close();
       }
-      peers_.clear();
 
-      // Stop io_context
+      // Stop io_context. Already-posted close handlers will still execute.
       work_guard_.reset();
       io_context_.stop();
     }
@@ -983,27 +986,28 @@ class AsioNetworkTransport : public NetworkTransport {
       LOG_WARN("AsioNetworkTransport no-op post failed: {}", e.what());
     }
 
-    // Wait for all worker threads to exit run() with timeout.
-    bool all_exited = false;
-    for (int i = 0; i < 200; ++i) {
-      auto exited = io_threads_exited_.load(std::memory_order_acquire);
-      if (exited == io_threads_.size()) {
-        all_exited = true;
-        break;
-      }
+    // Wait for all worker threads to exit run().  Detaching threads that have
+    // not exited can lead to use-after-free if they later invoke callbacks on
+    // objects that have been destroyed, so we keep waiting rather than timing
+    // out in normal operation.  Under extreme load this may take longer than
+    // the old 2s cap, but it keeps shutdown safe.
+    while (io_threads_exited_.load(std::memory_order_acquire) != io_threads_.size()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     for (auto& t : io_threads_) {
       if (t.joinable()) {
-        if (all_exited) {
-          t.join();
-        } else {
-          t.detach();
-        }
+        t.join();
       }
     }
     io_threads_.clear();
+
+    // Now that all IO threads have exited, it is safe to destroy peer
+    // connection objects without racing with posted handlers.
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      peers_.clear();
+    }
 
     LOG_INFO("AsioNetworkTransport stopped");
     return Status::OK();

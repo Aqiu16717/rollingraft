@@ -154,9 +154,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   resp.vote_granted_ = false;
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_requestvote_received_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    metrics_->GetCounter("raft_requestvote_received_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -214,9 +212,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   if (group_->voted_for_ == -1 || group_->voted_for_ == req.candidate_id_) {
     group_->voted_for_ = req.candidate_id_;
     if (metrics_) {
-      infra_->metrics_
-          ->GetCounter("raft_votes_granted_total",
-                       {{"node_id", std::to_string(group_->server_id_)}})
+      infra_->metrics_->GetCounter("raft_votes_granted_total", group_->metrics_node_label_)
           .Increment();
     }
     resp.vote_granted_ = true;
@@ -309,9 +305,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
     RecordActivityLocked();
 
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_appendentries_received_total",
-                       {{"node_id", std::to_string(group_->server_id_)}})
+      metrics_->GetCounter("raft_appendentries_received_total", group_->metrics_node_label_)
           .Increment();
     }
 
@@ -449,9 +443,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
     ResetElectionTimerLocked();
 
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_snapshots_received_total",
-                       {{"node_id", std::to_string(group_->server_id_)}})
+      metrics_->GetCounter("raft_snapshots_received_total", group_->metrics_node_label_)
           .Increment();
     }
   }
@@ -557,16 +549,12 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
         }
 
         if (metrics_) {
-          metrics_
-              ->GetCounter(
-                  "raft_log_compactions_total",
-                  {{"node_id", std::to_string(group_->server_id_)}, {"trigger", "snapshot"}})
-              .Increment();
+          auto labels = group_->metrics_node_label_;
+          labels["trigger"] = "snapshot";
+          metrics_->GetCounter("raft_log_compactions_total", labels).Increment();
           if (req.last_included_index_ >= old_first_index) {
             uint64_t compacted = req.last_included_index_ - old_first_index + 1;
-            metrics_
-                ->GetCounter("raft_log_entries_compacted_total",
-                             {{"node_id", std::to_string(group_->server_id_)}})
+            metrics_->GetCounter("raft_log_entries_compacted_total", group_->metrics_node_label_)
                 .Increment(compacted);
           }
         }

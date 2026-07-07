@@ -235,6 +235,7 @@ Status RaftNode::RaftNodeImpl::Start() {
 
         nlohmann::json j;
         j["node_id"] = group_->server_id_;
+        j["group_id"] = group_->group_id_;
         j["role"] = RaftNodeRoleToString(group_->role_);
         j["term"] = group_->current_term_;
         j["leader_id"] = group_->leader_id_;
@@ -678,10 +679,9 @@ Status RaftNode::RaftNodeImpl::Propose(const std::string& command,
 
   if (group_->role_ != RaftNodeRole::LEADER) {
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_propose_total", {{"node_id", std::to_string(group_->server_id_)},
-                                              {"result", "rejected_not_leader"}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["result"] = "rejected_not_leader";
+      metrics_->GetCounter("raft_propose_total", labels).Increment();
     }
     return Status::NotLeader(group_->leader_id_, group_->leader_addr_);
   }
@@ -704,10 +704,9 @@ Status RaftNode::RaftNodeImpl::Propose(const std::string& command,
         cb(result);
       }
       if (metrics_) {
-        metrics_
-            ->GetCounter("raft_propose_total", {{"node_id", std::to_string(group_->server_id_)},
-                                                {"result", "deduplicated"}})
-            .Increment();
+        auto labels = group_->metrics_node_label_;
+        labels["result"] = "deduplicated";
+        metrics_->GetCounter("raft_propose_total", labels).Increment();
       }
       return Status::OK();
     }
@@ -772,10 +771,9 @@ Status RaftNode::RaftNodeImpl::Propose(const std::string& command,
   group_->pending_proposals_[index] = std::move(proposal);
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_propose_total",
-                     {{"node_id", std::to_string(group_->server_id_)}, {"result", "accepted"}})
-        .Increment();
+    auto labels = group_->metrics_node_label_;
+    labels["result"] = "accepted";
+    metrics_->GetCounter("raft_propose_total", labels).Increment();
   }
 
   // Broadcast immediately — replication is decoupled from persistence (T2)
@@ -979,13 +977,12 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(const std::string& comm
             ->GetHistogram("raft_proposal_latency_seconds",
                            std::vector<double>{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
                                                2.5, 5.0, 10.0},
-                           {{"node_id", std::to_string(group_->server_id_)}})
+                           group_->metrics_node_label_)
             .Observe(latency);
       }
-      metrics_
-          ->GetCounter("raft_propose_total",
-                       {{"node_id", std::to_string(group_->server_id_)}, {"result", "timeout"}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["result"] = "timeout";
+      metrics_->GetCounter("raft_propose_total", labels).Increment();
     }
     // Remove pending proposal on timeout
     group_->pending_proposals_.erase(index);
@@ -1056,8 +1053,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
       group_->pending_reads_[read_id] = std::move(read_req);
 
       if (metrics_) {
-        infra_->metrics_
-            ->GetCounter("raft_readindex_total", {{"node_id", std::to_string(group_->server_id_)}})
+        infra_->metrics_->GetCounter("raft_readindex_total", group_->metrics_node_label_)
             .Increment();
       }
 
@@ -1092,10 +1088,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
       LOG_INFO("Node {} ReadIndex request {} at commit_index {} (lease read)", group_->server_id_,
                read_id, group_->commit_index_);
       if (metrics_) {
-        metrics_
-            ->GetCounter("raft_readindex_lease_total",
-                         {{"node_id", std::to_string(group_->server_id_)}})
-            .Increment();
+        metrics_->GetCounter("raft_readindex_lease_total", group_->metrics_node_label_).Increment();
       }
     } else {
       // Fallback to normal ReadIndex with heartbeat broadcast
@@ -1108,9 +1101,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     group_->pending_reads_[read_id] = std::move(read_req);
 
     if (metrics_) {
-      infra_->metrics_
-          ->GetCounter("raft_readindex_total", {{"node_id", std::to_string(group_->server_id_)}})
-          .Increment();
+      infra_->metrics_->GetCounter("raft_readindex_total", group_->metrics_node_label_).Increment();
     }
 
     if (lease_valid) {

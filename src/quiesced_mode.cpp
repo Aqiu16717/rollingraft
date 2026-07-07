@@ -31,10 +31,10 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
   if (metrics_) {
     metrics_
         ->GetCounter("raft_quiesced_mode_entered_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+                     group_->metrics_node_label_)
         .Increment();
     infra_->metrics_
-        ->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(group_->server_id_)}})
+        ->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_)
         .Set(1.0);
   }
 
@@ -57,10 +57,10 @@ void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
   if (metrics_) {
     metrics_
         ->GetCounter("raft_quiesced_mode_exited_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+                     group_->metrics_node_label_)
         .Increment();
     infra_->metrics_
-        ->GetGauge("raft_quiesced_mode_active", {{"node_id", std::to_string(group_->server_id_)}})
+        ->GetGauge("raft_quiesced_mode_active", group_->metrics_node_label_)
         .Set(0.0);
   }
 

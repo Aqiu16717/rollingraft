@@ -46,7 +46,8 @@ RaftGroup::RaftGroup(uint64_t group_id, const RaftNodeConfig& config,
     throw std::invalid_argument("StateMachine cannot be null");
   }
 
-  metrics_node_label_ = {{"node_id", std::to_string(server_id_)}};
+  metrics_node_label_ = {{"node_id", std::to_string(server_id_)},
+                         {"group_id", std::to_string(group_id_)}};
 
   // Build peer map
   bool has_explicit_peer_ids = !config.peer_node_ids.empty();

@@ -35,10 +35,9 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_snapshots_created_total",
-                     {{"node_id", std::to_string(group_->server_id_)}, {"trigger", trigger}})
-        .Increment();
+    auto labels = group_->metrics_node_label_;
+    labels["trigger"] = trigger;
+    metrics_->GetCounter("raft_snapshots_created_total", labels).Increment();
   }
   LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)", group_->server_id_, trigger,
            entries_since_snapshot);
@@ -122,13 +121,10 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   }
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_log_compactions_total",
-                     {{"node_id", std::to_string(group_->server_id_)}, {"trigger", trigger}})
-        .Increment();
-    metrics_
-        ->GetCounter("raft_log_entries_compacted_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    auto labels = group_->metrics_node_label_;
+    labels["trigger"] = trigger;
+    metrics_->GetCounter("raft_log_compactions_total", labels).Increment();
+    metrics_->GetCounter("raft_log_entries_compacted_total", group_->metrics_node_label_)
         .Increment(entries_since_snapshot);
   }
 
@@ -226,11 +222,9 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
   }
 
   if (metrics_) {
-    metrics_
-        ->GetCounter(
-            "raft_snapshot_sends_started_total",
-            {{"node_id", std::to_string(group_->server_id_)}, {"peer_id", std::to_string(peer_id)}})
-        .Increment();
+    auto labels = group_->metrics_node_label_;
+    labels["peer_id"] = std::to_string(peer_id);
+    metrics_->GetCounter("raft_snapshot_sends_started_total", labels).Increment();
   }
   state.in_progress = true;
   LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", group_->server_id_,
@@ -293,9 +287,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   }
 
   if (metrics_) {
-    metrics_
-        ->GetCounter("raft_snapshot_chunks_sent_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    metrics_->GetCounter("raft_snapshot_chunks_sent_total", group_->metrics_node_label_)
         .Increment();
   }
   LOG_DEBUG("Node {}: sending snapshot chunk to {}: offset={}, size={}, done={}",
@@ -381,11 +373,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
                  group_->server_id_, from, state.last_included_index);
 
         if (metrics_) {
-          metrics_
-              ->GetCounter("raft_snapshot_sends_completed_total",
-                           {{"node_id", std::to_string(group_->server_id_)},
-                            {"peer_id", std::to_string(from)}})
-              .Increment();
+          auto labels = group_->metrics_node_label_;
+          labels["peer_id"] = std::to_string(from);
+          metrics_->GetCounter("raft_snapshot_sends_completed_total", labels).Increment();
         }
         group_->match_index_[from] = state.last_included_index;
         group_->next_index_[from] = state.last_included_index + 1;

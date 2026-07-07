@@ -53,14 +53,11 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   }
 
   if (metrics_) {
-    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetGauge("raft_role", group_->metrics_node_label_)
         .Set(static_cast<double>(RaftNodeRole::FOLLOWER));
-    infra_->metrics_
-        ->GetGauge("raft_current_term", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetGauge("raft_current_term", group_->metrics_node_label_)
         .Set(static_cast<double>(group_->current_term_));
-    infra_->metrics_
-        ->GetGauge("raft_leader_lease_seconds", {{"node_id", std::to_string(group_->server_id_)}})
-        .Set(0.0);
+    infra_->metrics_->GetGauge("raft_leader_lease_seconds", group_->metrics_node_label_).Set(0.0);
   }
   UpdateLeaderLeaseMetricLocked();
   LOG_INFO("Node {} became Follower at term {}", group_->server_id_, group_->current_term_);
@@ -101,13 +98,10 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
 
   if (metrics_) {
-    infra_->metrics_
-        ->GetCounter("raft_elections_total", {{"node_id", std::to_string(group_->server_id_)}})
-        .Increment();
-    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetCounter("raft_elections_total", group_->metrics_node_label_).Increment();
+    infra_->metrics_->GetGauge("raft_role", group_->metrics_node_label_)
         .Set(static_cast<double>(RaftNodeRole::CANDIDATE));
-    infra_->metrics_
-        ->GetGauge("raft_current_term", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetGauge("raft_current_term", group_->metrics_node_label_)
         .Set(static_cast<double>(group_->current_term_));
   }
   LOG_INFO("Node {} became Candidate at term {}", group_->server_id_, group_->current_term_);
@@ -211,10 +205,9 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   }
 
   if (metrics_) {
-    infra_->metrics_
-        ->GetCounter("raft_leader_elected_total", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetCounter("raft_leader_elected_total", group_->metrics_node_label_)
         .Increment();
-    infra_->metrics_->GetGauge("raft_role", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetGauge("raft_role", group_->metrics_node_label_)
         .Set(static_cast<double>(RaftNodeRole::LEADER));
   }
   LOG_INFO("Node {} became Leader at term {} (cleared {} client sessions)", group_->server_id_,
@@ -270,9 +263,7 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   if (group_->role_ == RaftNodeRole::LEADER) return;
 
   if (metrics_) {
-    infra_->metrics_
-        ->GetCounter("raft_election_timeouts_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetCounter("raft_election_timeouts_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -378,9 +369,7 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
   }
 
   if (metrics_) {
-    infra_->metrics_
-        ->GetCounter("raft_requestvote_sent_total",
-                     {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetCounter("raft_requestvote_sent_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -441,10 +430,9 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(NodeId from, const Reques
 
   if (resp.vote_granted_) {
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_votes_received_total",
-                       {{"node_id", std::to_string(group_->server_id_)}, {"granted", "true"}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["granted"] = "true";
+      metrics_->GetCounter("raft_votes_received_total", labels).Increment();
     }
     ++group_->vote_count_;
     uint32_t majority;
@@ -491,8 +479,7 @@ void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id, const NodeA
   }
 
   if (metrics_) {
-    infra_->metrics_
-        ->GetCounter("raft_prevote_sent_total", {{"node_id", std::to_string(group_->server_id_)}})
+    infra_->metrics_->GetCounter("raft_prevote_sent_total", group_->metrics_node_label_)
         .Increment();
   }
 
@@ -548,10 +535,9 @@ void RaftNode::RaftNodeImpl::HandlePreVoteResponse(NodeId from, const PreVoteRes
 
   if (resp.vote_granted_) {
     if (metrics_) {
-      metrics_
-          ->GetCounter("raft_prevote_received_total",
-                       {{"node_id", std::to_string(group_->server_id_)}, {"granted", "true"}})
-          .Increment();
+      auto labels = group_->metrics_node_label_;
+      labels["granted"] = "true";
+      metrics_->GetCounter("raft_prevote_received_total", labels).Increment();
     }
     ++group_->pre_vote_count_;
     uint32_t majority;

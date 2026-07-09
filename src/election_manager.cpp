@@ -236,29 +236,40 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
 
   uint32_t timeout = dis(gen);
 
-  group_->election_timer_ = infra_->timer_->SetTimeout(std::chrono::milliseconds(timeout),
-                                                       [this]() { OnElectionTimeout(); });
+  group_->election_deadline_ =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+  group_->election_timer_enabled_ = true;
 
   LOG_DEBUG("Node {} election timer reset to {}ms", group_->server_id_, timeout);
 }
 
 void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
-  if (group_->election_timer_ != 0) {
-    infra_->timer_->CancelTimer(group_->election_timer_);
-    group_->election_timer_ = 0;
-  }
+  group_->election_timer_enabled_ = false;
 }
 
 void RaftNode::RaftNodeImpl::OnStoreTick() {
-  // Currently a no-op placeholder.  Future PRs can migrate group-local
-  // timeouts (election, heartbeat, snapshot check) from one timer per group
-  // to this single shared tick, reducing resource usage for very large
-  // numbers of groups.  The tick infrastructure is in place in RaftStore.
+  if (!IsRunning()) return;
+
+  // Election timeout is checked under election_mtx_.  Heartbeat and snapshot
+  // checks are evaluated under their respective manager locks.
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    if (group_->election_timer_enabled_ &&
+        std::chrono::steady_clock::now() >= group_->election_deadline_) {
+      OnElectionTimeoutLocked();
+    }
+  }
+
+  CheckHeartbeatTimeoutLocked();
+  CheckSnapshotTimeoutLocked();
 }
 
 void RaftNode::RaftNodeImpl::OnElectionTimeout() {
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
+  OnElectionTimeoutLocked();
+}
 
+void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
   if (!IsRunning()) return;
   if (group_->role_ == RaftNodeRole::LEADER) return;
 

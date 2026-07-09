@@ -6,14 +6,14 @@ constexpr size_t kSnapshotChunkSize = 64 * 1024;  // 64KB chunks
 
 void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
   // PRECONDITION: group_->snapshot_mtx_ is held by caller
-  if (group_->snapshot_check_timer_ != 0) {
+  if (group_->snapshot_check_timer_enabled_) {
     return;  // Already running
   }
 
   auto cfg = infra_->runtime_config_->Get();
-  group_->snapshot_check_timer_ =
-      infra_->timer_->SetInterval(std::chrono::milliseconds(cfg.snapshot_check_interval_ms),
-                                  [this]() { MaybeTriggerAutoSnapshotLocked(); });
+  group_->snapshot_check_deadline_ =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
+  group_->snapshot_check_timer_enabled_ = true;
 
   LOG_INFO("Node {} started auto-snapshot check (every {}ms)", group_->server_id_,
            cfg.snapshot_check_interval_ms);
@@ -21,10 +21,22 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
 
 void RaftNode::RaftNodeImpl::StopSnapshotCheckTimerLocked() {
   // PRECONDITION: group_->snapshot_mtx_ is held by caller
-  if (group_->snapshot_check_timer_ != 0) {
-    infra_->timer_->CancelTimer(group_->snapshot_check_timer_);
-    group_->snapshot_check_timer_ = 0;
+  group_->snapshot_check_timer_enabled_ = false;
+}
+
+void RaftNode::RaftNodeImpl::CheckSnapshotTimeoutLocked() {
+  {
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    if (!group_->snapshot_check_timer_enabled_ ||
+        std::chrono::steady_clock::now() < group_->snapshot_check_deadline_) {
+      return;
+    }
+
+    auto cfg = infra_->runtime_config_->Get();
+    group_->snapshot_check_deadline_ += std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
   }
+
+  MaybeTriggerAutoSnapshotLocked();
 }
 
 // Core snapshot logic. PRECONDITION: group_->election_mtx_, group_->replication_mtx_,

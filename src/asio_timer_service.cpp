@@ -85,21 +85,12 @@ void AsioTimerService::Stop() {
     }
 
     if (io_thread_.joinable()) {
-      // Wait for thread to exit with timeout (avoid indefinite hang on macOS)
-      bool exited = false;
-      for (int i = 0; i < 200; ++i) {
-        if (io_thread_exited_.load(std::memory_order_acquire)) {
-          exited = true;
-          break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      }
-      if (exited) {
-        io_thread_.join();
-      } else {
-        LOG_WARN("AsioTimerService thread did not exit in 2s, detaching");
-        io_thread_.detach();
-      }
+      // Join unconditionally. The previous poll-then-detach could leave a
+      // still-running io thread behind: it would keep executing queued
+      // callbacks that hold group keep-alive references, delaying group
+      // destruction past store teardown (and risking use-after-free). If the
+      // thread cannot exit here, that is a real bug to fix, not to mask.
+      io_thread_.join();
     }
   }
 

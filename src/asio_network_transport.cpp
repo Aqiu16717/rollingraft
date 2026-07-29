@@ -1049,7 +1049,13 @@ class AsioNetworkTransport : public NetworkTransport {
                uint64_t correlation_id, std::chrono::milliseconds timeout,
                RpcResponseCallback callback) override {
     if (!running_.load(std::memory_order_relaxed)) {
-      callback("", false, "Transport stopped");
+      // Never invoke the callback inline: callers may hold group locks, and a
+      // synchronous callback re-entering lock-taking code would self-deadlock
+      // the calling thread. During shutdown the posted callback may never
+      // run, which is safe — groups guard their callbacks with weak_ptr.
+      asio::post(io_context_, [callback = std::move(callback)]() mutable {
+        callback("", false, "Transport stopped");
+      });
       return;
     }
     // Post to io_context for async execution on the thread pool

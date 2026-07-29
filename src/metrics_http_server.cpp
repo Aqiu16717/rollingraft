@@ -176,12 +176,19 @@ void MetricsHttpServer::Stop() {
   }
   if (io_ctx_) {
     io_ctx_->stop();
+    // Wake up a thread blocked in kevent/epoll: on macOS, stop() alone does
+    // not interrupt kqueue, so without a posted event the io thread never
+    // notices the stopped flag and join() below would hang forever.
+    try {
+      asio::post(*io_ctx_, []() {});
+    } catch (const std::exception& e) {
+      LOG_WARN("MetricsHttpServer no-op post failed: {}", e.what());
+    }
   }
 
-  // Join the server thread. io_ctx_->stop() makes run() return promptly, so
-  // join() cannot hang here. The previous poll-then-detach logic was broken:
+  // Join the server thread. The previous poll-then-detach logic was broken:
   // joinable() stays true until join()/detach() is called, so it always
-  // waited 2s and then detached — letting a still-finishing io thread touch
+  // waited 2s and then detached — letting a still-running io thread touch
   // freed members after this object was destroyed.
   if (thread_.joinable()) {
     thread_.join();

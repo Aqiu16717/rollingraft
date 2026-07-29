@@ -174,6 +174,8 @@ TEST_F(ClientSessionManagerTest, ConcurrentReadsAndWrites) {
   }
 
   writer.join();
-  for (auto& t : readers) t.join();
+  for (auto& t : readers) {
+    t.join();
+  }
   EXPECT_EQ(failures, 0);
 }

@@ -506,7 +506,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
             restore_ifs->open(group_->snapshot_temp_path_, std::ios::binary);
             *restore_initialized = true;
           }
-          if (!*restore_ifs) return false;
+          if (!*restore_ifs) {
+            return false;
+          }
           constexpr size_t kChunkSize = 64 * 1024;
           chunk.resize(kChunkSize);
           restore_ifs->read(chunk.data(), kChunkSize);
@@ -579,7 +581,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
               persist_ifs->open(group_->snapshot_temp_path_, std::ios::binary);
               *persist_initialized = true;
             }
-            if (!*persist_ifs) return false;
+            if (!*persist_ifs) {
+              return false;
+            }
             constexpr size_t kChunkSize = 64 * 1024;
             chunk.resize(kChunkSize);
             persist_ifs->read(chunk.data(), kChunkSize);

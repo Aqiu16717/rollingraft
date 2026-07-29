@@ -110,7 +110,9 @@ BenchmarkStats Benchmark::Run() {
     // Percentiles
     auto percentile = [&](double p) -> double {
       size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
-      if (idx >= latencies.size()) idx = latencies.size() - 1;
+      if (idx >= latencies.size()) {
+        idx = latencies.size() - 1;
+      }
       return latencies[idx];
     };
 
@@ -316,7 +318,9 @@ void PrintComparison(const std::map<std::string, BenchmarkStats>& results) {
 void SaveToJson(const std::string& filename, const BenchmarkStats& stats) {
   // Simple JSON serialization
   std::ofstream file(filename);
-  if (!file.is_open()) return;
+  if (!file.is_open()) {
+    return;
+  }
 
   file << "{\n";
   file << "  \"throughput_ops_per_sec\": " << stats.operations_per_second << ",\n";
@@ -451,7 +455,9 @@ void SaveToJson(const std::string& filename, const RepeatedBenchmarkStats& stats
                 const std::string& benchmark_name,
                 const std::map<std::string, std::string>& parameters) {
   std::ofstream file(filename);
-  if (!file.is_open()) return;
+  if (!file.is_open()) {
+    return;
+  }
 
   auto now = std::chrono::system_clock::now();
   auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -468,7 +474,9 @@ void SaveToJson(const std::string& filename, const RepeatedBenchmarkStats& stats
   file << "  \"parameters\": {\n";
   bool first = true;
   for (const auto& [key, value] : parameters) {
-    if (!first) file << ",\n";
+    if (!first) {
+      file << ",\n";
+    }
     file << "    \"" << key << "\": " << value;
     first = false;
   }
@@ -518,7 +526,9 @@ void SaveToJson(const std::string& filename, const RepeatedBenchmarkStats& stats
     file << "      \"success_rate\": " << run.success_rate << ",\n";
     file << "      \"total_operations\": " << run.total_operations << "\n";
     file << "    }";
-    if (i + 1 < stats.runs.size()) file << ",";
+    if (i + 1 < stats.runs.size()) {
+      file << ",";
+    }
     file << "\n";
   }
   file << "  ]\n";

@@ -8,7 +8,9 @@ SseConnection::SseConnection(SocketVariant socket, asio::io_context::strand stra
     : socket_(std::move(socket)), strand_(std::move(strand)) {}
 
 void SseConnection::EnqueueEvent(const std::string& event_data) {
-  if (!open_.load()) return;
+  if (!open_.load()) {
+    return;
+  }
 
   {
     std::lock_guard<std::mutex> lock(queue_mtx_);

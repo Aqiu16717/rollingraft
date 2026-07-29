@@ -50,7 +50,9 @@ void MockTimerService::Advance(std::chrono::milliseconds delta) {
     current_time_ += delta;
 
     for (auto& [id, timer] : timers_) {
-      if (timer.cancelled) continue;
+      if (timer.cancelled) {
+        continue;
+      }
       if (timer.deadline <= current_time_) {
         callbacks.push_back(timer.callback);
         if (timer.interval.count() > 0) {
@@ -72,7 +74,9 @@ void MockTimerService::Advance(std::chrono::milliseconds delta) {
 
   // Execute callbacks outside the lock
   for (auto& cb : callbacks) {
-    if (cb) cb();
+    if (cb) {
+      cb();
+    }
   }
 }
 
@@ -80,7 +84,9 @@ size_t MockTimerService::TimerCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
   size_t count = 0;
   for (const auto& [id, timer] : timers_) {
-    if (!timer.cancelled) ++count;
+    if (!timer.cancelled) {
+      ++count;
+    }
   }
   return count;
 }

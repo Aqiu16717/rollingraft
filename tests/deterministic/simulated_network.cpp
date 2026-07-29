@@ -28,7 +28,9 @@ void SimulatedNetwork::Send(NodeId from, NodeId to, const std::string& payload,
   }
   if (drop_probability_ > 0.0f) {
     std::uniform_real_distribution<float> d(0.0f, 1.0f);
-    if (d(rng_) < drop_probability_) return;
+    if (d(rng_) < drop_probability_) {
+      return;
+    }
   }
   uint64_t now = clock_->Now(), delay = fixed_delay_ms_;
   if (next_delay_count_ > 0) {
@@ -39,9 +41,13 @@ void SimulatedNetwork::Send(NodeId from, NodeId to, const std::string& payload,
   pending_messages_.push_back(msg);
   if (duplicate_probability_ > 0.0f) {
     std::uniform_real_distribution<float> d(0.0f, 1.0f);
-    if (d(rng_) < duplicate_probability_) pending_messages_.push_back(msg);
+    if (d(rng_) < duplicate_probability_) {
+      pending_messages_.push_back(msg);
+    }
   }
-  if (reorder_) std::shuffle(pending_messages_.begin(), pending_messages_.end(), rng_);
+  if (reorder_) {
+    std::shuffle(pending_messages_.begin(), pending_messages_.end(), rng_);
+  }
 }
 
 void SimulatedNetwork::DeliverAll() { DeliverUntil(clock_->Now()); }
@@ -53,11 +59,15 @@ bool SimulatedNetwork::DeliverOne() {
     uint64_t now = clock_->Now();
     auto it = std::find_if(pending_messages_.begin(), pending_messages_.end(),
                            [now](const SimulatedMessage& m) { return m.deliver_time_ms <= now; });
-    if (it == pending_messages_.end()) return false;
+    if (it == pending_messages_.end()) {
+      return false;
+    }
     msg = std::move(*it);
     pending_messages_.erase(it);
   }
-  if (msg) MaybeDeliver(*msg);
+  if (msg) {
+    MaybeDeliver(*msg);
+  }
   return true;
 }
 
@@ -75,7 +85,9 @@ void SimulatedNetwork::DeliverUntil(uint64_t time_ms) {
       }
     }
   }
-  for (auto& msg : ready) MaybeDeliver(msg);
+  for (auto& msg : ready) {
+    MaybeDeliver(msg);
+  }
 }
 
 void SimulatedNetwork::MaybeDeliver(const SimulatedMessage& msg) {

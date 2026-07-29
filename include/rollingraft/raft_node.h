@@ -66,9 +66,15 @@ struct ClusterConfig {
    * @return true if node is in the cluster
    */
   bool Contains(NodeId id) const {
-    if (IsMember(id, nodes)) return true;
-    if (is_joint && IsMember(id, old_nodes)) return true;
-    if (IsMember(id, learners)) return true;
+    if (IsMember(id, nodes)) {
+      return true;
+    }
+    if (is_joint && IsMember(id, old_nodes)) {
+      return true;
+    }
+    if (IsMember(id, learners)) {
+      return true;
+    }
     return false;
   }
 
@@ -80,8 +86,12 @@ struct ClusterConfig {
    * @return true if node can vote
    */
   bool IsVoter(NodeId id) const {
-    if (IsMember(id, nodes)) return true;
-    if (is_joint && IsMember(id, old_nodes)) return true;
+    if (IsMember(id, nodes)) {
+      return true;
+    }
+    if (is_joint && IsMember(id, old_nodes)) {
+      return true;
+    }
     return false;
   }
 
@@ -112,7 +122,9 @@ struct ClusterConfig {
    * @return true if both majorities are met
    */
   bool JointMajoritySatisfied(int old_count, int new_count) const {
-    if (!is_joint) return new_count >= static_cast<int>(GetMajority());
+    if (!is_joint) {
+      return new_count >= static_cast<int>(GetMajority());
+    }
     return old_count >= static_cast<int>(GetOldMajority()) &&
            new_count >= static_cast<int>(GetMajority());
   }
@@ -120,7 +132,9 @@ struct ClusterConfig {
  private:
   static bool IsMember(NodeId id, const std::vector<NodeId>& list) {
     for (NodeId node : list) {
-      if (node == id) return true;
+      if (node == id) {
+        return true;
+      }
     }
     return false;
   }

@@ -13,8 +13,11 @@ void SimulatedClock::RunUntil(TimePoint target) {
       it = scheduled_callbacks_.erase(it);
     }
   }
-  for (auto& cb : callbacks)
-    if (cb) cb();
+  for (auto& cb : callbacks) {
+    if (cb) {
+      cb();
+    }
+  }
 }
 void SimulatedClock::At(TimePoint when, std::function<void()> callback) {
   std::lock_guard<std::mutex> lock(mtx_);

@@ -150,7 +150,9 @@ class Cluster3NodesTest : public ::testing::Test {
   int CountLeaders() {
     int count = 0;
     for (auto& node : nodes_) {
-      if (node->IsLeader()) ++count;
+      if (node->IsLeader()) {
+        ++count;
+      }
     }
     return count;
   }
@@ -456,7 +458,9 @@ TEST_F(Cluster3NodesTest, TlsRecoversAfterLeaderCrash) {
         break;
       }
     }
-    if (new_leader) break;
+    if (new_leader) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 

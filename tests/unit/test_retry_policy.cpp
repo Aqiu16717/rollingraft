@@ -106,7 +106,9 @@ TEST_F(RetryPolicyTest, GetDelay_Jitter_InValidRange) {
     for (int i = 0; i < 10; ++i) {
       auto delay = policy_->GetDelay(attempt);
       int base = 100 * (1 << attempt);  // 100 * 2^attempt
-      if (base > 1000) base = 1000;
+      if (base > 1000) {
+        base = 1000;
+      }
 
       // Delay should be between base and base + base/2 (with jitter)
       EXPECT_GE(delay.count(), base);

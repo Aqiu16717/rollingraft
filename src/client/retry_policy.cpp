@@ -56,7 +56,9 @@ std::chrono::milliseconds RetryPolicy::GetDelay(int attempt_count) const {
   // This prevents thundering herd while ensuring we don't exceed max_delay
   thread_local std::mt19937 gen(std::random_device{}());
   int jitter_max = std::min(base_delay.count() / 2, max_delay_.count() / 4);
-  if (jitter_max < 1) jitter_max = 1;
+  if (jitter_max < 1) {
+    jitter_max = 1;
+  }
   std::uniform_int_distribution<> dis(0, jitter_max);
   auto jitter = std::chrono::milliseconds(dis(gen));
 

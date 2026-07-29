@@ -47,7 +47,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_BasicRoundTrip) {
   // Save via streaming
   size_t offset = 0;
   auto chunk_provider = [&](std::string& chunk) -> bool {
-    if (offset >= original_data.size()) return false;
+    if (offset >= original_data.size()) {
+      return false;
+    }
     size_t to_copy = std::min(kChunkSize, original_data.size() - offset);
     chunk = original_data.substr(offset, to_copy);
     offset += to_copy;
@@ -80,7 +82,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_OverwritesOldFormat) {
   std::string new_data = "new_streaming_data";
   size_t offset = 0;
   auto chunk_provider = [&](std::string& chunk) -> bool {
-    if (offset >= new_data.size()) return false;
+    if (offset >= new_data.size()) {
+      return false;
+    }
     chunk = new_data.substr(offset);
     offset += chunk.size();
     return true;
@@ -142,7 +146,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_HashVerification) {
   std::string data = "data_for_hash_verification_test";
   size_t offset = 0;
   auto chunk_provider = [&](std::string& chunk) -> bool {
-    if (offset >= data.size()) return false;
+    if (offset >= data.size()) {
+      return false;
+    }
     chunk = data.substr(offset);
     offset += chunk.size();
     return true;
@@ -165,7 +171,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_FewerChunksThanBefore) 
   std::string data1(256, 'A');
   size_t offset1 = 0;
   auto chunk_provider1 = [&](std::string& chunk) -> bool {
-    if (offset1 >= data1.size()) return false;
+    if (offset1 >= data1.size()) {
+      return false;
+    }
     chunk = data1.substr(offset1, 64);
     offset1 += chunk.size();
     return true;
@@ -177,7 +185,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_FewerChunksThanBefore) 
   std::string data2(128, 'B');
   size_t offset2 = 0;
   auto chunk_provider2 = [&](std::string& chunk) -> bool {
-    if (offset2 >= data2.size()) return false;
+    if (offset2 >= data2.size()) {
+      return false;
+    }
     chunk = data2.substr(offset2, 64);
     offset2 += chunk.size();
     return true;
@@ -200,7 +210,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_Normal) {
   std::string data_a(128, 'A');
   size_t offset_a = 0;
   auto provider_a = [&](std::string& chunk) -> bool {
-    if (offset_a >= data_a.size()) return false;
+    if (offset_a >= data_a.size()) {
+      return false;
+    }
     chunk = data_a.substr(offset_a, 32);
     offset_a += chunk.size();
     return true;
@@ -211,7 +223,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_Normal) {
   std::string data_b(128, 'B');
   size_t offset_b = 0;
   auto provider_b = [&](std::string& chunk) -> bool {
-    if (offset_b >= data_b.size()) return false;
+    if (offset_b >= data_b.size()) {
+      return false;
+    }
     chunk = data_b.substr(offset_b, 32);
     offset_b += chunk.size();
     return true;
@@ -233,7 +247,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_Preserves
   std::string data_a(128, 'A');
   size_t offset_a = 0;
   auto provider_a = [&](std::string& chunk) -> bool {
-    if (offset_a >= data_a.size()) return false;
+    if (offset_a >= data_a.size()) {
+      return false;
+    }
     chunk = data_a.substr(offset_a, 32);
     offset_a += chunk.size();
     return true;
@@ -245,7 +261,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_Preserves
   size_t offset_b = 0;
   int calls = 0;
   auto provider_b = [&](std::string& chunk) -> bool {
-    if (offset_b >= data_b.size()) return false;
+    if (offset_b >= data_b.size()) {
+      return false;
+    }
     chunk = data_b.substr(offset_b, 32);
     offset_b += chunk.size();
     ++calls;
@@ -272,7 +290,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_HashVerif
   std::string data_a(128, 'A');
   size_t offset_a = 0;
   auto provider_a = [&](std::string& chunk) -> bool {
-    if (offset_a >= data_a.size()) return false;
+    if (offset_a >= data_a.size()) {
+      return false;
+    }
     chunk = data_a.substr(offset_a, 32);
     offset_a += chunk.size();
     return true;
@@ -283,7 +303,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_AtomicReplace_HashVerif
   std::string data_b(128, 'B');
   size_t offset_b = 0;
   auto provider_b = [&](std::string& chunk) -> bool {
-    if (offset_b >= data_b.size()) return false;
+    if (offset_b >= data_b.size()) {
+      return false;
+    }
     chunk = data_b.substr(offset_b, 32);
     offset_b += chunk.size();
     return true;
@@ -318,7 +340,9 @@ TEST_F(LevelDBPersisterStreamingTest, SaveSnapshotStream_EmptyData_ClearsExistin
   std::string data(128, 'A');
   size_t offset = 0;
   auto provider = [&](std::string& chunk) -> bool {
-    if (offset >= data.size()) return false;
+    if (offset >= data.size()) {
+      return false;
+    }
     chunk = data.substr(offset, 32);
     offset += chunk.size();
     return true;

@@ -10,8 +10,12 @@ void RaftNode::RaftNodeImpl::RecordActivityLocked() {
 }
 
 bool RaftNode::RaftNodeImpl::ShouldEnterQuiescedLocked() const {
-  if (!group_->config_.quiesced_mode_enabled) return false;
-  if (group_->quiesced_.load(std::memory_order_acquire)) return false;
+  if (!group_->config_.quiesced_mode_enabled) {
+    return false;
+  }
+  if (group_->quiesced_.load(std::memory_order_acquire)) {
+    return false;
+  }
 
   auto now = std::chrono::steady_clock::now();
   auto elapsed =
@@ -22,7 +26,9 @@ bool RaftNode::RaftNodeImpl::ShouldEnterQuiescedLocked() const {
 }
 
 void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
-  if (group_->quiesced_.exchange(true, std::memory_order_acq_rel)) return;
+  if (group_->quiesced_.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
   group_->consecutive_quiesced_timeouts_ = 0;
 
   LOG_INFO("Node {} entered quiesced mode (idle for {}ms)", group_->server_id_,
@@ -43,7 +49,9 @@ void RaftNode::RaftNodeImpl::EnterQuiescedLocked() {
 }
 
 void RaftNode::RaftNodeImpl::ExitQuiescedLocked() {
-  if (!group_->quiesced_.exchange(false, std::memory_order_acq_rel)) return;
+  if (!group_->quiesced_.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
   group_->consecutive_quiesced_timeouts_ = 0;
 
   LOG_INFO("Node {} exited quiesced mode", group_->server_id_);

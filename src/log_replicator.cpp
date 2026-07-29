@@ -50,8 +50,12 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeout() {
 }
 
 void RaftNode::RaftNodeImpl::OnHeartbeatTimeoutLocked() {
-  if (!IsRunning()) return;
-  if (group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning()) {
+    return;
+  }
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   // Quiesced mode: if idle for too long, enter quiesced state and skip
   // empty heartbeats to reduce network/CPU overhead.
@@ -77,7 +81,9 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeoutLocked() {
     CheckQuorumLocked();
   }
 
-  if (group_->role_ != RaftNodeRole::LEADER) return;
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   BroadcastAppendEntriesLocked();
   MaybeAutoPromoteLearnersLocked();
@@ -86,8 +92,12 @@ void RaftNode::RaftNodeImpl::OnHeartbeatTimeoutLocked() {
 
 void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
   // PRECONDITION: group_->election_mtx_ and group_->replication_mtx_ are held by caller
-  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) return;
-  if (!group_->config_.auto_remove_dead_nodes) return;
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
+  if (!group_->config_.auto_remove_dead_nodes) {
+    return;
+  }
 
   auto now = std::chrono::steady_clock::now();
 
@@ -96,7 +106,9 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
   {
     std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
     for (NodeId peer_id : group_->cluster_config_.nodes) {
-      if (peer_id == group_->server_id_) continue;  // Skip self
+      if (peer_id == group_->server_id_) {
+        continue;  // Skip self
+      }
 
       auto it = group_->last_contact_time_.find(peer_id);
       if (it == group_->last_contact_time_.end()) {
@@ -169,12 +181,16 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
 // Maximum log lag (in entries) for a learner to be auto-promoted.
 void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
   // PRECONDITION: group_->election_mtx_ and group_->replication_mtx_ are held by caller
-  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
   for (NodeId learner_id : group_->cluster_config_.learners) {
     auto it = group_->match_index_.find(learner_id);
-    if (it == group_->match_index_.end()) continue;
+    if (it == group_->match_index_.end()) {
+      continue;
+    }
 
     // Promote when learner has caught up to all committed entries.
     if (it->second >= group_->commit_index_) {
@@ -203,14 +219,18 @@ void RaftNode::RaftNodeImpl::BroadcastAppendEntriesLocked() {
       Index after = group_->next_index_[peer_id];
       // If group_->next_index_ didn't advance, nothing was sent (pipeline full
       // or no entries). Stop trying for this peer.
-      if (after == before) break;
+      if (after == before) {
+        break;
+      }
     }
   }
 }
 
 void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto it = group_->next_index_.find(peer_id);
-  if (it == group_->next_index_.end()) return;
+  if (it == group_->next_index_.end()) {
+    return;
+  }
 
   Index next_idx = it->second;
 
@@ -274,7 +294,9 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   }
 
   auto it_addr = group_->peer_map_.find(peer_id);
-  if (it_addr == group_->peer_map_.end()) return;
+  if (it_addr == group_->peer_map_.end()) {
+    return;
+  }
 
   if (!is_heartbeat) {
     // Track this batch in the pipeline.
@@ -343,7 +365,9 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetry(NodeId peer_id, bool is_
 
 void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   // Precondition: caller holds group_->election_mtx_ + group_->replication_mtx_
-  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   auto& retry = group_->retry_state_[peer_id];
   retry.attempts++;
@@ -386,8 +410,12 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
   std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
   std::unique_lock<std::mutex> lock_r(group_->replication_mtx_);
 
-  if (!IsRunning()) return;
-  if (group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning()) {
+    return;
+  }
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   // If response term is higher, revert to Follower
   if (resp.term_ > group_->current_term_) {
@@ -522,8 +550,12 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
   std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
   std::unique_lock<std::mutex> lock_r(group_->replication_mtx_);
 
-  if (!IsRunning()) return;
-  if (group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning()) {
+    return;
+  }
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   // If response term is higher, revert to Follower
   if (resp.term_ > group_->current_term_) {
@@ -575,7 +607,9 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
 
 void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   // PRECONDITION: group_->election_mtx_ is held by caller
-  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) return;
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
 
   auto cfg = infra_->runtime_config_->Get();
   auto now = std::chrono::steady_clock::now();
@@ -638,8 +672,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
     // the local log (even if not yet fsynced). Durability is ensured
     // by the fact that a majority (including followers) must have the
     // entry before it is committed.
-    if (leader_in_new) ++new_count;
-    if (leader_in_old) ++old_count;
+    if (leader_in_new) {
+      ++new_count;
+    }
+    if (leader_in_old) {
+      ++old_count;
+    }
 
     for (const auto& [peer_id, match] : group_->match_index_) {
       if (match >= index) {
@@ -653,8 +691,12 @@ void RaftNode::RaftNodeImpl::TryCommitLocked() {
                                   group_->cluster_config_.old_nodes.end(),
                                   peer_id) != group_->cluster_config_.old_nodes.end();
         }
-        if (peer_in_new) ++new_count;
-        if (peer_in_old) ++old_count;
+        if (peer_in_new) {
+          ++new_count;
+        }
+        if (peer_in_old) {
+          ++old_count;
+        }
       }
     }
 

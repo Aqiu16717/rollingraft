@@ -69,7 +69,9 @@ class Client::Impl {
         shutdown_(false) {
     // Start worker threads for async operations
     size_t num_workers = std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
-    if (num_workers < 1) num_workers = 1;
+    if (num_workers < 1) {
+      num_workers = 1;
+    }
 
     for (size_t i = 0; i < num_workers; ++i) {
       worker_threads_.emplace_back([this]() { WorkerLoop(); });

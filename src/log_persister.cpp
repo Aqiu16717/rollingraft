@@ -411,7 +411,9 @@ void LogPersister::BackgroundSyncLoop() {
       return !running_ || group_commit_controller_->ShouldSyncNow(now);
     });
 
-    if (!running_) break;
+    if (!running_) {
+      break;
+    }
 
     auto range = group_commit_controller_->AcquireSyncRange();
     if (!range) {

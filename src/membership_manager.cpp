@@ -24,7 +24,9 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
   struct PendingGuard {
     bool* flag;
     ~PendingGuard() {
-      if (flag) *flag = false;
+      if (flag) {
+        *flag = false;
+      }
     }
   } guard{&group_->pending_config_change_};
 

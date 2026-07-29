@@ -109,7 +109,9 @@ class MetricsRegistry {
     std::map<std::string, std::string> labels;
 
     bool operator<(const MetricKey& other) const {
-      if (name != other.name) return name < other.name;
+      if (name != other.name) {
+        return name < other.name;
+      }
       return labels < other.labels;
     }
   };

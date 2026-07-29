@@ -80,7 +80,9 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   size_t total_size = 0;
   while (true) {
     size_t bytes_read = snapshot->Read(check_offset, buffer.data(), kReadChunkSize);
-    if (bytes_read == 0) break;
+    if (bytes_read == 0) {
+      break;
+    }
     total_size += bytes_read;
     if (total_size > kMaxSnapshotSize) {
       LOG_ERROR(
@@ -97,7 +99,9 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
     uint64_t stream_offset = 0;
     auto chunk_provider = [&](std::string& chunk) -> bool {
       size_t bytes_read = snapshot->Read(stream_offset, buffer.data(), kReadChunkSize);
-      if (bytes_read == 0) return false;
+      if (bytes_read == 0) {
+        return false;
+      }
       chunk.assign(reinterpret_cast<char*>(buffer.data()), bytes_read);
       stream_offset += bytes_read;
       return true;
@@ -248,7 +252,9 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   // PRECONDITION: caller holds group_->election_mtx_ and group_->snapshot_mtx_
   auto it_state = group_->snapshot_sends_.find(peer_id);
-  if (it_state == group_->snapshot_sends_.end()) return;
+  if (it_state == group_->snapshot_sends_.end()) {
+    return;
+  }
 
   auto& state = it_state->second;
 
@@ -336,8 +342,12 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
   // BecomeFollowerLocked acquires both internally.
   {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-    if (!IsRunning()) return;
-    if (group_->role_ != RaftNodeRole::LEADER) return;
+    if (!IsRunning()) {
+      return;
+    }
+    if (group_->role_ != RaftNodeRole::LEADER) {
+      return;
+    }
 
     if (resp.term_ > group_->current_term_) {
       LOG_INFO(
@@ -356,7 +366,9 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
 
     auto it = group_->snapshot_sends_.find(from);
-    if (it == group_->snapshot_sends_.end()) return;
+    if (it == group_->snapshot_sends_.end()) {
+      return;
+    }
 
     auto& state = it->second;
     state.in_progress = false;

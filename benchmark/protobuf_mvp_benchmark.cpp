@@ -43,32 +43,52 @@ static std::string Base64Encode(const std::string& input) {
       array4[1] = ((array3[0] & 0x03) << 4) + ((array3[1] & 0xf0) >> 4);
       array4[2] = ((array3[1] & 0x0f) << 2) + ((array3[2] & 0xc0) >> 6);
       array4[3] = array3[2] & 0x3f;
-      for (int j = 0; j < 4; ++j) encoded += kBase64Chars[array4[j]];
+      for (int j = 0; j < 4; ++j) {
+        encoded += kBase64Chars[array4[j]];
+      }
       i = 0;
     }
   }
   if (i) {
-    for (int j = i; j < 3; ++j) array3[j] = '\0';
+    for (int j = i; j < 3; ++j) {
+      array3[j] = '\0';
+    }
     array4[0] = (array3[0] & 0xfc) >> 2;
     array4[1] = ((array3[0] & 0x03) << 4) + ((array3[1] & 0xf0) >> 4);
     array4[2] = ((array3[1] & 0x0f) << 2) + ((array3[2] & 0xc0) >> 6);
     array4[3] = array3[2] & 0x3f;
-    for (int j = 0; j < (i + 1); ++j) encoded += kBase64Chars[array4[j]];
-    while (i++ < 3) encoded += '=';
+    for (int j = 0; j < (i + 1); ++j) {
+      encoded += kBase64Chars[array4[j]];
+    }
+    while (i++ < 3) {
+      encoded += '=';
+    }
   }
   return encoded;
 }
 
 static std::string Base64Decode(const std::string& encoded) {
-  if (encoded.empty()) return std::string();
+  if (encoded.empty()) {
+    return std::string();
+  }
   std::string decoded;
   decoded.reserve((encoded.size() / 4) * 3);
   auto lookup = [](char c) -> int {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c >= 'A' && c <= 'Z') {
+      return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+      return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') {
+      return c - '0' + 52;
+    }
+    if (c == '+') {
+      return 62;
+    }
+    if (c == '/') {
+      return 63;
+    }
     return -1;
   };
   size_t in_len = encoded.size();
@@ -86,16 +106,22 @@ static std::string Base64Decode(const std::string& encoded) {
       array3[0] = (array4[0] << 2) + ((array4[1] & 0x30) >> 4);
       array3[1] = ((array4[1] & 0x0f) << 2) + ((array4[2] & 0x3c) >> 2);
       array3[2] = ((array4[2] & 0x03) << 6) + array4[3];
-      for (j = 0; j < 3; j++) decoded += array3[j];
+      for (j = 0; j < 3; j++) {
+        decoded += array3[j];
+      }
       i = 0;
     }
   }
   if (i) {
-    for (j = i; j < 4; j++) array4[j] = 0;
+    for (j = i; j < 4; j++) {
+      array4[j] = 0;
+    }
     array3[0] = (array4[0] << 2) + ((array4[1] & 0x30) >> 4);
     array3[1] = ((array4[1] & 0x0f) << 2) + ((array4[2] & 0x3c) >> 2);
     array3[2] = ((array4[2] & 0x03) << 6) + array4[3];
-    for (j = 0; j < (i - 1); j++) decoded += array3[j];
+    for (j = 0; j < (i - 1); j++) {
+      decoded += array3[j];
+    }
   }
   return decoded;
 }
@@ -109,7 +135,9 @@ static std::string RandomString(size_t len, std::mt19937& rng) {
   std::uniform_int_distribution<size_t> dist(0, sizeof(kChars) - 2);
   std::string s;
   s.reserve(len);
-  for (size_t i = 0; i < len; ++i) s.push_back(kChars[dist(rng)]);
+  for (size_t i = 0; i < len; ++i) {
+    s.push_back(kChars[dist(rng)]);
+  }
   return s;
 }
 
@@ -168,7 +196,9 @@ static std::string SerializeProtobuf(const RaftLogEntry& entry) {
 
 static bool DeserializeProtobuf(const std::string& payload, RaftLogEntry& entry) {
   RaftLogEntryProto proto;
-  if (!proto.ParseFromString(payload)) return false;
+  if (!proto.ParseFromString(payload)) {
+    return false;
+  }
   entry.index_ = proto.index();
   entry.term_ = proto.term();
   entry.data_ = proto.data();
@@ -225,7 +255,9 @@ static BenchmarkResult RunBenchmark(
       std::chrono::duration<double, std::nano>(t3 - t2).count() / serialized.size();
 
   size_t total_bytes = 0;
-  for (const auto& s : serialized) total_bytes += s.size();
+  for (const auto& s : serialized) {
+    total_bytes += s.size();
+  }
 
   BenchmarkResult result;
   result.payload_size = entries[0].data_.size();

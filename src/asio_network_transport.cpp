@@ -112,8 +112,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       pending_callbacks_.clear();
     }
     for (auto& [id, pending] : drained) {
-      if (pending.timer) pending.timer->cancel();
-      if (pending.callback) pending.callback("", false, "Connection closed");
+      if (pending.timer) {
+        pending.timer->cancel();
+      }
+      if (pending.callback) {
+        pending.callback("", false, "Connection closed");
+      }
     }
     // Drain any queued writes that haven't been dispatched yet.  This
     // prevents messages from lingering in write_queue_ if the connection
@@ -133,8 +137,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
             self->pending_callbacks_.erase(it);
           }
         }
-        if (timer) timer->cancel();
-        if (cb) cb("", false, "Connection closed");
+        if (timer) {
+          timer->cancel();
+        }
+        if (cb) {
+          cb("", false, "Connection closed");
+        }
       }
       self->write_queue_.clear();
       self->write_in_progress_ = false;
@@ -174,7 +182,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
 
     timer->async_wait([self, correlation_id](std::error_code ec) {
-      if (ec) return;  // Cancelled
+      if (ec) {
+        return;  // Cancelled
+      }
       RpcResponseCallback cb;
       {
         std::lock_guard<std::mutex> lock(self->mutex_);
@@ -221,7 +231,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
               self->pending_callbacks_.erase(it);
             }
           }
-          if (timer) timer->cancel();
+          if (timer) {
+            timer->cancel();
+          }
           if (cb) {
             cb("", false, "Send failed: " + ec.message());
           }
@@ -276,7 +288,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
               self->pending_callbacks_.erase(it);
             }
           }
-          if (timer) timer->cancel();
+          if (timer) {
+            timer->cancel();
+          }
           if (cb) {
             cb("", false, "Send failed: " + ec.message());
           }
@@ -504,7 +518,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       auto it = pending_callbacks_.find(correlation_id);
       if (it != pending_callbacks_.end()) {
         auto cb = std::move(it->second.callback);
-        if (it->second.timer) it->second.timer->cancel();
+        if (it->second.timer) {
+          it->second.timer->cancel();
+        }
         pending_callbacks_.erase(it);
         return cb;
       }
@@ -514,7 +530,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     if (!pending_callbacks_.empty()) {
       auto it = pending_callbacks_.begin();
       auto cb = std::move(it->second.callback);
-      if (it->second.timer) it->second.timer->cancel();
+      if (it->second.timer) {
+        it->second.timer->cancel();
+      }
       pending_callbacks_.erase(it);
       return cb;
     }
@@ -585,7 +603,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     connect_timer_.expires_after(kConnectTimeout);
     connect_timer_.async_wait(
         asio::bind_executor(strand_, [self = shared_from_this(), conn](std::error_code ec) {
-          if (ec) return;  // Cancelled
+          if (ec) {
+            return;  // Cancelled
+          }
           self->OnConnect(asio::error::timed_out, conn);
         }));
 
@@ -677,7 +697,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
  private:
   void OnTcpConnected(std::error_code ec, std::shared_ptr<TcpConnection> expected_conn) {
     if (conn_ != expected_conn) {
-      if (expected_conn) expected_conn->Close();
+      if (expected_conn) {
+        expected_conn->Close();
+      }
       return;
     }
 
@@ -703,7 +725,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   void OnConnect(std::error_code ec, std::shared_ptr<TcpConnection> expected_conn) {
     // Identity check: stale callback from replaced connection
     if (conn_ != expected_conn) {
-      if (expected_conn) expected_conn->Close();
+      if (expected_conn) {
+        expected_conn->Close();
+      }
       return;
     }
 
@@ -719,7 +743,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
       if (!state_.compare_exchange_strong(expected, State::kConnected, std::memory_order_acq_rel)) {
         // Timeout or another error raced ahead and already transitioned to
         // kFailed. The socket is connected but we lost the race. Close it.
-        if (conn_) conn_->Close();
+        if (conn_) {
+          conn_->Close();
+        }
         return;
       }
 
@@ -746,7 +772,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     NotifyStateChange(State::kFailed);
     NotifyConnectionChange(false);
 
-    if (conn_) conn_->Close();  // Ensure socket closed, inflight ops cancelled
+    if (conn_) {
+      conn_->Close();  // Ensure socket closed, inflight ops cancelled
+    }
     LOG_WARN("Failed to connect to {}: {}", addr_, ec.message());
     DrainPendingSendsWithError("Connection failed: " + ec.message());
     StartBackoffReconnect();
@@ -764,7 +792,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   void DrainPendingSendsWithError(const std::string& error_msg) {
     auto sends = std::move(pending_sends_);
     for (auto& s : sends) {
-      if (s.callback) s.callback("", false, error_msg);
+      if (s.callback) {
+        s.callback("", false, error_msg);
+      }
     }
   }
 
@@ -772,7 +802,9 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
     reconnect_timer_.expires_after(reconnect_delay_);
     reconnect_timer_.async_wait(
         asio::bind_executor(strand_, [self = shared_from_this()](std::error_code ec) {
-          if (ec) return;  // Cancelled
+          if (ec) {
+            return;  // Cancelled
+          }
           if (self->state_.load(std::memory_order_acquire) == State::kFailed) {
             self->StartConnecting();
           }

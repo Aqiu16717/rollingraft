@@ -55,7 +55,9 @@ void MockNetworkTransport::TriggerResponse(size_t request_index, const std::stri
   RpcResponseCallback callback;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (request_index >= recorded_requests_.size()) return;
+    if (request_index >= recorded_requests_.size()) {
+      return;
+    }
     callback = recorded_requests_[request_index].callback;
   }
   if (callback) {

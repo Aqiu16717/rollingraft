@@ -69,7 +69,9 @@ void ClientSessionManager::RecordResult(uint64_t session_id, uint64_t seq_num,
 }
 
 size_t ClientSessionManager::EvictExpired() {
-  if (ttl_ms_ == 0) return 0;
+  if (ttl_ms_ == 0) {
+    return 0;
+  }
 
   std::lock_guard<std::mutex> lock(mtx_);
   auto now = std::chrono::steady_clock::now();
@@ -126,7 +128,9 @@ void ClientSessionManager::TouchSession(uint64_t session_id, SessionNode& node) 
 }
 
 void ClientSessionManager::EvictLRU() {
-  if (lru_list_.empty()) return;
+  if (lru_list_.empty()) {
+    return;
+  }
 
   auto session_id = lru_list_.back();
   sessions_.erase(session_id);

@@ -11,15 +11,21 @@ Status AsioSslContextFactory::CreateServerContext(asio::ssl::context& out_ctx) c
   ConfigureVersion(out_ctx);
 
   auto status = LoadCertificateChain(out_ctx);
-  if (!status.ok()) return status;
+  if (!status.ok()) {
+    return status;
+  }
 
   status = LoadPrivateKey(out_ctx);
-  if (!status.ok()) return status;
+  if (!status.ok()) {
+    return status;
+  }
 
   if (config_.mutual_auth) {
     out_ctx.set_verify_mode(asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert);
     status = LoadCaBundle(out_ctx);
-    if (!status.ok()) return status;
+    if (!status.ok()) {
+      return status;
+    }
   } else {
     out_ctx.set_verify_mode(asio::ssl::verify_none);
   }
@@ -34,14 +40,20 @@ Status AsioSslContextFactory::CreateClientContext(asio::ssl::context& out_ctx) c
   if (config_.mutual_auth) {
     out_ctx.set_verify_mode(asio::ssl::verify_peer);
     auto status = LoadCertificateChain(out_ctx);
-    if (!status.ok()) return status;
+    if (!status.ok()) {
+      return status;
+    }
     status = LoadPrivateKey(out_ctx);
-    if (!status.ok()) return status;
+    if (!status.ok()) {
+      return status;
+    }
   }
 
   if (!config_.ca_file.empty()) {
     auto status = LoadCaBundle(out_ctx);
-    if (!status.ok()) return status;
+    if (!status.ok()) {
+      return status;
+    }
   } else if (config_.mutual_auth) {
     return Status::Error("TLS_CA_REQUIRED", "CA file required for client verification");
   }

@@ -10,7 +10,9 @@ SimulatedTimerService::SimulatedTimerService(SimulatedClock* clock)
 }
 
 void SimulatedTimerService::Stop() {
-  if (!state_) return;
+  if (!state_) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(state_->timers_mtx);
   state_->timers.clear();
   // Release shared state so pending clock callbacks with weak_ptr no-op.
@@ -19,7 +21,9 @@ void SimulatedTimerService::Stop() {
 
 TimerId SimulatedTimerService::SetTimeout(std::chrono::milliseconds delay,
                                           std::function<void()> callback) {
-  if (!state_) return 0;
+  if (!state_) {
+    return 0;
+  }
   TimerId id = state_->next_id.fetch_add(1);
   uint64_t delay_ms = static_cast<uint64_t>(delay.count());
   {
@@ -29,7 +33,9 @@ TimerId SimulatedTimerService::SetTimeout(std::chrono::milliseconds delay,
   auto weak = std::weak_ptr<State>(state_);
   state_->clock->After(delay_ms, [weak, id]() {
     auto state = weak.lock();
-    if (!state) return;
+    if (!state) {
+      return;
+    }
     std::function<void()> cb;
     {
       std::lock_guard<std::mutex> lock(state->timers_mtx);
@@ -39,14 +45,18 @@ TimerId SimulatedTimerService::SetTimeout(std::chrono::milliseconds delay,
         state->timers.erase(it);
       }
     }
-    if (cb) cb();
+    if (cb) {
+      cb();
+    }
   });
   return id;
 }
 
 TimerId SimulatedTimerService::SetInterval(std::chrono::milliseconds interval,
                                            std::function<void()> callback) {
-  if (!state_) return 0;
+  if (!state_) {
+    return 0;
+  }
   TimerId id = state_->next_id.fetch_add(1);
   uint64_t interval_ms = static_cast<uint64_t>(interval.count());
   {
@@ -58,7 +68,9 @@ TimerId SimulatedTimerService::SetInterval(std::chrono::milliseconds interval,
   *recurring = [weak, id, interval_ms, callback, recurring]() {
     callback();
     auto state = weak.lock();
-    if (!state) return;
+    if (!state) {
+      return;
+    }
     {
       std::lock_guard<std::mutex> lock(state->timers_mtx);
       if (state->timers.find(id) != state->timers.end()) {
@@ -71,13 +83,17 @@ TimerId SimulatedTimerService::SetInterval(std::chrono::milliseconds interval,
 }
 
 bool SimulatedTimerService::CancelTimer(TimerId id) {
-  if (!state_) return false;
+  if (!state_) {
+    return false;
+  }
   std::lock_guard<std::mutex> lock(state_->timers_mtx);
   return state_->timers.erase(id) > 0;
 }
 
 bool SimulatedTimerService::IsTimerActive(TimerId id) const {
-  if (!state_) return false;
+  if (!state_) {
+    return false;
+  }
   std::lock_guard<std::mutex> lock(state_->timers_mtx);
   return state_->timers.find(id) != state_->timers.end();
 }

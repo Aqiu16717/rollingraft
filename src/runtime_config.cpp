@@ -27,33 +27,59 @@ Status RuntimeConfig::UpdateFromJson(const std::string& json_str) {
   Values proposed = values_;
 
   // Apply each field if present
-  if (j.contains("election_timeout_ms")) proposed.election_timeout_ms = j["election_timeout_ms"];
-  if (j.contains("heartbeat_interval_ms"))
+  if (j.contains("election_timeout_ms")) {
+    proposed.election_timeout_ms = j["election_timeout_ms"];
+  }
+  if (j.contains("heartbeat_interval_ms")) {
     proposed.heartbeat_interval_ms = j["heartbeat_interval_ms"];
-  if (j.contains("max_entries_per_append"))
+  }
+  if (j.contains("max_entries_per_append")) {
     proposed.max_entries_per_append = j["max_entries_per_append"];
-  if (j.contains("rpc_timeout_ms")) proposed.rpc_timeout_ms = j["rpc_timeout_ms"];
-  if (j.contains("snapshot_threshold_entries"))
+  }
+  if (j.contains("rpc_timeout_ms")) {
+    proposed.rpc_timeout_ms = j["rpc_timeout_ms"];
+  }
+  if (j.contains("snapshot_threshold_entries")) {
     proposed.snapshot_threshold_entries = j["snapshot_threshold_entries"];
-  if (j.contains("snapshot_threshold_bytes"))
+  }
+  if (j.contains("snapshot_threshold_bytes")) {
     proposed.snapshot_threshold_bytes = j["snapshot_threshold_bytes"];
-  if (j.contains("snapshot_check_interval_ms"))
+  }
+  if (j.contains("snapshot_check_interval_ms")) {
     proposed.snapshot_check_interval_ms = j["snapshot_check_interval_ms"];
-  if (j.contains("max_retry_attempts")) proposed.max_retry_attempts = j["max_retry_attempts"];
-  if (j.contains("base_retry_delay_ms")) proposed.base_retry_delay_ms = j["base_retry_delay_ms"];
-  if (j.contains("max_retry_delay_ms")) proposed.max_retry_delay_ms = j["max_retry_delay_ms"];
-  if (j.contains("log_retention_entries"))
+  }
+  if (j.contains("max_retry_attempts")) {
+    proposed.max_retry_attempts = j["max_retry_attempts"];
+  }
+  if (j.contains("base_retry_delay_ms")) {
+    proposed.base_retry_delay_ms = j["base_retry_delay_ms"];
+  }
+  if (j.contains("max_retry_delay_ms")) {
+    proposed.max_retry_delay_ms = j["max_retry_delay_ms"];
+  }
+  if (j.contains("log_retention_entries")) {
     proposed.log_retention_entries = j["log_retention_entries"];
-  if (j.contains("max_snapshot_size_bytes"))
+  }
+  if (j.contains("max_snapshot_size_bytes")) {
     proposed.max_snapshot_size_bytes = j["max_snapshot_size_bytes"];
-  if (j.contains("propose_timeout_ms")) proposed.propose_timeout_ms = j["propose_timeout_ms"];
-  if (j.contains("leader_lease_enabled")) proposed.leader_lease_enabled = j["leader_lease_enabled"];
-  if (j.contains("max_pipeline_window")) proposed.max_pipeline_window = j["max_pipeline_window"];
-  if (j.contains("transport_batching_enabled"))
+  }
+  if (j.contains("propose_timeout_ms")) {
+    proposed.propose_timeout_ms = j["propose_timeout_ms"];
+  }
+  if (j.contains("leader_lease_enabled")) {
+    proposed.leader_lease_enabled = j["leader_lease_enabled"];
+  }
+  if (j.contains("max_pipeline_window")) {
+    proposed.max_pipeline_window = j["max_pipeline_window"];
+  }
+  if (j.contains("transport_batching_enabled")) {
     proposed.transport_batching_enabled = j["transport_batching_enabled"];
+  }
 
   auto status = Validate(proposed);
-  if (!status.ok()) return status;
+  if (!status.ok()) {
+    return status;
+  }
 
   values_ = proposed;
   return Status::OK();

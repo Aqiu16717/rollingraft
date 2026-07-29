@@ -25,7 +25,9 @@ Status SimulatedNetworkTransport::Initialize(const NodeAddr& listen_addr,
       state_->node_id, [weak](NodeId from, const std::string& payload, uint64_t correlation_id,
                               std::string& response) {
         auto state = weak.lock();
-        if (!state) return;
+        if (!state) {
+          return;
+        }
 
         // Try as incoming request first to avoid correlation_id collision
         // (different nodes may use the same correlation_id independently)
@@ -59,7 +61,9 @@ void SimulatedNetworkTransport::SetConnectionCallback(ConnectionCallback callbac
 Status SimulatedNetworkTransport::Start() { return Status::OK(); }
 
 Status SimulatedNetworkTransport::Stop() {
-  if (!state_) return Status::OK();
+  if (!state_) {
+    return Status::OK();
+  }
   if (state_->network) {
     state_->network->UnregisterEndpoint(state_->node_id);
   }
@@ -77,7 +81,9 @@ void SimulatedNetworkTransport::SendRpc(NodeId to, [[maybe_unused]] const NodeAd
                                         const std::string& request_data, uint64_t correlation_id,
                                         std::chrono::milliseconds timeout,
                                         RpcResponseCallback callback) {
-  if (!state_) return;
+  if (!state_) {
+    return;
+  }
   {
     std::lock_guard<std::mutex> lock(state_->callbacks_mtx);
     state_->pending_callbacks[correlation_id] = std::move(callback);
@@ -90,7 +96,9 @@ void SimulatedNetworkTransport::SendRpc(NodeId to, [[maybe_unused]] const NodeAd
     auto weak = std::weak_ptr<State>(state_);
     state_->clock->After(timeout_ms, [weak, correlation_id]() {
       auto state = weak.lock();
-      if (!state) return;
+      if (!state) {
+        return;
+      }
       RpcResponseCallback cb;
       {
         std::lock_guard<std::mutex> lock(state->callbacks_mtx);

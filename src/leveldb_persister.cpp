@@ -694,11 +694,15 @@ class LevelDBPersister : public Persister {
 
   bool HasSnapshot() const override {
     std::shared_lock lock(mutex_);
-    if (!db_) return false;
+    if (!db_) {
+      return false;
+    }
 
     std::string value;
     leveldb::Status s = db_->Get(leveldb::ReadOptions(), kSnapshotKey, &value);
-    if (s.ok()) return true;
+    if (s.ok()) {
+      return true;
+    }
 
     s = db_->Get(leveldb::ReadOptions(), kSnapshotMetaKey, &value);
     return s.ok();

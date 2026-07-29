@@ -36,7 +36,9 @@ TEST_F(ChaosScenariosTest, PartitionRecovery) {
   std::vector<NodeId> group_a = {leader};
   std::vector<NodeId> group_b;
   for (size_t i = 0; i < 3; ++i) {
-    if (static_cast<NodeId>(i) != leader) group_b.push_back(static_cast<NodeId>(i));
+    if (static_cast<NodeId>(i) != leader) {
+      group_b.push_back(static_cast<NodeId>(i));
+    }
   }
   cluster.Partition(group_a, group_b);
 

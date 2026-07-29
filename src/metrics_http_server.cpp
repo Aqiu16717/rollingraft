@@ -38,33 +38,45 @@ std::shared_ptr<asio::ssl::context> CreateSslContext(const MetricsHttpServer::Tl
 
 std::string ExtractPath(const std::string& request) {
   size_t start = request.find(' ');
-  if (start == std::string::npos) return "";
+  if (start == std::string::npos) {
+    return "";
+  }
   ++start;
   size_t end = request.find(' ', start);
-  if (end == std::string::npos) return "";
+  if (end == std::string::npos) {
+    return "";
+  }
   return request.substr(start, end - start);
 }
 
 std::string ExtractBody(const std::string& request) {
   size_t pos = request.find("\r\n\r\n");
-  if (pos == std::string::npos) return "";
+  if (pos == std::string::npos) {
+    return "";
+  }
   return request.substr(pos + 4);
 }
 
 std::string ExtractAuthToken(const std::string& request) {
   static constexpr std::string_view kAuthPrefix = "Authorization: Bearer ";
   size_t pos = request.find(kAuthPrefix);
-  if (pos == std::string::npos) return "";
+  if (pos == std::string::npos) {
+    return "";
+  }
   pos += kAuthPrefix.size();
   size_t end = request.find("\r\n", pos);
-  if (end == std::string::npos) return "";
+  if (end == std::string::npos) {
+    return "";
+  }
   return request.substr(pos, end - pos);
 }
 
 // Timing-safe string comparison to mitigate timing attacks on token validation.
 // Never use operator== for comparing secrets.
 bool TimingSafeEqual(const std::string& a, const std::string& b) {
-  if (a.size() != b.size()) return false;
+  if (a.size() != b.size()) {
+    return false;
+  }
   volatile unsigned char diff = 0;
   for (size_t i = 0; i < a.size(); ++i) {
     diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
@@ -73,11 +85,21 @@ bool TimingSafeEqual(const std::string& a, const std::string& b) {
 }
 
 bool IsAdminEndpoint(const std::string& path, const std::string& method) {
-  if (path == "/v1/members" && method == "POST") return true;
-  if (path.starts_with("/v1/members/") && method == "DELETE") return true;
-  if (path == "/v1/snapshot/trigger" && method == "POST") return true;
-  if (path == "/v1/leadership/transfer" && method == "POST") return true;
-  if (path == "/v1/config") return true;  // GET and PATCH
+  if (path == "/v1/members" && method == "POST") {
+    return true;
+  }
+  if (path.starts_with("/v1/members/") && method == "DELETE") {
+    return true;
+  }
+  if (path == "/v1/snapshot/trigger" && method == "POST") {
+    return true;
+  }
+  if (path == "/v1/leadership/transfer" && method == "POST") {
+    return true;
+  }
+  if (path == "/v1/config") {
+    return true;  // GET and PATCH
+  }
   return false;
 }
 
@@ -97,7 +119,9 @@ MetricsHttpServer::MetricsHttpServer(const std::string& bind_addr, MetricsRegist
 MetricsHttpServer::~MetricsHttpServer() { Stop(); }
 
 void MetricsHttpServer::Start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
 
   io_ctx_ = std::make_unique<asio::io_context>(1);
 
@@ -128,7 +152,9 @@ void MetricsHttpServer::Start() {
 }
 
 void MetricsHttpServer::Stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
 
   if (heartbeat_timer_) {
     heartbeat_timer_->cancel();
@@ -148,7 +174,9 @@ void MetricsHttpServer::Stop() {
     std::error_code ec;
     acceptor_->close(ec);
   }
-  if (io_ctx_) io_ctx_->stop();
+  if (io_ctx_) {
+    io_ctx_->stop();
+  }
 
   // Wait for server thread to exit with timeout to avoid indefinite hang.
   if (thread_.joinable()) {
@@ -176,7 +204,9 @@ void MetricsHttpServer::Stop() {
 void MetricsHttpServer::Run() { io_ctx_->run(); }
 
 void MetricsHttpServer::DoAccept() {
-  if (!running_) return;
+  if (!running_) {
+    return;
+  }
 
   if (tls_config_.enabled && ssl_ctx_) {
     acceptor_->async_accept([this](std::error_code ec, asio::ip::tcp::socket socket) {
@@ -194,14 +224,18 @@ void MetricsHttpServer::DoAccept() {
               }
             });
       }
-      if (running_) DoAccept();
+      if (running_) {
+        DoAccept();
+      }
     });
   } else {
     acceptor_->async_accept([this](std::error_code ec, asio::ip::tcp::socket socket) {
       if (!ec && running_) {
         HandleConnection(std::move(socket));
       }
-      if (running_) DoAccept();
+      if (running_) {
+        DoAccept();
+      }
     });
   }
 }
@@ -229,7 +263,9 @@ void MetricsHttpServer::SetConfigUpdater(ConfigUpdater handler) {
 }
 
 void MetricsHttpServer::BroadcastEvent(const std::string& json_event) {
-  if (!io_ctx_ || !running_) return;
+  if (!io_ctx_ || !running_) {
+    return;
+  }
 
   std::string sse_data = "data: " + json_event + "\n\n";
 
@@ -256,16 +292,22 @@ void MetricsHttpServer::RemoveDeadSseConnections() {
 }
 
 void MetricsHttpServer::ScheduleHeartbeat() {
-  if (!heartbeat_timer_ || !running_) return;
+  if (!heartbeat_timer_ || !running_) {
+    return;
+  }
   heartbeat_timer_->expires_after(kHeartbeatInterval);
   heartbeat_timer_->async_wait([this](std::error_code ec) {
-    if (ec == asio::error::operation_aborted) return;
+    if (ec == asio::error::operation_aborted) {
+      return;
+    }
     OnHeartbeat(ec);
   });
 }
 
 void MetricsHttpServer::OnHeartbeat(std::error_code ec) {
-  if (ec || !running_) return;
+  if (ec || !running_) {
+    return;
+  }
 
   // SSE comment line (starts with ':') — browsers ignore it but keep
   // connection alive. Prevents proxy/load-balancer timeouts.
@@ -291,7 +333,9 @@ void MetricsHttpServer::OnHeartbeat(std::error_code ec) {
 
 std::string ExtractMethod(const std::string& request) {
   size_t end = request.find(' ');
-  if (end == std::string::npos) return "";
+  if (end == std::string::npos) {
+    return "";
+  }
   return request.substr(0, end);
 }
 
@@ -362,8 +406,12 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
     std::string addr;
     try {
       auto j = nlohmann::json::parse(body);
-      if (j.contains("node_id")) node_id = j["node_id"];
-      if (j.contains("addr")) addr = j["addr"];
+      if (j.contains("node_id")) {
+        node_id = j["node_id"];
+      }
+      if (j.contains("addr")) {
+        addr = j["addr"];
+      }
     } catch (const std::exception& e) {
       response_body = nlohmann::json{{"error", "BAD_REQUEST"}, {"message", e.what()}}.dump() + "\n";
       status_line = "HTTP/1.1 400 Bad Request\r\n";
@@ -390,7 +438,9 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
     int32_t target_id = -1;
     try {
       auto j = nlohmann::json::parse(body);
-      if (j.contains("target_node_id")) target_id = j["target_node_id"];
+      if (j.contains("target_node_id")) {
+        target_id = j["target_node_id"];
+      }
     } catch (const std::exception& e) {
       response_body = nlohmann::json{{"error", "BAD_REQUEST"}, {"message", e.what()}}.dump() + "\n";
       status_line = "HTTP/1.1 400 Bad Request\r\n";
@@ -456,7 +506,9 @@ void MetricsHttpServer::HandleConnection(SocketVariant socket) {
         socket_ptr->async_read_some(asio::buffer(*buffer), [this, buffer, socket_ptr](
                                                                std::error_code ec,
                                                                std::size_t bytes) mutable {
-          if (ec) return;
+          if (ec) {
+            return;
+          }
 
           // Get client IP for rate limiting
           std::string client_ip;

@@ -102,7 +102,9 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
              !group_->apply_running_.load(std::memory_order_acquire);
     });
 
-    if (!group_->apply_running_.load(std::memory_order_acquire)) break;
+    if (!group_->apply_running_.load(std::memory_order_acquire)) {
+      break;
+    }
 
     // Batch consume up to 64 entries to amortize lock overhead.
     const size_t kBatchSize = 64;
@@ -249,7 +251,9 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     }
 
     auto it_addr = group_->peer_map_.find(peer_id);
-    if (it_addr == group_->peer_map_.end()) continue;
+    if (it_addr == group_->peer_map_.end()) {
+      continue;
+    }
 
     infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
@@ -292,7 +296,9 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read
   }
 
   auto it = group_->pending_reads_.find(read_id);
-  if (it == group_->pending_reads_.end()) return;
+  if (it == group_->pending_reads_.end()) {
+    return;
+  }
 
   auto& read_req = it->second;
   read_req.acks.insert(from);
@@ -331,7 +337,9 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read
         std::mutex& m;
         bool need_relock = true;
         ~LockReacquireGuard() {
-          if (need_relock) m.lock();
+          if (need_relock) {
+            m.lock();
+          }
         }
       } guard{group_->applier_mtx_};
       group_->applier_mtx_.unlock();
@@ -383,7 +391,9 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
         std::mutex& m;
         bool need_relock = true;
         ~LockReacquireGuard() {
-          if (need_relock) m.lock();
+          if (need_relock) {
+            m.lock();
+          }
         }
       } guard{group_->applier_mtx_};
       group_->applier_mtx_.unlock();

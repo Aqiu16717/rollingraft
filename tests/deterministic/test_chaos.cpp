@@ -21,7 +21,9 @@ TEST(ChaosTest, PartitionRecovery) {
   std::vector<NodeId> alone = {leader};
   std::vector<NodeId> others;
   for (NodeId i = 0; i < 5; ++i) {
-    if (i != leader) others.push_back(i);
+    if (i != leader) {
+      others.push_back(i);
+    }
   }
   cluster.Partition(alone, others);
   cluster.RunFor(1000);

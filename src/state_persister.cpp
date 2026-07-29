@@ -483,11 +483,15 @@ Status StatePersister::LoadSnapshotStream(
 bool StatePersister::HasSnapshot() const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-  if (!db_) return false;
+  if (!db_) {
+    return false;
+  }
 
   std::string value;
   leveldb::Status s = db_->Get(leveldb::ReadOptions(), kSnapshotDataKey, &value);
-  if (s.ok()) return true;
+  if (s.ok()) {
+    return true;
+  }
 
   s = db_->Get(leveldb::ReadOptions(), kSnapshotMetaKey, &value);
   return s.ok();

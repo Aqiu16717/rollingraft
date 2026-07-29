@@ -212,7 +212,9 @@ ConcurrentConfigResult ConcurrentWritesScenario::RunConfiguration(int num_client
 
     auto percentile = [&](double p) -> double {
       size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * all_latencies.size())) - 1;
-      if (idx >= all_latencies.size()) idx = all_latencies.size() - 1;
+      if (idx >= all_latencies.size()) {
+        idx = all_latencies.size() - 1;
+      }
       return all_latencies[idx];
     };
 

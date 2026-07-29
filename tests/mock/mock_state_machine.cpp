@@ -16,7 +16,9 @@ ApplyResult MockStateMachine::Apply(std::span<const uint8_t> data, uint64_t inde
   auto it = waiters_.begin();
   while (it != waiters_.end() && it->first <= index) {
     for (auto& cb : it->second) {
-      if (cb) cb();
+      if (cb) {
+        cb();
+      }
     }
     it = waiters_.erase(it);
   }
@@ -78,7 +80,9 @@ void MockStateMachine::WaitIndex(uint64_t index, std::function<void()> cb) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (index <= last_applied_index_) {
-    if (cb) cb();
+    if (cb) {
+      cb();
+    }
   } else {
     waiters_[index].push_back(std::move(cb));
   }
@@ -122,7 +126,9 @@ void MockStateMachine::NotifyWaiters(uint64_t index) {
   auto it = waiters_.begin();
   while (it != waiters_.end() && it->first <= index) {
     for (auto& cb : it->second) {
-      if (cb) cb();
+      if (cb) {
+        cb();
+      }
     }
     it = waiters_.erase(it);
   }

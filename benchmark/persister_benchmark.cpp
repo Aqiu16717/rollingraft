@@ -46,8 +46,12 @@ enum class Backend {
 };
 
 static Backend ParseBackend(const std::string& s) {
-  if (s == "hybrid") return Backend::kHybrid;
-  if (s == "leveldb") return Backend::kLevelDB;
+  if (s == "hybrid") {
+    return Backend::kHybrid;
+  }
+  if (s == "leveldb") {
+    return Backend::kLevelDB;
+  }
   std::cerr << "Unknown backend: " << s << ", defaulting to leveldb\n";
   return Backend::kLevelDB;
 }
@@ -160,7 +164,9 @@ static std::string RandomString(size_t len, std::mt19937& rng) {
   std::uniform_int_distribution<size_t> dist(0, sizeof(kChars) - 2);
   std::string s;
   s.reserve(len);
-  for (size_t i = 0; i < len; ++i) s.push_back(kChars[dist(rng)]);
+  for (size_t i = 0; i < len; ++i) {
+    s.push_back(kChars[dist(rng)]);
+  }
   return s;
 }
 
@@ -187,9 +193,13 @@ static std::string FormatBytes(size_t bytes) {
 
 static size_t GetDirectorySize(const std::string& path) {
   size_t total = 0;
-  if (!std::filesystem::exists(path)) return 0;
+  if (!std::filesystem::exists(path)) {
+    return 0;
+  }
   for (const auto& entry : std::filesystem::recursive_directory_iterator(path)) {
-    if (entry.is_regular_file()) total += entry.file_size();
+    if (entry.is_regular_file()) {
+      total += entry.file_size();
+    }
   }
   return total;
 }
@@ -368,7 +378,9 @@ static ConcurrentAppendResult RunConcurrentAppendBenchmark(
     });
   }
 
-  for (auto& w : workers) w.join();
+  for (auto& w : workers) {
+    w.join();
+  }
 
   auto t1 = std::chrono::steady_clock::now();
   auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
@@ -584,10 +596,14 @@ int main(int argc, char** argv) {
   std::cout << "Entries: " << args.entries << "\n";
   std::cout << "Payload: " << args.payload_bytes << " B\n";
   std::cout << "Batch sizes: ";
-  for (auto b : args.batch_sizes) std::cout << b << " ";
+  for (auto b : args.batch_sizes) {
+    std::cout << b << " ";
+  }
   std::cout << "\n";
   std::cout << "Compression modes: ";
-  for (auto c : args.compression_values) std::cout << c << " ";
+  for (auto c : args.compression_values) {
+    std::cout << c << " ";
+  }
   std::cout << "\n";
   std::cout << "Threads: " << args.threads << "\n\n";
 
@@ -747,7 +763,9 @@ int main(int argc, char** argv) {
   std::ofstream csv(args.output_path);
   if (csv) {
     WriteCsvHeader(csv);
-    for (const auto& row : rows) WriteCsvRow(csv, row);
+    for (const auto& row : rows) {
+      WriteCsvRow(csv, row);
+    }
     std::cout << "\nCSV written to: " << args.output_path << "\n";
   } else {
     std::cerr << "Failed to write CSV: " << args.output_path << "\n";

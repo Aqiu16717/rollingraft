@@ -248,7 +248,9 @@ void RaftNode::RaftNodeImpl::CancelElectionTimerLocked() {
 }
 
 void RaftNode::RaftNodeImpl::OnStoreTick() {
-  if (!IsRunning()) return;
+  if (!IsRunning()) {
+    return;
+  }
 
   // Election timeout is checked under election_mtx_.  Heartbeat and snapshot
   // checks are evaluated under their respective manager locks.
@@ -270,8 +272,12 @@ void RaftNode::RaftNodeImpl::OnElectionTimeout() {
 }
 
 void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
-  if (!IsRunning()) return;
-  if (group_->role_ == RaftNodeRole::LEADER) return;
+  if (!IsRunning()) {
+    return;
+  }
+  if (group_->role_ == RaftNodeRole::LEADER) {
+    return;
+  }
 
   if (metrics_) {
     infra_->metrics_->GetCounter("raft_election_timeouts_total", group_->metrics_node_label_)
@@ -337,7 +343,9 @@ void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
   // reset and wait for the next election timeout.
   auto cfg = infra_->runtime_config_->Get();
   uint32_t pre_vote_timeout = cfg.election_timeout_ms / 2;
-  if (pre_vote_timeout < 10) pre_vote_timeout = 10;
+  if (pre_vote_timeout < 10) {
+    pre_vote_timeout = 10;
+  }
   infra_->timer_->SetTimeout(std::chrono::milliseconds(pre_vote_timeout), [this]() {
     std::lock_guard<std::mutex> lock(group_->election_mtx_);
     if (group_->pre_vote_running_) {
@@ -414,7 +422,9 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(NodeId from, const Reques
 
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
 
-  if (!IsRunning()) return;
+  if (!IsRunning()) {
+    return;
+  }
   if (group_->role_ != RaftNodeRole::CANDIDATE) {
     LOG_INFO("Node {} ignoring vote response, not a candidate (role={})", group_->server_id_,
              static_cast<int>(group_->role_));
@@ -523,8 +533,12 @@ void RaftNode::RaftNodeImpl::HandlePreVoteResponse(NodeId from, const PreVoteRes
 
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
 
-  if (!IsRunning()) return;
-  if (!group_->pre_vote_running_) return;
+  if (!IsRunning()) {
+    return;
+  }
+  if (!group_->pre_vote_running_) {
+    return;
+  }
 
   // If we are already a candidate or leader, pre-vote is done
   if (group_->role_ == RaftNodeRole::CANDIDATE || group_->role_ == RaftNodeRole::LEADER) {

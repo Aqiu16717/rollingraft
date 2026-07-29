@@ -81,7 +81,9 @@ class SyntheticPersister : public Persister {
 
   std::pair<uint64_t, uint64_t> GetLastLogInfo() override {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (logs_.empty()) return {0, 0};
+    if (logs_.empty()) {
+      return {0, 0};
+    }
     const auto& last = logs_.rbegin()->second;
     return {last.index_, last.term_};
   }

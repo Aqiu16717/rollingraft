@@ -36,7 +36,9 @@ class FailoverScenario : public ClusterBenchmark {
 
  protected:
   bool SetUp() override {
-    if (!ClusterBenchmark::SetUp()) return false;
+    if (!ClusterBenchmark::SetUp()) {
+      return false;
+    }
     leader_idx_ = GetLeaderIndex();
     return leader_idx_ >= 0;
   }

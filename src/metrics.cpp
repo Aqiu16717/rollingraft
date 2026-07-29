@@ -66,12 +66,16 @@ void MetricsRegistry::RemoveHistogram(const std::string& name,
 }
 
 static std::string FormatLabels(const std::map<std::string, std::string>& labels) {
-  if (labels.empty()) return "";
+  if (labels.empty()) {
+    return "";
+  }
   std::ostringstream oss;
   oss << "{";
   bool first = true;
   for (const auto& [k, v] : labels) {
-    if (!first) oss << ",";
+    if (!first) {
+      oss << ",";
+    }
     first = false;
     oss << k << "=\"" << v << "\"";
   }

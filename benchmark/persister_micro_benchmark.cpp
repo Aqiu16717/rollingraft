@@ -42,7 +42,9 @@ static std::string RandomString(size_t len, std::mt19937& rng) {
   std::uniform_int_distribution<size_t> dist(0, sizeof(kChars) - 2);
   std::string s;
   s.reserve(len);
-  for (size_t i = 0; i < len; ++i) s.push_back(kChars[dist(rng)]);
+  for (size_t i = 0; i < len; ++i) {
+    s.push_back(kChars[dist(rng)]);
+  }
   return s;
 }
 
@@ -64,11 +66,15 @@ static BenchResult Summarize(const std::string& scenario, const std::vector<doub
   BenchResult r;
   r.scenario = scenario;
   r.iterations = static_cast<int>(latencies_us.size());
-  if (r.iterations == 0) return r;
+  if (r.iterations == 0) {
+    return r;
+  }
   std::vector<double> sorted = latencies_us;
   std::sort(sorted.begin(), sorted.end());
   double sum = 0.0;
-  for (double v : sorted) sum += v;
+  for (double v : sorted) {
+    sum += v;
+  }
   r.avg_us = sum / sorted.size();
   r.p50_us = sorted[sorted.size() * 50 / 100];
   r.p99_us = sorted[std::min(sorted.size() * 99 / 100, sorted.size() - 1)];
@@ -208,12 +214,16 @@ static BenchResult BenchWALAppend(int iterations, size_t payload_bytes, bool syn
       e.command_ = "noop";
       auto t0 = std::chrono::steady_clock::now();
       wal.AppendLogEntry(e);
-      if (sync_each) wal.Sync();
+      if (sync_each) {
+        wal.Sync();
+      }
       auto t1 = std::chrono::steady_clock::now();
       latencies.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
       total_bytes += data.size();
     }
-    if (!sync_each) wal.Sync();
+    if (!sync_each) {
+      wal.Sync();
+    }
     wal.Close();
   }
   RemoveDir(dir);
@@ -289,7 +299,9 @@ static BenchResult BenchHybridRecovery(int num_entries, size_t payload_bytes) {
         batch.clear();
       }
     }
-    if (!batch.empty()) p.AppendEntries(batch);
+    if (!batch.empty()) {
+      p.AppendEntries(batch);
+    }
     p.Sync();
     p.Close();
   }
@@ -363,7 +375,9 @@ static BenchResult BenchSnapshotStream(int total_bytes, int chunk_size, bool syn
     std::string payload(total_bytes, 's');
     size_t offset = 0;
     auto provider = [&](std::string& chunk) -> bool {
-      if (offset >= payload.size()) return false;
+      if (offset >= payload.size()) {
+        return false;
+      }
       size_t n = std::min<size_t>(chunk_size, payload.size() - offset);
       chunk.assign(payload.data() + offset, n);
       offset += n;
@@ -419,6 +433,8 @@ int main() {
   results.push_back(BenchSnapshotStream(10 * 1024 * 1024, 1024 * 1024, false));
 
   PrintHeader();
-  for (const auto& r : results) PrintRow(r);
+  for (const auto& r : results) {
+    PrintRow(r);
+  }
   return 0;
 }

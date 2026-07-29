@@ -38,7 +38,9 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
 
  protected:
   bool SetUp() override {
-    if (!ClusterBenchmark::SetUp()) return false;
+    if (!ClusterBenchmark::SetUp()) {
+      return false;
+    }
 
     // Pre-load entries to trigger snapshot
     const int kPreloadCount = 1000;
@@ -112,7 +114,9 @@ class SnapshotRecoveryScenario : public ClusterBenchmark {
       std::sort(latencies.begin(), latencies.end());
       auto percentile = [&](double p) -> double {
         size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
-        if (idx >= latencies.size()) idx = latencies.size() - 1;
+        if (idx >= latencies.size()) {
+          idx = latencies.size() - 1;
+        }
         return latencies[idx];
       };
       max_p99 = percentile(99.0);

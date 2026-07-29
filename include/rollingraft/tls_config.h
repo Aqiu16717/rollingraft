@@ -32,9 +32,15 @@ struct TlsConfig {
   int min_version = 2;
 
   bool IsValid() const {
-    if (!enabled) return true;
-    if (cert_file.empty() || key_file.empty()) return false;
-    if (mutual_auth && ca_file.empty()) return false;
+    if (!enabled) {
+      return true;
+    }
+    if (cert_file.empty() || key_file.empty()) {
+      return false;
+    }
+    if (mutual_auth && ca_file.empty()) {
+      return false;
+    }
     return true;
   }
 };

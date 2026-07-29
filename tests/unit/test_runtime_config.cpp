@@ -178,6 +178,8 @@ TEST_F(RuntimeConfigTest, ThreadSafeConcurrentReads) {
   }
 
   updater.join();
-  for (auto& t : readers) t.join();
+  for (auto& t : readers) {
+    t.join();
+  }
   EXPECT_EQ(failures, 0);
 }

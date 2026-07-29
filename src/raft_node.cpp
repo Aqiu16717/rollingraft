@@ -58,7 +58,9 @@ Status RaftNodeConfig::Validate() const {
   }
 
   auto status = ValidateAddr(listen_addr, "listen_addr");
-  if (!status.ok()) return status;
+  if (!status.ok()) {
+    return status;
+  }
 
   if (data_dir.empty()) {
     return Status::Error("CONFIG_INVALID", "data_dir cannot be empty");
@@ -88,7 +90,9 @@ Status RaftNodeConfig::Validate() const {
   // Metrics address
   if (metrics_enabled && !metrics_addr.empty()) {
     status = ValidateAddr(metrics_addr, "metrics_addr");
-    if (!status.ok()) return status;
+    if (!status.ok()) {
+      return status;
+    }
   }
 
   // TLS consistency

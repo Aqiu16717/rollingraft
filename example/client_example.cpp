@@ -51,7 +51,9 @@ int main(int argc, char* argv[]) {
       break;
     }
 
-    if (line.empty()) continue;
+    if (line.empty()) {
+      continue;
+    }
 
     // Parse command
     std::vector<std::string> parts;
@@ -64,10 +66,14 @@ int main(int argc, char* argv[]) {
       }
       parts.push_back(line.substr(pos, next - pos));
       pos = next + 1;
-      while (pos < line.size() && line[pos] == ' ') ++pos;
+      while (pos < line.size() && line[pos] == ' ') {
+        ++pos;
+      }
     }
 
-    if (parts.empty()) continue;
+    if (parts.empty()) {
+      continue;
+    }
 
     const std::string& cmd = parts[0];
 

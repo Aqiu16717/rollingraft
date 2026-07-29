@@ -92,7 +92,9 @@ TEST_F(NetworkPartitionTest, MockNetwork_AutoResponse) {
   network.SendRpc(2, "127.0.0.1:8002", "request", 0, std::chrono::milliseconds(1000),
                   [&](const std::string& resp, bool success, const std::string&) {
                     callback_called = true;
-                    if (success) response_data = resp;
+                    if (success) {
+                      response_data = resp;
+                    }
                   });
 
   EXPECT_TRUE(callback_called);

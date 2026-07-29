@@ -108,7 +108,9 @@ class MetricsEndpointTest : public ::testing::Test {
   std::string FetchUrl(const std::string& addr, const std::string& path) {
     std::string cmd = "curl -s --max-time 2 http://" + addr + path;
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return "";
+    if (!pipe) {
+      return "";
+    }
     char buffer[4096];
     std::string result;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -134,7 +136,9 @@ class MetricsEndpointTest : public ::testing::Test {
     }
     cmd += " http://" + addr + path;
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return "";
+    if (!pipe) {
+      return "";
+    }
     char buffer[4096];
     std::string result;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -216,7 +220,9 @@ TEST_F(MetricsEndpointTest, MetricsShowProposeCount) {
   // Check leader metrics
   int leader_idx = 0;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i]->IsLeader()) leader_idx = i;
+    if (nodes_[i]->IsLeader()) {
+      leader_idx = i;
+    }
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
@@ -257,7 +263,9 @@ TEST_F(MetricsEndpointTest, ReadyzLeaderReturnsReady) {
 
   int leader_idx = -1;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i].get() == leader) leader_idx = i;
+    if (nodes_[i].get() == leader) {
+      leader_idx = i;
+    }
   }
   ASSERT_GE(leader_idx, 0);
 
@@ -314,7 +322,9 @@ TEST_F(MetricsEndpointTest, TriggerSnapshotOnLeader) {
 
   int leader_idx = -1;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i].get() == leader) leader_idx = i;
+    if (nodes_[i].get() == leader) {
+      leader_idx = i;
+    }
   }
   ASSERT_GE(leader_idx, 0);
 
@@ -352,7 +362,9 @@ TEST_F(MetricsEndpointTest, TransferLeadershipFromLeader) {
 
   int leader_idx = -1;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i].get() == leader) leader_idx = i;
+    if (nodes_[i].get() == leader) {
+      leader_idx = i;
+    }
   }
   ASSERT_GE(leader_idx, 0);
 
@@ -417,7 +429,9 @@ TEST_F(MetricsEndpointTest, MetricsShowLatencyHistograms) {
 
   int leader_idx = 0;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i]->IsLeader()) leader_idx = i;
+    if (nodes_[i]->IsLeader()) {
+      leader_idx = i;
+    }
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
@@ -451,7 +465,9 @@ TEST_F(MetricsEndpointTest, MetricsShowHeartbeatCoalescing) {
 
   int leader_idx = 0;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i]->IsLeader()) leader_idx = i;
+    if (nodes_[i]->IsLeader()) {
+      leader_idx = i;
+    }
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
@@ -466,7 +482,9 @@ TEST_F(MetricsEndpointTest, MetricsShowTransportPeerState) {
 
   int leader_idx = 0;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i]->IsLeader()) leader_idx = i;
+    if (nodes_[i]->IsLeader()) {
+      leader_idx = i;
+    }
   }
   std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
@@ -496,7 +514,9 @@ TEST_F(MetricsEndpointTest, MetricsShowLeaderLeaseValid) {
         }
       }
     }
-    if (found_valid) break;
+    if (found_valid) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   EXPECT_TRUE(found_valid) << "Leader never reported raft_leader_lease_valid=1";
@@ -512,7 +532,9 @@ TEST_F(MetricsEndpointTest, MetricsShowPeerLag) {
 
   int leader_idx = -1;
   for (int i = 0; i < 3; ++i) {
-    if (nodes_[i].get() == leader) leader_idx = i;
+    if (nodes_[i].get() == leader) {
+      leader_idx = i;
+    }
   }
   ASSERT_GE(leader_idx, 0);
 
@@ -535,7 +557,9 @@ TEST_F(MetricsEndpointTest, MetricsShowPeerLag) {
 
   // Each follower should have a lag line.
   for (int i = 0; i < 3; ++i) {
-    if (i == leader_idx) continue;
+    if (i == leader_idx) {
+      continue;
+    }
     std::string label = "node_id=\"" + std::to_string(leader_idx + 1) + "\",peer_id=\"" +
                         std::to_string(i + 1) + "\"";
     EXPECT_NE(output.find(label), std::string::npos)

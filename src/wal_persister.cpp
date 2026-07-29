@@ -149,17 +149,29 @@ static std::string Base64Encode(const std::string& input) {
 }
 
 static std::string Base64Decode(const std::string& encoded) {
-  if (encoded.empty()) return std::string();
+  if (encoded.empty()) {
+    return std::string();
+  }
 
   std::string decoded;
   decoded.reserve((encoded.size() / 4) * 3);
 
   auto lookup = [](char c) -> int {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c >= 'A' && c <= 'Z') {
+      return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+      return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') {
+      return c - '0' + 52;
+    }
+    if (c == '+') {
+      return 62;
+    }
+    if (c == '/') {
+      return 63;
+    }
     return -1;
   };
 
@@ -319,7 +331,9 @@ Status WALPersister::Open(const std::string& wal_dir) {
         // Header validation still needed for format_version tracking.
         int fd = -1;
         auto status = OpenSegment(seg_id, &fd);
-        if (fd >= 0) close(fd);
+        if (fd >= 0) {
+          close(fd);
+        }
         if (!status.ok()) {
           return status;
         }
@@ -329,7 +343,9 @@ Status WALPersister::Open(const std::string& wal_dir) {
       int fd = -1;
       auto status = OpenSegment(seg_id, &fd);
       if (!status.ok()) {
-        if (fd >= 0) close(fd);
+        if (fd >= 0) {
+          close(fd);
+        }
         return status;
       }
 
@@ -544,7 +560,9 @@ Status WALPersister::Replay(const std::function<bool(const WALRecord&)>& callbac
   // Collect all segment ids
   std::vector<uint64_t> segment_ids;
   for (const auto& entry : index_.Entries()) {
-    if (entry.segment_id == 0) continue;
+    if (entry.segment_id == 0) {
+      continue;
+    }
     if (segment_ids.empty() || segment_ids.back() != entry.segment_id) {
       segment_ids.push_back(entry.segment_id);
     }
@@ -588,7 +606,9 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
   uint64_t first_segment_to_keep = std::numeric_limits<uint64_t>::max();
   const auto& entries = index_.Entries();
   for (size_t i = 0; i < entries.size(); ++i) {
-    if (entries[i].segment_id == 0) continue;
+    if (entries[i].segment_id == 0) {
+      continue;
+    }
     uint64_t log_index = index_.FirstIndex() + i;
     if (log_index >= before_log_index) {
       first_segment_to_keep = std::min(first_segment_to_keep, entries[i].segment_id);
@@ -695,7 +715,9 @@ Status WALPersister::GetEntries(uint64_t start, uint64_t end, std::vector<RaftLo
   const auto& entries = index_.Entries();
   for (uint64_t idx = from; idx < to; ++idx) {
     const WALIndexEntry& e = entries[static_cast<size_t>(idx - first)];
-    if (e.segment_id == 0) continue;
+    if (e.segment_id == 0) {
+      continue;
+    }
     RaftLogEntry entry;
     status = ReadLogEntryAt(e.segment_id, e.file_offset, entry);
     if (!status.ok()) {
@@ -1194,7 +1216,9 @@ Status WALPersister::FlushWriteBufferLocked() {
   while (remaining > 0) {
     ssize_t n = write(active_segment_.fd, data, remaining);
     if (n < 0) {
-      if (errno == EINTR) continue;
+      if (errno == EINTR) {
+        continue;
+      }
       return Status::Error("Failed to write WAL buffer");
     }
     data += n;
@@ -1550,7 +1574,9 @@ Status WALPersister::SaveCheckpointLocked() {
   while (remaining > 0) {
     ssize_t n = write(fd, write_ptr, remaining);
     if (n < 0) {
-      if (errno == EINTR) continue;
+      if (errno == EINTR) {
+        continue;
+      }
       close(fd);
       unlink(temp_path.c_str());
       return Status::Error("Failed to write checkpoint");

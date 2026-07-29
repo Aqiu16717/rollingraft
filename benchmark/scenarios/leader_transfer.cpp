@@ -35,7 +35,9 @@ class LeaderTransferScenario : public ClusterBenchmark {
 
  protected:
   bool SetUp() override {
-    if (!ClusterBenchmark::SetUp()) return false;
+    if (!ClusterBenchmark::SetUp()) {
+      return false;
+    }
     leader_idx_ = GetLeaderIndex();
     return leader_idx_ >= 0;
   }
@@ -85,7 +87,9 @@ class LeaderTransferScenario : public ClusterBenchmark {
         }
       }
 
-      if (new_leader_elected) break;
+      if (new_leader_elected) {
+        break;
+      }
 
       // Try an operation to measure failure
       auto status = ExecuteCommand("load");

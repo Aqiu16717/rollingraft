@@ -178,7 +178,9 @@ Status RaftNode::RaftNodeImpl::Start() {
 
     auto status = infra_->network_->Initialize(group_->config_.listen_addr, handler);
     if (!status.ok()) {
-      if (persister_) persister_->Close();
+      if (persister_) {
+        persister_->Close();
+      }
       state_ = NodeState::kInitialized;
       return status;
     }
@@ -187,7 +189,9 @@ Status RaftNode::RaftNodeImpl::Start() {
 
     status = infra_->network_->Start();
     if (!status.ok()) {
-      if (persister_) persister_->Close();
+      if (persister_) {
+        persister_->Close();
+      }
       state_ = NodeState::kInitialized;
       return status;
     }
@@ -381,7 +385,9 @@ Status RaftNode::RaftNodeImpl::Start() {
 
       // Wire EventBus → SSE broadcast
       event_bus_.SubscribeAll([this](const RaftEvent& event) {
-        if (!metrics_server_) return;
+        if (!metrics_server_) {
+          return;
+        }
         nlohmann::json j;
         j["event"] = event.Name();
         j["node_id"] = group_->server_id_;
@@ -1249,7 +1255,9 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
   std::vector<NodeId> old_nodes = group_->cluster_config_.nodes;
   std::vector<NodeId> new_nodes;
   for (NodeId nid : old_nodes) {
-    if (nid != id) new_nodes.push_back(nid);
+    if (nid != id) {
+      new_nodes.push_back(nid);
+    }
   }
 
   nlohmann::json j_old = old_nodes;
@@ -1478,12 +1486,16 @@ ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
 }
 
 uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
-  if (index == 0) return 0;
+  if (index == 0) {
+    return 0;
+  }
   return group_->log_.GetLogTerm(index);
 }
 
 void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
-  if (!metrics_) return;
+  if (!metrics_) {
+    return;
+  }
   auto cfg = infra_->runtime_config_->Get();
   bool valid = false;
   double remaining_seconds = 0.0;
@@ -1502,7 +1514,9 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
 }
 
 void RaftNode::RaftNodeImpl::SetPeerReplicationLagMetricLocked(NodeId peer_id) {
-  if (!metrics_) return;
+  if (!metrics_) {
+    return;
+  }
   auto [last_index, _] = group_->log_.GetLastLogInfo();
   Index match = 0;
   auto it = group_->match_index_.find(peer_id);

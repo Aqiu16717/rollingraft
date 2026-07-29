@@ -70,10 +70,14 @@ std::pair<Index, Term> RaftLog::GetLastLogInfo() const {
 }
 
 Term RaftLog::GetLogTerm(Index index) const {
-  if (index == 0) return 0;
+  if (index == 0) {
+    return 0;
+  }
 
   auto entry = GetEntry(index);
-  if (!entry) return 0;
+  if (!entry) {
+    return 0;
+  }
   return entry->term_;
 }
 

@@ -112,12 +112,16 @@ class LatencyCurveScenario : public ClusterBenchmark {
         stats.latency_max_us = latencies.back();
 
         double sum = 0.0;
-        for (double lat : latencies) sum += lat;
+        for (double lat : latencies) {
+          sum += lat;
+        }
         stats.latency_avg_us = sum / latencies.size();
 
         auto percentile = [&](double p) -> double {
           size_t idx = static_cast<size_t>(std::ceil((p / 100.0) * latencies.size())) - 1;
-          if (idx >= latencies.size()) idx = latencies.size() - 1;
+          if (idx >= latencies.size()) {
+            idx = latencies.size() - 1;
+          }
           return latencies[idx];
         };
         stats.latency_p50_us = percentile(50.0);

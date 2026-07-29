@@ -4,14 +4,18 @@ namespace rollingraft {
 
 Status MockPersister::Open(const std::string& dir) {
   (void)dir;
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   return Status::OK();
 }
 
 void MockPersister::Close() {}
 
 Status MockPersister::SaveState(const PersistentState& state) {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   state_ = state;
   return Status::OK();
@@ -24,7 +28,9 @@ Status MockPersister::LoadState(PersistentState& state) {
 }
 
 Status MockPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& entry : entries) {
     logs_[entry.index_] = entry;
@@ -34,7 +40,9 @@ Status MockPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
 }
 
 Status MockPersister::Sync() {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   ++sync_count_;
   return Status::OK();
@@ -63,7 +71,9 @@ Status MockPersister::GetEntry(uint64_t index, RaftLogEntry& entry) {
 }
 
 Status MockPersister::TruncateSuffix(uint64_t from_index) {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto it = logs_.begin(); it != logs_.end();) {
     if (it->first >= from_index) {
@@ -76,7 +86,9 @@ Status MockPersister::TruncateSuffix(uint64_t from_index) {
 }
 
 Status MockPersister::TruncatePrefix(uint64_t before_index) {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto it = logs_.begin(); it != logs_.end();) {
     if (it->first < before_index) {
@@ -99,7 +111,9 @@ std::pair<uint64_t, uint64_t> MockPersister::GetLastLogInfo() {
 
 Status MockPersister::SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
                                    uint64_t last_term) {
-  if (CheckFailure()) return Status::Error(failure_msg_);
+  if (CheckFailure()) {
+    return Status::Error(failure_msg_);
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   snapshot_data_ = snapshot_data;
   snapshot_last_index_ = last_index;

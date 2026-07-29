@@ -35,8 +35,10 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
         static_cast<Persister::CompressionType>(config.compression_type));
   }
 
-  // Initialize metrics if enabled
-  if (config.metrics_enabled) {
+  // Initialize metrics if enabled. In multi-raft mode the store shares one
+  // registry across all groups, so only create it once — overwriting it would
+  // leave earlier groups holding a dangling cached metrics_ pointer.
+  if (config.metrics_enabled && !infra_->metrics_) {
     infra_->metrics_ = std::make_unique<MetricsRegistry>();
   }
 
@@ -225,8 +227,10 @@ Status RaftNode::RaftNodeImpl::Start() {
           infra_->timer_->SetInterval(std::chrono::milliseconds(10), [this]() { OnStoreTick(); });
     }
 
-    // 4. Start metrics HTTP server
-    if (metrics_ && !group_->config_.metrics_addr.empty()) {
+    // 4. Start metrics HTTP server. One server per store: only the first
+    // group to start creates it. Groups are distinguished by the group_id
+    // label in metrics and status JSON, not by per-group servers.
+    if (metrics_ && !group_->config_.metrics_addr.empty() && !infra_->metrics_server_) {
       MetricsHttpServer::TlsConfig tls_config;
       tls_config.enabled = group_->config_.tls_enabled;
       tls_config.cert_file = group_->config_.tls_cert_file;
@@ -235,223 +239,231 @@ Status RaftNode::RaftNodeImpl::Start() {
       infra_->metrics_server_ = std::make_unique<MetricsHttpServer>(
           group_->config_.metrics_addr, metrics_, tls_config, group_->config_.admin_token);
       metrics_server_ = infra_->metrics_server_.get();
-      infra_->metrics_server_->SetStatusProvider([this]() -> std::string {
-        // Lock hierarchy: group_->election_mtx_ -> group_->replication_mtx_ ->
-        // group_->membership_mtx_
-        // -> group_->applier_mtx_. All accessed state must be protected.
-        std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-        std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-        std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
-        std::lock_guard<std::mutex> lock_a(group_->applier_mtx_);
 
-        nlohmann::json j;
-        j["node_id"] = group_->server_id_;
-        j["group_id"] = group_->group_id_;
-        j["role"] = RaftNodeRoleToString(group_->role_);
-        j["term"] = group_->current_term_;
-        j["leader_id"] = group_->leader_id_;
-        j["leader_addr"] = group_->leader_addr_;
-        j["commit_index"] = group_->commit_index_;
-        j["last_log_index"] = group_->log_.LastLogIndex();
-        j["running"] = IsRunning();
+      // Status/admin handlers and the SSE event broadcast capture this group,
+      // so they are only wired in the legacy single-group path. In multi-raft
+      // mode the server is shared store infrastructure: it outlives individual
+      // groups and is stopped by RaftStore::Stop(). /metrics works off the
+      // shared registry; store-level status/admin providers are a follow-up.
+      if (manage_network_) {
+        infra_->metrics_server_->SetStatusProvider([this]() -> std::string {
+          // Lock hierarchy: group_->election_mtx_ -> group_->replication_mtx_ ->
+          // group_->membership_mtx_
+          // -> group_->applier_mtx_. All accessed state must be protected.
+          std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+          std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+          std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+          std::lock_guard<std::mutex> lock_a(group_->applier_mtx_);
 
-        nlohmann::json config_json;
-        config_json["version"] = group_->cluster_config_.version;
-        nlohmann::json nodes = nlohmann::json::array();
-        for (NodeId node_id : group_->cluster_config_.nodes) {
-          nlohmann::json node_json;
-          node_json["id"] = node_id;
-          auto it = group_->peer_map_.find(node_id);
-          if (it != group_->peer_map_.end()) {
-            node_json["addr"] = it->second;
-          } else if (node_id == group_->server_id_) {
-            node_json["addr"] = group_->config_.listen_addr;
-          } else {
-            node_json["addr"] = nullptr;
-          }
-          nodes.push_back(node_json);
-        }
-        config_json["nodes"] = nodes;
-        j["cluster_config"] = config_json;
-        j["last_applied"] = group_->last_applied_.load(std::memory_order_acquire);
-
-        return j.dump();
-      });
-
-      // Control plane handlers (#19 API implementation)
-      infra_->metrics_server_->SetAddMemberHandler(
-          [this](int32_t node_id, const std::string& addr) -> std::string {
-            if (node_id < 0 || addr.empty()) {
-              nlohmann::json j;
-              j["error"] = "BAD_REQUEST";
-              j["message"] = "Invalid node_id or addr";
-              return j.dump();
-            }
-            auto status = AddNode(static_cast<NodeId>(node_id), addr);
-            nlohmann::json j;
-            if (status.ok()) {
-              j["status"] = "accepted";
-              j["message"] = "Configuration change proposed";
-            } else {
-              j["error"] = "NOT_LEADER";
-              j["message"] = status.GetMessage();
-              if (!GetLeaderAddr().empty()) {
-                j["leader_hint"] = GetLeaderAddr();
-              }
-            }
-            return j.dump();
-          });
-
-      infra_->metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
-        if (node_id < 0) {
           nlohmann::json j;
-          j["error"] = "BAD_REQUEST";
-          j["message"] = "Invalid node_id";
-          return j.dump();
-        }
-        auto status = RemoveNode(static_cast<NodeId>(node_id));
-        nlohmann::json j;
-        if (status.ok()) {
-          j["status"] = "accepted";
-          j["message"] = "Node removal proposed";
-        } else {
-          j["error"] = "NOT_LEADER";
-          j["message"] = status.GetMessage();
-          if (!GetLeaderAddr().empty()) {
-            j["leader_hint"] = GetLeaderAddr();
-          }
-        }
-        return j.dump();
-      });
+          j["node_id"] = group_->server_id_;
+          j["group_id"] = group_->group_id_;
+          j["role"] = RaftNodeRoleToString(group_->role_);
+          j["term"] = group_->current_term_;
+          j["leader_id"] = group_->leader_id_;
+          j["leader_addr"] = group_->leader_addr_;
+          j["commit_index"] = group_->commit_index_;
+          j["last_log_index"] = group_->log_.LastLogIndex();
+          j["running"] = IsRunning();
 
-      infra_->metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
-        auto status = TriggerSnapshot();
-        nlohmann::json j;
-        if (status.ok()) {
-          j["status"] = "triggered";
-          j["message"] = "Snapshot creation initiated";
-        } else {
-          j["error"] = "NOT_LEADER";
-          j["message"] = status.GetMessage();
-        }
-        return j.dump();
-      });
-
-      infra_->metrics_server_->SetTransferLeadershipHandler(
-          [this](int32_t target_id) -> std::string {
-            nlohmann::json j;
-            if (target_id < 0) {
-              j["error"] = "BAD_REQUEST";
-              j["message"] = "Invalid target_node_id";
-              return j.dump();
-            }
-            auto status = TransferLeadershipTo(static_cast<NodeId>(target_id));
-            if (status.ok()) {
-              j["status"] = "initiated";
-              j["message"] = "Leadership transfer initiated";
+          nlohmann::json config_json;
+          config_json["version"] = group_->cluster_config_.version;
+          nlohmann::json nodes = nlohmann::json::array();
+          for (NodeId node_id : group_->cluster_config_.nodes) {
+            nlohmann::json node_json;
+            node_json["id"] = node_id;
+            auto it = group_->peer_map_.find(node_id);
+            if (it != group_->peer_map_.end()) {
+              node_json["addr"] = it->second;
+            } else if (node_id == group_->server_id_) {
+              node_json["addr"] = group_->config_.listen_addr;
             } else {
-              j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
-              j["message"] = status.GetMessage();
-              if (!GetLeaderAddr().empty()) {
-                j["leader_hint"] = GetLeaderAddr();
-              }
+              node_json["addr"] = nullptr;
             }
+            nodes.push_back(node_json);
+          }
+          config_json["nodes"] = nodes;
+          j["cluster_config"] = config_json;
+          j["last_applied"] = group_->last_applied_.load(std::memory_order_acquire);
+
+          return j.dump();
+        });
+
+        // Control plane handlers (#19 API implementation)
+        infra_->metrics_server_->SetAddMemberHandler(
+            [this](int32_t node_id, const std::string& addr) -> std::string {
+              if (node_id < 0 || addr.empty()) {
+                nlohmann::json j;
+                j["error"] = "BAD_REQUEST";
+                j["message"] = "Invalid node_id or addr";
+                return j.dump();
+              }
+              auto status = AddNode(static_cast<NodeId>(node_id), addr);
+              nlohmann::json j;
+              if (status.ok()) {
+                j["status"] = "accepted";
+                j["message"] = "Configuration change proposed";
+              } else {
+                j["error"] = "NOT_LEADER";
+                j["message"] = status.GetMessage();
+                if (!GetLeaderAddr().empty()) {
+                  j["leader_hint"] = GetLeaderAddr();
+                }
+              }
+              return j.dump();
+            });
+
+        infra_->metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
+          if (node_id < 0) {
+            nlohmann::json j;
+            j["error"] = "BAD_REQUEST";
+            j["message"] = "Invalid node_id";
             return j.dump();
-          });
-
-      infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
-        return runtime_config_ ? infra_->runtime_config_->ToJson()
-                               : "{\"error\":\"runtime_config_not_initialized\"}";
-      });
-
-      infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
-        if (!runtime_config_) {
-          return "{\"error\":\"runtime_config_not_initialized\"}";
-        }
-        auto old_cfg = infra_->runtime_config_->Get();
-        auto status = infra_->runtime_config_->UpdateFromJson(json);
-        if (status.ok()) {
-          auto new_cfg = infra_->runtime_config_->Get();
-          if (new_cfg.transport_batching_enabled != old_cfg.transport_batching_enabled) {
-            infra_->network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
           }
-          return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
-        }
-        nlohmann::json j;
-        j["error"] = "INVALID_CONFIG";
-        j["message"] = status.GetMessage();
-        return j.dump();
-      });
-
-      // Wire EventBus → SSE broadcast
-      event_bus_.SubscribeAll([this](const RaftEvent& event) {
-        if (!metrics_server_) {
-          return;
-        }
-        nlohmann::json j;
-        j["event"] = event.Name();
-        j["node_id"] = group_->server_id_;
-        j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::steady_clock::now().time_since_epoch())
-                                .count();
-
-        // Serialize event-specific fields based on type
-        if (event.Is<NodeRoleChangedEvent>()) {
-          const auto& e = event.As<NodeRoleChangedEvent>();
-          j["old_role"] = RaftNodeRoleToString(e.old_role);
-          j["new_role"] = RaftNodeRoleToString(e.new_role);
-          j["term"] = e.term;
-        } else if (event.Is<LeaderChangedEvent>()) {
-          const auto& e = event.As<LeaderChangedEvent>();
-          j["old_leader_id"] = e.old_leader_id;
-          j["new_leader_id"] = e.new_leader_id;
-          j["new_leader_addr"] = e.new_leader_addr;
-          j["term"] = e.term;
-        } else if (event.Is<MembershipChangedEvent>()) {
-          const auto& e = event.As<MembershipChangedEvent>();
-          j["change_type"] =
-              (e.change_type == MembershipChangedEvent::ChangeType::kAdd) ? "add" : "remove";
-          j["target_node_id"] = e.target_node_id;
-          j["target_node_addr"] = e.target_node_addr;
-          j["config_version"] = e.config_version;
-          j["term"] = e.term;
-        } else if (event.Is<LogCompactedEvent>()) {
-          const auto& e = event.As<LogCompactedEvent>();
-          j["snapshot_index"] = e.snapshot_index;
-          j["snapshot_term"] = e.snapshot_term;
-          j["bytes_reclaimed"] = e.bytes_reclaimed;
-          j["log_size_before"] = e.log_size_before;
-          j["log_size_after"] = e.log_size_after;
-        } else if (event.Is<SnapshotInstalledEvent>()) {
-          const auto& e = event.As<SnapshotInstalledEvent>();
-          j["from_leader_id"] = e.from_leader_id;
-          j["snapshot_index"] = e.snapshot_index;
-          j["snapshot_term"] = e.snapshot_term;
-          j["bytes_received"] = e.bytes_received;
-          j["success"] = e.success;
-          if (!e.error_message.empty()) {
-            j["error_message"] = e.error_message;
+          auto status = RemoveNode(static_cast<NodeId>(node_id));
+          nlohmann::json j;
+          if (status.ok()) {
+            j["status"] = "accepted";
+            j["message"] = "Node removal proposed";
+          } else {
+            j["error"] = "NOT_LEADER";
+            j["message"] = status.GetMessage();
+            if (!GetLeaderAddr().empty()) {
+              j["leader_hint"] = GetLeaderAddr();
+            }
           }
-        } else if (event.Is<ProposalCommittedEvent>()) {
-          const auto& e = event.As<ProposalCommittedEvent>();
-          j["index"] = e.index;
-          j["term"] = e.term;
-        } else if (event.Is<ProposalAppliedEvent>()) {
-          const auto& e = event.As<ProposalAppliedEvent>();
-          j["index"] = e.index;
-          j["term"] = e.term;
-          j["success"] = e.success;
-        } else if (event.Is<ElectionTimeoutEvent>()) {
-          const auto& e = event.As<ElectionTimeoutEvent>();
-          j["current_term"] = e.current_term;
-          j["current_role"] = RaftNodeRoleToString(e.current_role);
-        } else if (event.Is<NodeLifecycleEvent>()) {
-          const auto& e = event.As<NodeLifecycleEvent>();
-          j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
-        }
+          return j.dump();
+        });
 
-        infra_->metrics_server_->BroadcastEvent(j.dump());
-      });
+        infra_->metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
+          auto status = TriggerSnapshot();
+          nlohmann::json j;
+          if (status.ok()) {
+            j["status"] = "triggered";
+            j["message"] = "Snapshot creation initiated";
+          } else {
+            j["error"] = "NOT_LEADER";
+            j["message"] = status.GetMessage();
+          }
+          return j.dump();
+        });
+
+        infra_->metrics_server_->SetTransferLeadershipHandler(
+            [this](int32_t target_id) -> std::string {
+              nlohmann::json j;
+              if (target_id < 0) {
+                j["error"] = "BAD_REQUEST";
+                j["message"] = "Invalid target_node_id";
+                return j.dump();
+              }
+              auto status = TransferLeadershipTo(static_cast<NodeId>(target_id));
+              if (status.ok()) {
+                j["status"] = "initiated";
+                j["message"] = "Leadership transfer initiated";
+              } else {
+                j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+                j["message"] = status.GetMessage();
+                if (!GetLeaderAddr().empty()) {
+                  j["leader_hint"] = GetLeaderAddr();
+                }
+              }
+              return j.dump();
+            });
+
+        infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
+          return runtime_config_ ? infra_->runtime_config_->ToJson()
+                                 : "{\"error\":\"runtime_config_not_initialized\"}";
+        });
+
+        infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+          if (!runtime_config_) {
+            return "{\"error\":\"runtime_config_not_initialized\"}";
+          }
+          auto old_cfg = infra_->runtime_config_->Get();
+          auto status = infra_->runtime_config_->UpdateFromJson(json);
+          if (status.ok()) {
+            auto new_cfg = infra_->runtime_config_->Get();
+            if (new_cfg.transport_batching_enabled != old_cfg.transport_batching_enabled) {
+              infra_->network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
+            }
+            return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
+          }
+          nlohmann::json j;
+          j["error"] = "INVALID_CONFIG";
+          j["message"] = status.GetMessage();
+          return j.dump();
+        });
+
+        // Wire EventBus → SSE broadcast
+        event_bus_.SubscribeAll([this](const RaftEvent& event) {
+          if (!metrics_server_) {
+            return;
+          }
+          nlohmann::json j;
+          j["event"] = event.Name();
+          j["node_id"] = group_->server_id_;
+          j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count();
+
+          // Serialize event-specific fields based on type
+          if (event.Is<NodeRoleChangedEvent>()) {
+            const auto& e = event.As<NodeRoleChangedEvent>();
+            j["old_role"] = RaftNodeRoleToString(e.old_role);
+            j["new_role"] = RaftNodeRoleToString(e.new_role);
+            j["term"] = e.term;
+          } else if (event.Is<LeaderChangedEvent>()) {
+            const auto& e = event.As<LeaderChangedEvent>();
+            j["old_leader_id"] = e.old_leader_id;
+            j["new_leader_id"] = e.new_leader_id;
+            j["new_leader_addr"] = e.new_leader_addr;
+            j["term"] = e.term;
+          } else if (event.Is<MembershipChangedEvent>()) {
+            const auto& e = event.As<MembershipChangedEvent>();
+            j["change_type"] =
+                (e.change_type == MembershipChangedEvent::ChangeType::kAdd) ? "add" : "remove";
+            j["target_node_id"] = e.target_node_id;
+            j["target_node_addr"] = e.target_node_addr;
+            j["config_version"] = e.config_version;
+            j["term"] = e.term;
+          } else if (event.Is<LogCompactedEvent>()) {
+            const auto& e = event.As<LogCompactedEvent>();
+            j["snapshot_index"] = e.snapshot_index;
+            j["snapshot_term"] = e.snapshot_term;
+            j["bytes_reclaimed"] = e.bytes_reclaimed;
+            j["log_size_before"] = e.log_size_before;
+            j["log_size_after"] = e.log_size_after;
+          } else if (event.Is<SnapshotInstalledEvent>()) {
+            const auto& e = event.As<SnapshotInstalledEvent>();
+            j["from_leader_id"] = e.from_leader_id;
+            j["snapshot_index"] = e.snapshot_index;
+            j["snapshot_term"] = e.snapshot_term;
+            j["bytes_received"] = e.bytes_received;
+            j["success"] = e.success;
+            if (!e.error_message.empty()) {
+              j["error_message"] = e.error_message;
+            }
+          } else if (event.Is<ProposalCommittedEvent>()) {
+            const auto& e = event.As<ProposalCommittedEvent>();
+            j["index"] = e.index;
+            j["term"] = e.term;
+          } else if (event.Is<ProposalAppliedEvent>()) {
+            const auto& e = event.As<ProposalAppliedEvent>();
+            j["index"] = e.index;
+            j["term"] = e.term;
+            j["success"] = e.success;
+          } else if (event.Is<ElectionTimeoutEvent>()) {
+            const auto& e = event.As<ElectionTimeoutEvent>();
+            j["current_term"] = e.current_term;
+            j["current_role"] = RaftNodeRoleToString(e.current_role);
+          } else if (event.Is<NodeLifecycleEvent>()) {
+            const auto& e = event.As<NodeLifecycleEvent>();
+            j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
+          }
+
+          infra_->metrics_server_->BroadcastEvent(j.dump());
+        });
+      }
 
       infra_->metrics_server_->Start();
     }
@@ -479,8 +491,9 @@ Status RaftNode::RaftNodeImpl::Start() {
 }
 
 void RaftNode::RaftNodeImpl::DoGracefulShutdown() {
-  // 1. Stop metrics server
-  if (metrics_server_) {
+  // 1. Stop metrics server. In multi-raft mode (!manage_network_) the server
+  // is shared store infrastructure owned by RaftStore::Stop, not by any group.
+  if (manage_network_ && metrics_server_) {
     infra_->metrics_server_->Stop();
     infra_->metrics_server_.reset();
     metrics_server_ = nullptr;
@@ -580,9 +593,12 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
   // will see kStopped on their next IsRunning() check.
   state_ = NodeState::kStopped;
 
-  // Best-effort cleanup: release resources without blocking.
-  infra_->metrics_server_.reset();
-  metrics_server_ = nullptr;
+  // Best-effort cleanup: release resources without blocking. The shared
+  // metrics server is store-owned in multi-raft mode (!manage_network_).
+  if (manage_network_) {
+    infra_->metrics_server_.reset();
+    metrics_server_ = nullptr;
+  }
   {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     CancelElectionTimerLocked();

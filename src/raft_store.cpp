@@ -145,6 +145,12 @@ Status RaftStore::Stop() {
   }
 
   if (infra_) {
+    // The shared metrics server is store-owned: groups never stop it (their
+    // Stop would kill it out from under the remaining groups).
+    if (infra_->metrics_server_) {
+      infra_->metrics_server_->Stop();
+      infra_->metrics_server_.reset();
+    }
     if (tick_timer_ != 0 && infra_->timer_) {
       infra_->timer_->CancelTimer(tick_timer_);
       tick_timer_ = 0;

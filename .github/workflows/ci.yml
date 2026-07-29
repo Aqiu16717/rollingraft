@@ -269,6 +269,67 @@ jobs:
           retention-days: 3
 
   # ============================================================
+  # Static Analysis — clang-tidy (.clang-tidy config, warnings
+  # are errors; enforces braces around control-flow statements)
+  # ============================================================
+  clang-tidy:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsnappy-dev clang-tidy ccache
+          clang-tidy --version
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-clang-tidy-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '**/*.cpp', '**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-clang-tidy-
+            ${{ runner.os }}-
+
+      # A full build is required so clang-tidy sees generated
+      # headers (e.g. raft_log_entry.pb.h for wal_persister.cpp).
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DBUILD_EXAMPLES=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j$(nproc) 2>&1 | tee build.log
+
+      # Only .cpp files are passed; headers are checked through
+      # their translation units via .clang-tidy HeaderFilterRegex.
+      - name: Run clang-tidy
+        run: |
+          git ls-files 'src/*.cpp' 'tests/*.cpp' 'example/*.cpp' 'benchmark/*.cpp' \
+            | grep -v third_party \
+            | xargs -P $(nproc) -n 1 clang-tidy -p build -quiet \
+            2>&1 | tee clang-tidy.log
+          # xargs exits 123 if any clang-tidy invocation failed
+          test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-clang-tidy
+          path: clang-tidy.log
+          retention-days: 3
+
+  # ============================================================
   # Docker Integration Test
   # ============================================================
   docker-test:

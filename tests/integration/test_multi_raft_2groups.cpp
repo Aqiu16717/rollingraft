@@ -337,11 +337,10 @@ TEST_F(MultiRaft2GroupsTest, MetricsEnabledWithTwoGroupsSharesOneServer) {
   propose_and_wait(1, "metrics_cmd_g1");
   propose_and_wait(2, "metrics_cmd_g2");
 
-  // TODO(multi-raft): re-enable RemoveGroup coverage. RemoveGroup currently
-  // destroys the group while its in-flight RPC callbacks can still fire,
-  // causing a use-after-free that crashes a subsequent test in the same
-  // process (repro: run this test followed by ReElectsAfterRestart).
-  // stores_[0]->RemoveGroup(1);
+  // Group 1 created the shared server on each store. Removing it must not
+  // kill the server or crash group 2's metrics path; late RPC callbacks
+  // targeting the removed group must no-op via their weak_ptr guards.
+  stores_[0]->RemoveGroup(1);
   propose_and_wait(2, "metrics_cmd_g2_after_remove");
 }
 

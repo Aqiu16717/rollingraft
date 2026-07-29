@@ -153,7 +153,7 @@ RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> s
   infra->protocol_ =
       config.protocol_factory ? config.protocol_factory() : std::make_unique<JsonProtocol>();
 
-  raft_node_impl_ = std::make_unique<RaftNodeImpl>(
+  raft_node_impl_ = std::make_shared<RaftNodeImpl>(
       config, sm, std::move(infra),
       config.persister_factory ? std::shared_ptr<Persister>(config.persister_factory()) : nullptr);
 }

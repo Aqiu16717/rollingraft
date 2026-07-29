@@ -258,7 +258,12 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
-        [this, peer_id, read_id](const std::string& resp, bool success, const std::string& error) {
+        [weak_self = weak_from_this(), this, peer_id, read_id](
+            const std::string& resp, bool success, const std::string& error) {
+          auto keep_alive = weak_self.lock();
+          if (!keep_alive) {
+            return;
+          }
           if (!success) {
             LOG_WARN("ReadIndex heartbeat to {} failed: {}", peer_id, error);
             return;

@@ -6,6 +6,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -38,7 +39,10 @@
 namespace rollingraft {
 
 // ========== RaftNode Implementation ==========
-class RaftNode::RaftNodeImpl {
+// enable_shared_from_this lets outbound async callbacks (RPC responses,
+// timers) hold a weak_ptr and bail out when the group has been destroyed
+// (e.g. RaftStore::RemoveGroup) instead of dereferencing freed memory.
+class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl> {
  public:
   RaftNodeImpl(const RaftNodeConfig& config, std::shared_ptr<StateMachine> state_machine,
                std::shared_ptr<SharedNodeInfra> infra, std::shared_ptr<Persister> persister,

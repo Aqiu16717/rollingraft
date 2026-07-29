@@ -315,7 +315,12 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   infra_->network_->SendRpc(
       peer_id, it_addr->second, data, req.correlation_id_,
       std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
-      [this, peer_id](const std::string& resp, bool success, const std::string& error) {
+      [weak_self = weak_from_this(), this, peer_id](const std::string& resp, bool success,
+                                                    const std::string& error) {
+        auto keep_alive = weak_self.lock();
+        if (!keep_alive) {
+          return;
+        }
         // Deserialize response first (outside lock)
         InstallSnapshotResponse response;
         if (success) {
@@ -376,13 +381,18 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
     // RPC failed: retry with backoff
     if (!rpc_success) {
       LOG_WARN("Node {}: snapshot RPC to {} failed, will retry", group_->server_id_, from);
-      infra_->timer_->SetTimeout(std::chrono::milliseconds(100), [this, from]() {
-        std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-        std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
-        if (group_->role_ == RaftNodeRole::LEADER) {
-          SendNextSnapshotChunkLocked(from);
-        }
-      });
+      infra_->timer_->SetTimeout(std::chrono::milliseconds(100),
+                                 [weak_self = weak_from_this(), this, from]() {
+                                   auto keep_alive = weak_self.lock();
+                                   if (!keep_alive) {
+                                     return;
+                                   }
+                                   std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+                                   std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+                                   if (group_->role_ == RaftNodeRole::LEADER) {
+                                     SendNextSnapshotChunkLocked(from);
+                                   }
+                                 });
       return;
     }
 

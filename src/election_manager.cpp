@@ -346,16 +346,21 @@ void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
   if (pre_vote_timeout < 10) {
     pre_vote_timeout = 10;
   }
-  infra_->timer_->SetTimeout(std::chrono::milliseconds(pre_vote_timeout), [this]() {
-    std::lock_guard<std::mutex> lock(group_->election_mtx_);
-    if (group_->pre_vote_running_) {
-      LOG_INFO("Node {} PreVote timed out, resetting", group_->server_id_);
-      group_->pre_vote_running_ = false;
-      group_->pre_vote_count_ = 0;
-      // Reset election timer to wait for next timeout
-      ResetElectionTimerLocked();
-    }
-  });
+  infra_->timer_->SetTimeout(
+      std::chrono::milliseconds(pre_vote_timeout), [weak_self = weak_from_this(), this]() {
+        auto keep_alive = weak_self.lock();
+        if (!keep_alive) {
+          return;
+        }
+        std::lock_guard<std::mutex> lock(group_->election_mtx_);
+        if (group_->pre_vote_running_) {
+          LOG_INFO("Node {} PreVote timed out, resetting", group_->server_id_);
+          group_->pre_vote_running_ = false;
+          group_->pre_vote_count_ = 0;
+          // Reset election timer to wait for next timeout
+          ResetElectionTimerLocked();
+        }
+      });
 }
 
 void RaftNode::RaftNodeImpl::BroadcastRequestVoteLocked() {
@@ -398,8 +403,12 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
 
   infra_->network_->SendRpc(
       peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),
-      [this, peer_id, original_term](const std::string& resp, bool success,
-                                     const std::string& error) {
+      [weak_self = weak_from_this(), this, peer_id, original_term](
+          const std::string& resp, bool success, const std::string& error) {
+        auto keep_alive = weak_self.lock();
+        if (!keep_alive) {
+          return;
+        }
         if (!success) {
           LOG_WARN("RequestVote to {} failed: {}", peer_id, error);
           return;
@@ -509,8 +518,12 @@ void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id, const NodeA
 
   infra_->network_->SendRpc(
       peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),
-      [this, peer_id, original_pre_vote_term](const std::string& resp, bool success,
-                                              const std::string& error) {
+      [weak_self = weak_from_this(), this, peer_id, original_pre_vote_term](
+          const std::string& resp, bool success, const std::string& error) {
+        auto keep_alive = weak_self.lock();
+        if (!keep_alive) {
+          return;
+        }
         if (!success) {
           LOG_WARN("PreVote to {} failed: {}", peer_id, error);
           return;

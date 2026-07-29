@@ -168,13 +168,18 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
     // However, we may have multiple dead nodes. Use a post-task approach.
 
     // Schedule removal asynchronously to avoid deadlock with current locks
-    infra_->timer_->SetTimeout(std::chrono::milliseconds(1), [this, dead_id]() {
-      auto status = RemoveNode(dead_id);
-      if (!status.ok()) {
-        LOG_WARN("Node {}: auto-removal of dead node {} failed: {}", group_->server_id_, dead_id,
-                 status.ToString());
-      }
-    });
+    infra_->timer_->SetTimeout(std::chrono::milliseconds(1),
+                               [weak_self = weak_from_this(), this, dead_id]() {
+                                 auto keep_alive = weak_self.lock();
+                                 if (!keep_alive) {
+                                   return;
+                                 }
+                                 auto status = RemoveNode(dead_id);
+                                 if (!status.ok()) {
+                                   LOG_WARN("Node {}: auto-removal of dead node {} failed: {}",
+                                            group_->server_id_, dead_id, status.ToString());
+                                 }
+                               });
   }
 }
 
@@ -198,12 +203,17 @@ void RaftNode::RaftNodeImpl::MaybeAutoPromoteLearnersLocked() {
       // PromoteLearner will check group_->pending_config_change_ internally.
       LOG_INFO("Node {} auto-promoting learner {} (match={} commit={})", group_->server_id_,
                learner_id, it->second, group_->commit_index_);
-      infra_->timer_->SetTimeout(std::chrono::milliseconds(0), [this, learner_id]() {
-        auto status = PromoteLearner(learner_id);
-        if (!status.ok()) {
-          LOG_DEBUG("Auto-promote learner {} failed: {}", learner_id, status.GetMessage());
-        }
-      });
+      infra_->timer_->SetTimeout(
+          std::chrono::milliseconds(0), [weak_self = weak_from_this(), this, learner_id]() {
+            auto keep_alive = weak_self.lock();
+            if (!keep_alive) {
+              return;
+            }
+            auto status = PromoteLearner(learner_id);
+            if (!status.ok()) {
+              LOG_DEBUG("Auto-promote learner {} failed: {}", learner_id, status.GetMessage());
+            }
+          });
     }
   }
 }
@@ -319,8 +329,12 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(cfg.rpc_timeout_ms),
-        [this, peer_id, is_heartbeat](const std::string& resp, bool success,
-                                      const std::string& error) {
+        [weak_self = weak_from_this(), this, peer_id, is_heartbeat](
+            const std::string& resp, bool success, const std::string& error) {
+          auto keep_alive = weak_self.lock();
+          if (!keep_alive) {
+            return;
+          }
           if (!success) {
             LOG_INFO("AppendEntries to {} failed: {}, will retry", peer_id, error);
             ScheduleAppendEntriesRetry(peer_id, is_heartbeat);
@@ -393,13 +407,18 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   LOG_INFO("Node {}: scheduling AppendEntries retry {} to peer {} in {}ms", group_->server_id_,
            retry.attempts, peer_id, delay);
 
-  infra_->timer_->SetTimeout(std::chrono::milliseconds(delay), [this, peer_id]() {
-    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-    if (group_->role_ == RaftNodeRole::LEADER) {
-      SendAppendEntriesToPeerLocked(peer_id);
-    }
-  });
+  infra_->timer_->SetTimeout(std::chrono::milliseconds(delay),
+                             [weak_self = weak_from_this(), this, peer_id]() {
+                               auto keep_alive = weak_self.lock();
+                               if (!keep_alive) {
+                                 return;
+                               }
+                               std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+                               std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+                               if (group_->role_ == RaftNodeRole::LEADER) {
+                                 SendAppendEntriesToPeerLocked(peer_id);
+                               }
+                             });
 }
 
 void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,

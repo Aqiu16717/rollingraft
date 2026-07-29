@@ -241,7 +241,14 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
 
     if (id == group_->server_id_) {
       LOG_INFO("Node {} removed from cluster, stopping", group_->server_id_);
-      infra_->timer_->SetTimeout(std::chrono::milliseconds(0), [this]() { Stop(); });
+      infra_->timer_->SetTimeout(std::chrono::milliseconds(0),
+                                 [weak_self = weak_from_this(), this]() {
+                                   auto keep_alive = weak_self.lock();
+                                   if (!keep_alive) {
+                                     return;
+                                   }
+                                   Stop();
+                                 });
     }
     return;
   }

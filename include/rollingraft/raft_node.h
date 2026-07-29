@@ -496,7 +496,7 @@ class RaftNode {
   class RaftNodeImpl;
 
  private:
-  std::unique_ptr<RaftNodeImpl> raft_node_impl_;  // PIMPL idiom
+  std::shared_ptr<RaftNodeImpl> raft_node_impl_;  // PIMPL idiom (shared for weak callbacks)
 };
 
 }  // namespace rollingraft

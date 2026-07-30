@@ -11,11 +11,15 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 
 ## Phase 1 — Consensus core
 
-### ⬜ #1 Core state & locks
+### ✅ #1 Core state & locks (done 2026-07-30)
 - Files: `src/raft_group.h`, `src/raft_node_impl.h`, `src/raft_node_core.cpp` (~2300 lines)
 - Focus: lock-hierarchy adherence, Start/Stop lifecycle, OnStoreTick, manage_network_ dual path
-- Findings: —
-- Decision: —
+- Findings:
+  - HIGH: Stop() shutdown-timeout path — detached thread held dangling stack ref (`&done`) + raw `this` → UAF/UB
+  - MED: Propose/ProposeBatch persist callbacks captured raw `this` (safe only via LogPersister::Stop join), duplicated ×2
+  - LOW ×4: RemoveNode misleading comment, ForceShutdown stale detach comment, concurrent Stop() error semantics, executor only wired for ASIO timer
+- Decision: fix HIGH + MED + LOW 1-2; leave LOW 3-4 as-is
+- Fix: commit `5db0c2e` (keep-alive shutdown thread, shared done flag, OnLogEntryPersisted + weak guards). Tests 356/356.
 
 ### ⬜ #2 Election
 - Files: `src/election_manager.cpp` (596)

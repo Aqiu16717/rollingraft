@@ -165,6 +165,10 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // Commit and apply
   void TryCommitLocked();
   void ApplyCommittedLocked();
+  // Persist-completion callback for Propose/ProposeBatch log appends.
+  // Steps down on disk failure; otherwise advances flushed_index_ and retries
+  // commit. Runs on the persister thread with no group locks held.
+  void OnLogEntryPersisted(Index index, Status status);
 
   // Utility methods
   uint64_t GetLogTermLocked(uint64_t index);

@@ -618,8 +618,9 @@ void RaftNode::RaftNodeImpl::ForceShutdown() {
   }
 
   // Note: We intentionally do NOT call infra_->timer_->Stop() or infra_->network_->Stop()
-  // here because they may be the source of the hang. The underlying
-  // io_context threads will be detached by their own timeout logic.
+  // here because their Stop() joins the io threads, and those joins may be exactly
+  // what is hanging. The keep-alive held by the shutdown thread in Stop() keeps
+  // this group alive until the detached DoGracefulShutdown eventually returns.
 
   if (log_persister_) {
     log_persister_->Stop();
@@ -657,17 +658,20 @@ Status RaftNode::RaftNodeImpl::Stop() {
     return Status::OK();
   }
 
-  // Run graceful shutdown in a separate thread with timeout.
-  std::atomic<bool> done{false};
-  std::thread shutdown_thread([this, &done]() {
-    DoGracefulShutdown();
-    done.store(true, std::memory_order_release);
+  // Run graceful shutdown in a separate thread with timeout. The thread
+  // holds a keep-alive on this group and a shared_ptr to the done flag:
+  // if the timeout fires we detach and return, and the detached thread must
+  // not touch the caller's (already destroyed) stack frame or a freed group.
+  auto done = std::make_shared<std::atomic<bool>>(false);
+  std::thread shutdown_thread([keep_alive = shared_from_this(), done]() {
+    keep_alive->DoGracefulShutdown();
+    done->store(true, std::memory_order_release);
   });
 
   auto deadline = std::chrono::steady_clock::now() +
                   std::chrono::milliseconds(group_->config_.shutdown_timeout_ms);
 
-  while (!done.load(std::memory_order_acquire)) {
+  while (!done->load(std::memory_order_acquire)) {
     if (std::chrono::steady_clock::now() >= deadline) {
       LOG_ERROR("RaftNode {} graceful shutdown timed out after {}ms, forcing stop",
                 group_->config_.node_id, group_->config_.shutdown_timeout_ms);
@@ -778,35 +782,12 @@ Status RaftNode::RaftNodeImpl::Propose(const std::string& command,
   if (log_persister_) {
     auto entry_opt = group_->log_.GetEntry(index);
     if (entry_opt) {
-      log_persister_->Append(*entry_opt, [this, index](Status s) {
-        if (!s.ok()) {
-          LOG_WARN("Node {} log persistence failed for index {}: {}", group_->server_id_, index,
-                   s.ToString());
-          if (log_persister_ && !log_persister_->IsHealthy()) {
-            // Disk failure: step down. Runs on persister thread with no
-            // locks held, so acquiring group_->election_mtx_ is safe.
-            std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-            if (group_->role_ == RaftNodeRole::LEADER) {
-              LOG_ERROR("Node {} stepping down due to disk failure", group_->server_id_);
-              BecomeFollowerLocked(group_->current_term_);
-            }
-          }
+      log_persister_->Append(*entry_opt, [weak_self = weak_from_this(), index](Status s) {
+        auto self = weak_self.lock();
+        if (!self) {
           return;
         }
-        // Commit: runs on persister thread with no locks held.
-        std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-        std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-        if (!IsRunning()) {
-          return;
-        }
-        if (group_->role_ != RaftNodeRole::LEADER) {
-          return;
-        }
-        if (index > group_->flushed_index_) {
-          group_->flushed_index_ = index;
-        }
-        // Retry commit now that this entry is durable
-        TryCommitLocked();
+        self->OnLogEntryPersisted(index, s);
       });
     }
   } else {
@@ -884,34 +865,12 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
     if (log_persister_) {
       auto entry_opt = group_->log_.GetEntry(index);
       if (entry_opt) {
-        log_persister_->Append(*entry_opt, [this, index](Status s) {
-          if (!s.ok()) {
-            LOG_WARN("Node {} log persistence failed for index {}: {}", group_->server_id_, index,
-                     s.ToString());
-            if (log_persister_ && !log_persister_->IsHealthy()) {
-              // Disk failure: step down. Runs on persister thread with no
-              // locks held, so acquiring group_->election_mtx_ is safe.
-              std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-              if (group_->role_ == RaftNodeRole::LEADER) {
-                LOG_ERROR("Node {} stepping down due to disk failure", group_->server_id_);
-                BecomeFollowerLocked(group_->current_term_);
-              }
-            }
+        log_persister_->Append(*entry_opt, [weak_self = weak_from_this(), index](Status s) {
+          auto self = weak_self.lock();
+          if (!self) {
             return;
           }
-          // Commit: runs on persister thread with no locks held.
-          std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-          std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-          if (!IsRunning()) {
-            return;
-          }
-          if (group_->role_ != RaftNodeRole::LEADER) {
-            return;
-          }
-          if (index > group_->flushed_index_) {
-            group_->flushed_index_ = index;
-          }
-          TryCommitLocked();
+          self->OnLogEntryPersisted(index, s);
         });
       }
     }
@@ -940,6 +899,37 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
   TryCommitLocked();
 
   return Status::OK();
+}
+
+void RaftNode::RaftNodeImpl::OnLogEntryPersisted(Index index, Status status) {
+  if (!status.ok()) {
+    LOG_WARN("Node {} log persistence failed for index {}: {}", group_->server_id_, index,
+             status.ToString());
+    if (log_persister_ && !log_persister_->IsHealthy()) {
+      // Disk failure: step down. Runs on persister thread with no locks held,
+      // so acquiring group_->election_mtx_ is safe.
+      std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+      if (group_->role_ == RaftNodeRole::LEADER) {
+        LOG_ERROR("Node {} stepping down due to disk failure", group_->server_id_);
+        BecomeFollowerLocked(group_->current_term_);
+      }
+    }
+    return;
+  }
+  // Commit: runs on persister thread with no locks held.
+  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+  if (!IsRunning()) {
+    return;
+  }
+  if (group_->role_ != RaftNodeRole::LEADER) {
+    return;
+  }
+  if (index > group_->flushed_index_) {
+    group_->flushed_index_ = index;
+  }
+  // Retry commit now that this entry is durable
+  TryCommitLocked();
 }
 
 ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(const std::string& command,
@@ -1261,8 +1251,8 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
     return Status::Error("A membership change is already in progress; wait for it to commit");
   }
 
-  // Prevent removing ourselves while leader
-  // (We should step down first)
+  // Self-removal is allowed: we propose the change and step down below once
+  // it is on its way (see the BecomeFollowerLocked call at the end).
   if (id == group_->server_id_) {
     LOG_WARN("Node {} removing itself from cluster - will step down", id);
   }

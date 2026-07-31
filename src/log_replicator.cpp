@@ -633,27 +633,22 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   auto cfg = infra_->runtime_config_->Get();
   auto now = std::chrono::steady_clock::now();
 
-  // Count how many VOTERS have acked within election_timeout
-  int ack_count = 1;  // Leader counts itself
+  // Collect VOTERS that have acked within election_timeout. The quorum check
+  // must satisfy both configs during joint consensus.
+  std::set<NodeId> acked_voters{group_->server_id_};  // Leader counts itself
   for (const auto& [peer_id, ack_time] : group_->quorum_acks_) {
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
     if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
       if (group_->cluster_config_.IsVoter(peer_id)) {
-        ++ack_count;
+        acked_voters.insert(peer_id);
       }
     }
   }
 
-  uint32_t majority;
-  {
-    std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
-    majority = group_->cluster_config_.GetMajority();
-  }
-
-  if (static_cast<uint32_t>(ack_count) < majority) {
-    LOG_WARN("Node {} lost quorum (acks={}/{}), stepping down from leadership", group_->server_id_,
-             ack_count, majority);
+  if (!ElectionQuorumSatisfiedLocked(acked_voters)) {
+    LOG_WARN("Node {} lost quorum (acks={}), stepping down from leadership", group_->server_id_,
+             acked_voters.size());
     if (metrics_) {
       metrics_->GetCounter("raft_checkquorum_stepdown_total", group_->metrics_node_label_)
           .Increment();

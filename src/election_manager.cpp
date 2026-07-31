@@ -6,9 +6,17 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   RaftNodeRole old_role = group_->role_;
 
   group_->role_ = RaftNodeRole::FOLLOWER;
+  // voted_for_ is sticky within a term: only reset it when the term actually
+  // advances. Resetting it at the same term would let this node vote twice in
+  // one term (e.g. after a CheckQuorum step-down), breaking the
+  // one-vote-per-term election safety invariant.
+  if (term > group_->current_term_) {
+    group_->voted_for_ = -1;
+  }
   group_->current_term_ = term;
-  group_->voted_for_ = -1;
   group_->vote_count_ = 0;
+  group_->votes_received_.clear();
+  group_->pre_votes_received_.clear();
   group_->leader_id_ = -1;
   group_->leader_addr_.clear();
 
@@ -70,6 +78,8 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   ++group_->current_term_;
   group_->voted_for_ = group_->server_id_;
   group_->vote_count_ = 1;  // Vote for self
+  group_->votes_received_.clear();
+  group_->votes_received_.insert(group_->server_id_);
 
   // Persist state
   if (persister_) {
@@ -106,17 +116,10 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
   }
   LOG_INFO("Node {} became Candidate at term {}", group_->server_id_, group_->current_term_);
 
-  // Use committed cluster configuration for quorum calculation.
-  // group_->peer_addrs_ may contain optimistically added nodes that have not
-  // yet been committed via log, so it must not be used for majority.
-  uint32_t majority;
-  {
-    std::shared_lock<std::shared_mutex> lock(group_->membership_mtx_);
-    majority = group_->cluster_config_.GetMajority();
-  }
-
-  // Single-node cluster: already has majority, become leader immediately
-  if (group_->vote_count_ >= majority) {
+  // Single-node cluster: already has quorum, become leader immediately.
+  // Uses the committed cluster configuration (old+new in joint mode), never
+  // group_->peer_addrs_, which may contain optimistically added nodes.
+  if (ElectionQuorumSatisfiedLocked(group_->votes_received_)) {
     BecomeLeaderLocked();
     return;
   }
@@ -215,6 +218,24 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
 
   // Send heartbeat immediately (establish authority)
   BroadcastAppendEntriesLocked();
+}
+
+bool RaftNode::RaftNodeImpl::ElectionQuorumSatisfiedLocked(const std::set<NodeId>& voters) {
+  std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+  int new_count = 0;
+  int old_count = 0;
+  for (NodeId voter : voters) {
+    if (std::find(group_->cluster_config_.nodes.begin(), group_->cluster_config_.nodes.end(),
+                  voter) != group_->cluster_config_.nodes.end()) {
+      ++new_count;
+    }
+    if (std::find(group_->cluster_config_.old_nodes.begin(),
+                  group_->cluster_config_.old_nodes.end(),
+                  voter) != group_->cluster_config_.old_nodes.end()) {
+      ++old_count;
+    }
+  }
+  return group_->cluster_config_.JointMajoritySatisfied(old_count, new_count);
 }
 
 void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
@@ -322,16 +343,12 @@ void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
   // partitioned node rejoins.
   group_->pre_vote_running_ = true;
   group_->pre_vote_count_ = 1;  // Vote for self
+  group_->pre_votes_received_.clear();
+  group_->pre_votes_received_.insert(group_->server_id_);
   group_->pre_vote_term_ = group_->current_term_ + 1;
 
-  uint32_t majority;
-  {
-    std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
-    majority = group_->cluster_config_.GetMajority();
-  }
-
-  // Single-node cluster: already has majority, skip pre-vote
-  if (group_->pre_vote_count_ >= majority) {
+  // Single-node cluster: already has quorum, skip pre-vote
+  if (ElectionQuorumSatisfiedLocked(group_->pre_votes_received_)) {
     group_->pre_vote_running_ = false;
     BecomeCandidateLocked();
     return;
@@ -357,6 +374,7 @@ void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
           LOG_INFO("Node {} PreVote timed out, resetting", group_->server_id_);
           group_->pre_vote_running_ = false;
           group_->pre_vote_count_ = 0;
+          group_->pre_votes_received_.clear();
           // Reset election timer to wait for next timeout
           ResetElectionTimerLocked();
         }
@@ -464,17 +482,14 @@ void RaftNode::RaftNodeImpl::HandleRequestVoteResponse(NodeId from, const Reques
       labels["granted"] = "true";
       metrics_->GetCounter("raft_votes_received_total", labels).Increment();
     }
-    ++group_->vote_count_;
-    uint32_t majority;
-    {
-      std::shared_lock<std::shared_mutex> lock(group_->membership_mtx_);
-      majority = group_->cluster_config_.GetMajority();
-    }
-    LOG_INFO("Node {} got vote from {}, total: {}/{}", group_->server_id_, from,
-             group_->vote_count_, majority);
+    // Dedup per voter: a repeated response from the same peer must not
+    // inflate the count into a false majority.
+    group_->votes_received_.insert(from);
+    group_->vote_count_ = static_cast<uint32_t>(group_->votes_received_.size());
+    LOG_INFO("Node {} got vote from {}, total: {}", group_->server_id_, from, group_->vote_count_);
 
-    // Got majority votes, become Leader
-    if (group_->vote_count_ >= majority) {
+    // Reached election quorum (both configs in joint mode), become Leader
+    if (ElectionQuorumSatisfiedLocked(group_->votes_received_)) {
       BecomeLeaderLocked();
     }
   }
@@ -577,19 +592,17 @@ void RaftNode::RaftNodeImpl::HandlePreVoteResponse(NodeId from, const PreVoteRes
       labels["granted"] = "true";
       metrics_->GetCounter("raft_prevote_received_total", labels).Increment();
     }
-    ++group_->pre_vote_count_;
-    uint32_t majority;
-    {
-      std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
-      majority = group_->cluster_config_.GetMajority();
-    }
-    LOG_INFO("Node {} got PreVote from {}, total: {}/{}", group_->server_id_, from,
-             group_->pre_vote_count_, majority);
+    // Dedup per voter, same as the real election.
+    group_->pre_votes_received_.insert(from);
+    group_->pre_vote_count_ = static_cast<uint32_t>(group_->pre_votes_received_.size());
+    LOG_INFO("Node {} got PreVote from {}, total: {}", group_->server_id_, from,
+             group_->pre_vote_count_);
 
-    // Got majority pre-votes, become candidate
-    if (group_->pre_vote_count_ >= majority) {
+    // Reached election quorum (both configs in joint mode), become candidate
+    if (ElectionQuorumSatisfiedLocked(group_->pre_votes_received_)) {
       group_->pre_vote_running_ = false;
       group_->pre_vote_count_ = 0;
+      group_->pre_votes_received_.clear();
       BecomeCandidateLocked();
     }
   }

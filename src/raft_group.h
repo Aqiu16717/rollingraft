@@ -135,6 +135,10 @@ class RaftGroup {
   NodeAddr leader_addr_;
   RaftNodeRole role_ = RaftNodeRole::FOLLOWER;
   uint32_t vote_count_ = 0;
+  // Per-term voter dedup sets: a peer's (pre-)vote is only counted once, so a
+  // duplicate response can never inflate the count into a false majority.
+  std::set<NodeId> votes_received_;
+  std::set<NodeId> pre_votes_received_;
 
   // ========== Leader State ==========
   std::unordered_map<NodeId, Index> next_index_;

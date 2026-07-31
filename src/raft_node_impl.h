@@ -148,6 +148,11 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // CheckQuorum: leader steps down if it hasn't received quorum acks
   void CheckQuorumLocked();  // Precondition: caller holds group_->election_mtx_
 
+  // Election quorum check: true if the given voter set reaches a majority of
+  // the new config and, during joint consensus, also of the old config.
+  // Acquires group_->membership_mtx_ (shared) internally.
+  bool ElectionQuorumSatisfiedLocked(const std::set<NodeId>& voters);
+
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);
   void HandleReadIndexAckLocked(NodeId from, uint64_t read_id);

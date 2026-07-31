@@ -21,10 +21,16 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix HIGH + MED + LOW 1-2; leave LOW 3-4 as-is
 - Fix: commit `5db0c2e` (keep-alive shutdown thread, shared done flag, OnLogEntryPersisted + weak guards). Tests 356/356.
 
-### ⬜ #2 Election
-- Files: `src/election_manager.cpp` (596)
+### ✅ #2 Election (done 2026-07-31)
+- Files: `src/election_manager.cpp` (596) + cross-checks in `rpc_handlers.cpp`, `log_replicator.cpp`
 - Focus: pre-vote edges, CheckQuorum, leader lease, term handling, vote persistence races
-- Findings: —
+- Findings:
+  - HIGH: `voted_for_` reset+persisted at same term in BecomeFollowerLocked → double voting, two leaders in one term possible (CheckQuorum/transfer/disk-failure stepdown paths)
+  - MED: vote/pre-vote counting without per-voter dedup → duplicate response could inflate false majority
+  - MED: elections/pre-vote/CheckQuorum used new-config majority only during joint consensus (needs old AND new)
+  - LOW: synchronous LevelDB SaveState under election_mtx_ (deliberate fail-stop; perf note, not fixed)
+- Decision: fix HIGH + both MED; LOW recorded only
+- Fix: commit `ef1c100` (sticky voted_for_, votes_received_ sets, ElectionQuorumSatisfiedLocked). Tests 356/356.
 
 ### ⬜ #3 Log replication
 - Files: `src/log_replicator.cpp`, `src/raft_log.cpp` (~1100)

@@ -196,6 +196,11 @@ class RaftGroup {
 
   // ========== Snapshot State ==========
   Index last_snapshot_index_ = 0;
+  // Term of the log entry at last_snapshot_index_. Required to answer
+  // prev_log_term checks exactly at the snapshot boundary; without it both
+  // sides answer 0 for compacted indices and mismatched boundaries falsely
+  // "match".
+  Term last_snapshot_term_ = 0;
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;
   std::string snapshot_temp_path_;
 

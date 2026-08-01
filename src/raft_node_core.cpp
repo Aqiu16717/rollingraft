@@ -123,6 +123,7 @@ Status RaftNode::RaftNodeImpl::Start() {
         std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(), snapshot_data.end());
         if (group_->state_machine_->Restore(snapshot_bytes)) {
           group_->last_snapshot_index_ = snapshot_index;
+          group_->last_snapshot_term_ = snapshot_term;
           group_->log_.SetStartIndex(snapshot_index + 1);
           LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index, snapshot_term);
         } else {
@@ -1206,7 +1207,11 @@ Status RaftNode::RaftNodeImpl::AddNode(NodeId id, const NodeAddr& addr) {
                   flush_status.GetMessage());
         return flush_status;
       }
+      group_->flushed_index_ = std::max(group_->flushed_index_, index);
     }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    group_->flushed_index_ = std::max(group_->flushed_index_, index);
   }
 
   // Mark pending so no other membership change can be proposed.
@@ -1286,7 +1291,11 @@ Status RaftNode::RaftNodeImpl::RemoveNode(NodeId id) {
                   flush_status.GetMessage());
         return flush_status;
       }
+      group_->flushed_index_ = std::max(group_->flushed_index_, index);
     }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    group_->flushed_index_ = std::max(group_->flushed_index_, index);
   }
 
   // Mark pending so no other membership change can be proposed.
@@ -1368,7 +1377,11 @@ Status RaftNode::RaftNodeImpl::AddLearner(NodeId id, const NodeAddr& addr) {
                   flush_status.GetMessage());
         return flush_status;
       }
+      group_->flushed_index_ = std::max(group_->flushed_index_, index);
     }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    group_->flushed_index_ = std::max(group_->flushed_index_, index);
   }
 
   // Mark pending so no other membership change can be proposed.
@@ -1438,7 +1451,11 @@ Status RaftNode::RaftNodeImpl::PromoteLearner(NodeId id) {
                   flush_status.GetMessage());
         return flush_status;
       }
+      group_->flushed_index_ = std::max(group_->flushed_index_, index);
     }
+  } else {
+    // No persistence configured (test path) — treat as immediately flushed
+    group_->flushed_index_ = std::max(group_->flushed_index_, index);
   }
 
   // Mark pending so no other membership change can be proposed.
@@ -1494,6 +1511,11 @@ ClusterConfig RaftNode::RaftNodeImpl::GetConfig() const {
 uint64_t RaftNode::RaftNodeImpl::GetLogTermLocked(uint64_t index) {
   if (index == 0) {
     return 0;
+  }
+  // The entry at the snapshot boundary is compacted away from the in-memory
+  // log, but its term is known from snapshot metadata.
+  if (index == group_->last_snapshot_index_) {
+    return group_->last_snapshot_term_;
   }
   return group_->log_.GetLogTerm(index);
 }

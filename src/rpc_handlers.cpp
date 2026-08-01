@@ -350,6 +350,18 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
   {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
 
+    // Fast-forward hint: if prev_log is deeper than our snapshot boundary,
+    // the leader's entries are already covered by our snapshot. Tell it to
+    // skip ahead to our first log index instead of matching spuriously
+    // against compacted-away indices.
+    Index first_index = group_->log_.GetFirstIndex();
+    if (req.prev_log_index_ > 0 && req.prev_log_index_ + 1 < first_index) {
+      LOG_DEBUG("Node {} fast-forward AppendEntries: prev_log_index {} < first_index {}",
+                group_->server_id_, req.prev_log_index_, first_index);
+      resp.conflict_index_ = first_index;
+      return;
+    }
+
     // Check if prev_log matches
     if (req.prev_log_index_ > 0) {
       Term prev_term = GetLogTermLocked(req.prev_log_index_);
@@ -375,9 +387,25 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
 
       // Append new entries
       for (const auto& entry : req.entries_) {
+        // Skip entries already covered by our snapshot/compacted prefix.
+        if (entry.index_ < group_->log_.GetFirstIndex()) {
+          continue;
+        }
         Term existing_term = GetLogTermLocked(entry.index_);
         if (existing_term != 0 && existing_term == entry.term_) {
           continue;  // Already have this entry, skip duplicate
+        }
+        // Continuity guard: entries must extend the log contiguously. A gap
+        // means the prev_log check passed spuriously — reject so the leader
+        // re-syncs instead of grafting entries at wrong positions
+        // (RaftLog::Append assigns indices itself).
+        auto [last_index, _t] = group_->log_.GetLastLogInfo();
+        Index expected = (last_index == 0) ? group_->log_.GetFirstIndex() : last_index + 1;
+        if (entry.index_ != expected) {
+          LOG_ERROR("Node {} reject non-contiguous entry {} (expected {}), log corruption risk",
+                    group_->server_id_, entry.index_, expected);
+          resp.conflict_index_ = expected;
+          return;
         }
         auto [idx, status] = group_->log_.Append(entry.term_, entry.data_);
         (void)idx;
@@ -536,6 +564,7 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
         uint64_t old_first_index = group_->log_.GetFirstIndex();
         group_->log_.SetStartIndex(req.last_included_index_ + 1);
         group_->last_snapshot_index_ = req.last_included_index_;
+        group_->last_snapshot_term_ = req.last_included_term_;
 
         // Schedule async truncation of persisted log after releasing locks.
         // TruncatePrefix I/O can be slow; performing it asynchronously prevents

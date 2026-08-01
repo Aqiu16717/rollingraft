@@ -118,6 +118,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
   // Truncate log - entries before snapshot_index are now covered by snapshot
   group_->log_.SetStartIndex(snapshot_index + 1);
   group_->last_snapshot_index_ = snapshot_index;
+  group_->last_snapshot_term_ = snapshot_term;
 
   // Schedule async truncation of persisted log after releasing locks.
   // TruncatePrefix I/O can be slow; performing it asynchronously prevents

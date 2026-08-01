@@ -453,7 +453,10 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
     // Heartbeats don't track inflight, so just handle success/failure
     // for liveness but don't touch group_->match_index_ based on stale state.
     if (!resp.success_) {
-      group_->next_index_[from] = std::max<Index>(1, group_->next_index_[from] - 1);
+      // A stale failure must not rewind next_index_ past already-acked
+      // progress (match_index_ + 1 is the floor).
+      Index floor = group_->match_index_[from] + 1;
+      group_->next_index_[from] = std::max({floor, group_->next_index_[from] - 1});
       ScheduleAppendEntriesRetryLocked(from);
     }
     return;
@@ -660,7 +663,13 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
 void RaftNode::RaftNodeImpl::TryCommitLocked() {
   auto [last_index, _] = group_->log_.GetLastLogInfo();
 
-  for (Index index = last_index; index > group_->commit_index_; --index) {
+  // Durability gate: only entries up to flushed_index_ (locally fsynced) may
+  // be committed. A "committed" entry must survive a crash of this leader —
+  // committing beyond the durable watermark could acknowledge data to clients
+  // that exists only in memory across the whole cluster.
+  Index commit_ceiling = std::min(last_index, group_->flushed_index_);
+
+  for (Index index = commit_ceiling; index > group_->commit_index_; --index) {
     // Only commit entries from current term
     if (GetLogTermLocked(index) != group_->current_term_) {
       break;

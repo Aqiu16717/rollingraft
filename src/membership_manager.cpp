@@ -76,8 +76,17 @@ void RaftNode::RaftNodeImpl::ApplyConfigChangeLocked(const std::string& cmd) {
         if (log_persister_) {
           auto entry_opt = group_->log_.GetEntry(idx);
           if (entry_opt) {
-            log_persister_->Append(*entry_opt);
+            log_persister_->Append(*entry_opt, [weak_self = weak_from_this(), idx](Status s) {
+              auto self = weak_self.lock();
+              if (!self) {
+                return;
+              }
+              self->OnLogEntryPersisted(idx, s);
+            });
           }
+        } else {
+          // No persistence configured (test path) — treat as immediately flushed
+          group_->flushed_index_ = std::max(group_->flushed_index_, idx);
         }
         LOG_INFO("Node {} auto-proposed FINALIZE at index {}", group_->server_id_, idx);
         BroadcastAppendEntriesLocked();

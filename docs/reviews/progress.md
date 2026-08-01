@@ -32,10 +32,15 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix HIGH + both MED; LOW recorded only
 - Fix: commit `ef1c100` (sticky voted_for_, votes_received_ sets, ElectionQuorumSatisfiedLocked). Tests 356/356.
 
-### ⬜ #3 Log replication
-- Files: `src/log_replicator.cpp`, `src/raft_log.cpp` (~1100)
+### ✅ #3 Log replication (done 2026-08-01)
+- Files: `src/log_replicator.cpp`, `src/raft_log.cpp` + cross-checks in `rpc_handlers.cpp`, design-group-commit.md
 - Focus: inflight window, next_/match_index updates, retry backoff, heartbeat coalescing
-- Findings: —
+- Findings:
+  - HIGH: followers ACK before durable + TryCommit ignores flushed_index_ → entry committable while durable on 0 nodes
+  - HIGH: snapshot-boundary term-0 false match (diverged compaction points) + RaftLog::Append self-numbering → silent follower log corruption
+  - LOW ×3: Append ignores entry.index_ (no continuity check), no correlation check on inflight responses, stale failure rewinds next_index_
+- Decision: fix HIGH #2 + LOW 1&3 (user); HIGH #1 fixed per option A (commit gated on flushed_index_); LOW 2 deferred (needs AppendEntriesResponse protocol field → revisit in #10)
+- Fix: commit `f4918d6` (last_snapshot_term_ tracking, boundary term answers, fast-forward reject, continuity guard, flushed_index_ commit gate incl. membership/FINALIZE/no-persister paths, stale-failure floor). Tests 356/356 ×2.
 
 ### ⬜ #4 Snapshot
 - Files: `src/snapshot_manager.cpp` (433)

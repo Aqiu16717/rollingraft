@@ -42,10 +42,15 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix HIGH #2 + LOW 1&3 (user); HIGH #1 fixed per option A (commit gated on flushed_index_); LOW 2 deferred (needs AppendEntriesResponse protocol field → revisit in #10)
 - Fix: commit `f4918d6` (last_snapshot_term_ tracking, boundary term answers, fast-forward reject, continuity guard, flushed_index_ commit gate incl. membership/FINALIZE/no-persister paths, stale-failure floor). Tests 356/356 ×2.
 
-### ⬜ #4 Snapshot
-- Files: `src/snapshot_manager.cpp` (433)
+### ✅ #4 Snapshot (done 2026-08-01)
+- Files: `src/snapshot_manager.cpp` (433) + receive side in `rpc_handlers.cpp`
 - Focus: chunked transfer state machine, compaction interplay, InstallSnapshot role transitions
-- Findings: —
+- Findings:
+  - HIGH: receive side accepted any chunk without (index, term, offset) validation → interleaved transfers (leader flap mid-send) could corrupt restored state machine
+  - MED: snapshot_sends_ not cleared on step-down (stale resume); temp path without group_id (multi-raft collision); user-code RestoreStream exception rethrown out of RPC thread (std::terminate); snapshot I/O under locks (design follow-up, not fixed)
+  - LOW ×3: stale temp files never cleaned; dead offset-vs-index comparison; uint32 offset (theoretical)
+- Decision: fix HIGH + MED 1/2/4 + LOW 1/2 (user); lock-held I/O recorded as design follow-up
+- Fix: commit `531b6e2` (transfer session validation, group_id temp path + startup cleanup, clear sends on stepdown, no rethrow, dead code removal). Tests 356/356.
 
 ### ⬜ #5 Membership
 - Files: `src/membership_manager.cpp` (255)

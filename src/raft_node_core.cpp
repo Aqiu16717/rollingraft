@@ -1,4 +1,5 @@
 #include <atomic>
+#include <filesystem>
 
 #include "rollingraft/log_persister.h"
 
@@ -173,12 +174,28 @@ Status RaftNode::RaftNodeImpl::Start() {
     group_->flushed_index_ = group_->log_.LastLogIndex();
   }
 
+  // Best-effort cleanup of snapshot-receive temp files left behind by an
+  // interrupted transfer (e.g. crash mid-receive). Files are namespaced per
+  // node and group (see HandleInstallSnapshot).
+  try {
+    std::string base_dir = group_->config_.data_dir.empty() ? "/tmp" : group_->config_.data_dir;
+    std::string prefix = "rollingraft_snapshot_" + std::to_string(group_->server_id_) + "_g" +
+                         std::to_string(group_->group_id_) + "_";
+    std::error_code ec;
+    for (const auto& dir_entry : std::filesystem::directory_iterator(base_dir, ec)) {
+      if (dir_entry.path().filename().string().starts_with(prefix)) {
+        std::filesystem::remove(dir_entry.path(), ec);
+      }
+    }
+  } catch (const std::exception&) {
+    // Best-effort: ignore cleanup failures
+  }
+
   if (manage_network_) {
     // 2. Initialize network layer
     auto handler = [this](NodeId from, const std::string& req, std::string& resp) {
       HandleIncomingRpc(from, req, resp);
     };
-
     auto status = infra_->network_->Initialize(group_->config_.listen_addr, handler);
     if (!status.ok()) {
       if (persister_) {

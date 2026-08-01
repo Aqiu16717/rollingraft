@@ -485,10 +485,17 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
     // Handle snapshot chunk — write to temp file to avoid OOM on large
     // snapshots (P0 Phase 2 streaming fix).
     if (req.offset_ == 0) {
-      // New snapshot transfer: create temp file
+      // New snapshot transfer: (re)start receive state and a fresh temp file.
+      // The path includes group_id so concurrent receives in different
+      // multi-raft groups on this node never collide.
+      group_->snapshot_recv_index_ = req.last_included_index_;
+      group_->snapshot_recv_term_ = req.last_included_term_;
+      group_->snapshot_recv_expected_offset_ = 0;
+      std::string base_dir = group_->config_.data_dir.empty() ? "/tmp" : group_->config_.data_dir;
       group_->snapshot_temp_path_ =
-          "/tmp/rollingraft_snapshot_" + std::to_string(group_->server_id_) + "_" +
-          std::to_string(req.last_included_index_) + "_" + std::to_string(req.last_included_term_);
+          base_dir + "/rollingraft_snapshot_" + std::to_string(group_->server_id_) + "_g" +
+          std::to_string(group_->group_id_) + "_" + std::to_string(req.last_included_index_) + "_" +
+          std::to_string(req.last_included_term_);
       std::ofstream ofs(group_->snapshot_temp_path_, std::ios::binary | std::ios::trunc);
       if (!ofs) {
         LOG_ERROR("Node {} failed to create snapshot temp file: {}", group_->server_id_,
@@ -497,6 +504,34 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
       }
       LOG_INFO("Node {} starting snapshot receive: index={}, term={}", group_->server_id_,
                req.last_included_index_, req.last_included_term_);
+    } else {
+      // Continuation chunks must belong to the in-progress transfer and
+      // arrive at the expected offset. Anything else means two transfers
+      // interleaved (e.g. leader change mid-send); mixing their chunks would
+      // corrupt the restored state machine. Reset and drop — the leader's
+      // retry machinery will restart the transfer from offset 0.
+      if (group_->snapshot_temp_path_.empty() ||
+          req.last_included_index_ != group_->snapshot_recv_index_ ||
+          req.last_included_term_ != group_->snapshot_recv_term_ ||
+          req.offset_ != group_->snapshot_recv_expected_offset_) {
+        LOG_WARN(
+            "Node {} dropping snapshot chunk from stale transfer: idx={}/{} term={}/{} "
+            "offset={}/{}",
+            group_->server_id_, req.last_included_index_, group_->snapshot_recv_index_,
+            req.last_included_term_, group_->snapshot_recv_term_, req.offset_,
+            group_->snapshot_recv_expected_offset_);
+        if (!group_->snapshot_temp_path_.empty()) {
+          if (std::remove(group_->snapshot_temp_path_.c_str()) != 0) {
+            LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
+                     group_->snapshot_temp_path_);
+          }
+          group_->snapshot_temp_path_.clear();
+        }
+        group_->snapshot_recv_index_ = 0;
+        group_->snapshot_recv_term_ = 0;
+        group_->snapshot_recv_expected_offset_ = 0;
+        return;
+      }
     }
 
     // Append chunk to temp file
@@ -513,11 +548,16 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
         return;
       }
     }
+    group_->snapshot_recv_expected_offset_ += req.data_.size();
     LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}", group_->server_id_,
               req.offset_, req.data_.size(), req.done_);
 
     // Final chunk: restore state machine and persist
     if (req.done_) {
+      // Transfer is over on every path below — reset receive state.
+      group_->snapshot_recv_index_ = 0;
+      group_->snapshot_recv_term_ = 0;
+      group_->snapshot_recv_expected_offset_ = 0;
       try {
         // Get file size for logging
         std::ifstream ifs_size(group_->snapshot_temp_path_, std::ios::binary | std::ios::ate);
@@ -648,6 +688,8 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
             "commit_index={}",
             group_->server_id_, group_->log_.GetFirstIndex(), group_->commit_index_);
       } catch (const std::exception& e) {
+        // A throwing state machine must not crash the node: log, drop the
+        // transfer, and let the leader's retry machinery restart it.
         LOG_ERROR("Node {} exception during snapshot restore: {}", group_->server_id_, e.what());
         if (!group_->snapshot_temp_path_.empty()) {
           if (std::remove(group_->snapshot_temp_path_.c_str()) != 0) {
@@ -656,7 +698,6 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
           }
           group_->snapshot_temp_path_.clear();
         }
-        throw;  // Re-throw to preserve original behavior
       }
     }
   }

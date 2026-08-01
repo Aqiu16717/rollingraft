@@ -397,33 +397,30 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshotResponse(NodeId from,
       return;
     }
 
-    // Check if we're done
-    if (state.offset + state.last_chunk_size >= state.snapshot->GetMeta().last_included_index_) {
-      // Actually we need to track total size, not index. Let 'done' flag drive
-      // this. But we don't store total size. Use the done flag from last send.
-      // Simpler: check if last chunk was smaller than chunk size
-      if (state.last_chunk_size < kSnapshotChunkSize) {
-        // Transfer complete
-        LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}",
-                 group_->server_id_, from, state.last_included_index);
+    // Transfer completes when the last chunk was short. (For snapshots whose
+    // size is an exact multiple of the chunk size, the sender pads with one
+    // final empty chunk, so this condition always triggers.)
+    if (state.last_chunk_size < kSnapshotChunkSize) {
+      // Transfer complete
+      LOG_INFO("Node {}: snapshot send to {} completed, updating progress to {}",
+               group_->server_id_, from, state.last_included_index);
 
-        if (metrics_) {
-          auto labels = group_->metrics_node_label_;
-          labels["peer_id"] = std::to_string(from);
-          metrics_->GetCounter("raft_snapshot_sends_completed_total", labels).Increment();
-        }
-        group_->match_index_[from] = state.last_included_index;
-        group_->next_index_[from] = state.last_included_index + 1;
-        SetPeerReplicationLagMetricLocked(from);
-
-        // Clean up
-        group_->snapshot_sends_.erase(it);
-
-        // Try to commit (snapshot doesn't increase commit directly,
-        // but we may be able to commit entries after the snapshot)
-        TryCommitLocked();
-        return;
+      if (metrics_) {
+        auto labels = group_->metrics_node_label_;
+        labels["peer_id"] = std::to_string(from);
+        metrics_->GetCounter("raft_snapshot_sends_completed_total", labels).Increment();
       }
+      group_->match_index_[from] = state.last_included_index;
+      group_->next_index_[from] = state.last_included_index + 1;
+      SetPeerReplicationLagMetricLocked(from);
+
+      // Clean up
+      group_->snapshot_sends_.erase(it);
+
+      // Try to commit (snapshot doesn't increase commit directly,
+      // but we may be able to commit entries after the snapshot)
+      TryCommitLocked();
+      return;
     }
 
     // More chunks to send

@@ -203,6 +203,13 @@ class RaftGroup {
   Term last_snapshot_term_ = 0;
   std::unordered_map<NodeId, SnapshotSendState> snapshot_sends_;
   std::string snapshot_temp_path_;
+  // In-progress snapshot receive. Continuation chunks must match this
+  // (index, term) pair and arrive at the expected offset; anything else
+  // means two transfers interleaved (e.g. leader change mid-send) and is
+  // rejected so they can never mix into the same temp file.
+  Index snapshot_recv_index_ = 0;
+  Term snapshot_recv_term_ = 0;
+  uint64_t snapshot_recv_expected_offset_ = 0;
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;

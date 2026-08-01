@@ -29,6 +29,10 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   {
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
     StopSnapshotCheckTimerLocked();
+    // Aborted snapshot sends must not resume on re-election: the follower
+    // side resets receive state on any gap, and a stale in-memory snapshot
+    // may no longer match its log.
+    group_->snapshot_sends_.clear();
   }
 
   // Reset and start election timer

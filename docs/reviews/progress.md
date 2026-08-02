@@ -52,10 +52,16 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix HIGH + MED 1/2/4 + LOW 1/2 (user); lock-held I/O recorded as design follow-up
 - Fix: commit `531b6e2` (transfer session validation, group_id temp path + startup cleanup, clear sends on stepdown, no rethrow, dead code removal). Tests 356/356.
 
-### ⬜ #5 Membership
-- Files: `src/membership_manager.cpp` (255)
+### ✅ #5 Membership (done 2026-08-02)
+- Files: `src/membership_manager.cpp` (255) + cross-checks in `raft_group.cpp`, persisters
 - Focus: joint consensus phases, learner promotion, self-removal, quorum math edges
-- Findings: —
+- Findings:
+  - HIGH: cluster_config_ never persisted (only term/vote) — restart after compaction resurrects static seed membership, losing committed add/remove → wrong quorum math
+  - MED: leader stepping down mid joint-consensus could strand cluster in joint mode (nobody re-proposes FINALIZE)
+  - MED: config command parsing (stoll/json::parse) throws on the apply thread → process terminate
+- Decision: fix all three (user)
+- Fix: commit `daf7df3` (PersistentState + cluster fields, LevelDB/State persister JSON key, all SaveState paths persist full state, FINALIZE re-proposal on BecomeLeader, parse try/catch). Tests 356/356.
+- Test gap: no integration test for membership-survives-restart — worth adding.
 
 ### ⬜ #6 Apply & ReadIndex
 - Files: `src/state_machine_applier.cpp`, `src/client_session_manager.cpp` (~600)

@@ -16,6 +16,7 @@
 
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
+#include <nlohmann/json.hpp>
 
 namespace rollingraft {
 
@@ -212,6 +213,7 @@ static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
 
 // Key prefixes for different data types
 constexpr char kStateKey[] = "state";
+constexpr char kClusterConfigKey[] = "cluster_config";
 constexpr char kLogPrefix[] = "log:";
 constexpr char kSnapshotKey[] = "snapshot";
 constexpr char kSnapshotMetaKey[] = "snapshot_meta";
@@ -272,10 +274,22 @@ class LevelDBPersister : public Persister {
     std::memcpy(buffer, &state.current_term, sizeof(state.current_term));
     std::memcpy(buffer + 8, &state.voted_for, sizeof(state.voted_for));
 
+    // Cluster membership as JSON under a separate key so older state blobs
+    // without it remain readable.
+    nlohmann::json cluster_json;
+    cluster_json["nodes"] = state.cluster_nodes;
+    cluster_json["old_nodes"] = state.cluster_old_nodes;
+    cluster_json["learners"] = state.cluster_learners;
+    cluster_json["version"] = state.cluster_version;
+    cluster_json["is_joint"] = state.cluster_is_joint;
+
+    leveldb::WriteBatch batch;
+    batch.Put(kStateKey, leveldb::Slice(buffer, sizeof(buffer)));
+    batch.Put(kClusterConfigKey, cluster_json.dump());
+
     leveldb::WriteOptions write_options;
     write_options.sync = true;
-    leveldb::Slice value(buffer, sizeof(buffer));
-    leveldb::Status s = db_->Put(write_options, kStateKey, value);
+    leveldb::Status s = db_->Write(write_options, &batch);
 
     if (!s.ok()) {
       return Status::Error("Failed to save state: " + s.ToString());
@@ -732,6 +746,22 @@ class LevelDBPersister : public Persister {
       std::memcpy(&cached_state_.voted_for, value.data() + 8, sizeof(cached_state_.voted_for));
     }
     // If not found or error, use default values (0, -1)
+
+    // Cluster membership (absent in state blobs written by older versions).
+    std::string cluster_value;
+    leveldb::Status cs = db_->Get(leveldb::ReadOptions(), kClusterConfigKey, &cluster_value);
+    if (cs.ok()) {
+      try {
+        auto j = nlohmann::json::parse(cluster_value);
+        cached_state_.cluster_nodes = j.value("nodes", std::vector<NodeId>{});
+        cached_state_.cluster_old_nodes = j.value("old_nodes", std::vector<NodeId>{});
+        cached_state_.cluster_learners = j.value("learners", std::vector<NodeId>{});
+        cached_state_.cluster_version = j.value("version", uint64_t{0});
+        cached_state_.cluster_is_joint = j.value("is_joint", false);
+      } catch (const std::exception& e) {
+        LOG_WARN("Failed to parse persisted cluster config, ignoring: {}", e.what());
+      }
+    }
   }
 
   std::pair<uint64_t, uint64_t> GetLastLogInfoLocked() {

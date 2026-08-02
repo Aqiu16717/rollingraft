@@ -31,6 +31,17 @@ namespace rollingraft {
 struct PersistentState {
   Term current_term = 0;  // Latest term server has seen
   NodeId voted_for = -1;  // Candidate ID voted for in current term (-1 = none)
+
+  // Committed cluster membership (joint-consensus aware). Without this a
+  // restarted node would rebuild membership from its static seed config and
+  // lose any committed add/remove once the log is compacted past the config
+  // entries. cluster_version == 0 means "no persisted config", so fresh
+  // installs keep their seed configuration.
+  std::vector<NodeId> cluster_nodes;
+  std::vector<NodeId> cluster_old_nodes;
+  std::vector<NodeId> cluster_learners;
+  uint64_t cluster_version = 0;
+  bool cluster_is_joint = false;
 };
 
 /**

@@ -174,6 +174,14 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // Steps down on disk failure; otherwise advances flushed_index_ and retries
   // commit. Runs on the persister thread with no group locks held.
   void OnLogEntryPersisted(Index index, Status status);
+  // Build the full PersistentState (term, vote, cluster membership) from
+  // group state. Every SaveState call must persist the cluster membership
+  // too, otherwise an election-time save would wipe it.
+  // Precondition: group_->election_mtx_ held; acquires membership_mtx_ shared.
+  PersistentState CurrentPersistentStateLocked();
+  // Persist the current cluster membership (called after each applied config
+  // change). Precondition: group_->membership_mtx_ held (unique or shared).
+  void PersistClusterConfigLocked();
 
   // Utility methods
   uint64_t GetLogTermLocked(uint64_t index);

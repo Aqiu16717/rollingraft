@@ -222,7 +222,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
 
     // Persist state
     if (persister_) {
-      auto persist_status = persister_->SaveState({group_->current_term_, group_->voted_for_});
+      auto persist_status = persister_->SaveState(CurrentPersistentStateLocked());
       if (!persist_status.ok()) {
         LOG_ERROR("Node {} failed to persist vote: {}", group_->server_id_,
                   persist_status.GetMessage());

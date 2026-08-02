@@ -11,6 +11,7 @@
 
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
+#include <nlohmann/json.hpp>
 
 namespace rollingraft {
 
@@ -141,6 +142,7 @@ static void ComputeSha256(const char* data, size_t len, uint8_t* output) {
 // Key prefixes
 constexpr char kStateTermKey[] = "state:term";
 constexpr char kStateVotedForKey[] = "state:voted_for";
+constexpr char kStateClusterConfigKey[] = "state:cluster_config";
 constexpr char kSnapshotDataKey[] = "snapshot:data";
 constexpr char kSnapshotMetaKey[] = "snapshot:meta";
 constexpr char kSnapshotHashKey[] = "snapshot:hash";
@@ -203,6 +205,16 @@ Status StatePersister::SaveState(const PersistentState& state) {
                                           sizeof(state.current_term)));
   batch.Put(kStateVotedForKey, leveldb::Slice(reinterpret_cast<const char*>(&state.voted_for),
                                               sizeof(state.voted_for)));
+
+  // Cluster membership as JSON under a separate key so state written by
+  // older versions (without it) remains readable.
+  nlohmann::json cluster_json;
+  cluster_json["nodes"] = state.cluster_nodes;
+  cluster_json["old_nodes"] = state.cluster_old_nodes;
+  cluster_json["learners"] = state.cluster_learners;
+  cluster_json["version"] = state.cluster_version;
+  cluster_json["is_joint"] = state.cluster_is_joint;
+  batch.Put(kStateClusterConfigKey, cluster_json.dump());
 
   leveldb::WriteOptions write_options;
   write_options.sync = true;
@@ -552,6 +564,22 @@ void StatePersister::LoadStateFromDB() {
   s = db_->Get(leveldb::ReadOptions(), kStateVotedForKey, &voted_value);
   if (s.ok() && voted_value.size() == sizeof(NodeId)) {
     std::memcpy(&cached_state_.voted_for, voted_value.data(), sizeof(cached_state_.voted_for));
+  }
+
+  // Cluster membership (absent in state written by older versions).
+  std::string cluster_value;
+  s = db_->Get(leveldb::ReadOptions(), kStateClusterConfigKey, &cluster_value);
+  if (s.ok()) {
+    try {
+      auto j = nlohmann::json::parse(cluster_value);
+      cached_state_.cluster_nodes = j.value("nodes", std::vector<NodeId>{});
+      cached_state_.cluster_old_nodes = j.value("old_nodes", std::vector<NodeId>{});
+      cached_state_.cluster_learners = j.value("learners", std::vector<NodeId>{});
+      cached_state_.cluster_version = j.value("version", uint64_t{0});
+      cached_state_.cluster_is_joint = j.value("is_joint", false);
+    } catch (const std::exception& e) {
+      LOG_WARN("Failed to parse persisted cluster config, ignoring: {}", e.what());
+    }
   }
 }
 

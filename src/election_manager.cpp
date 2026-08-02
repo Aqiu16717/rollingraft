@@ -1,4 +1,5 @@
 #include "raft_node_impl.h"
+#include <nlohmann/json.hpp>
 
 using namespace rollingraft;
 
@@ -40,7 +41,7 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
 
   // Persist state
   if (persister_) {
-    auto persist_status = persister_->SaveState({group_->current_term_, group_->voted_for_});
+    auto persist_status = persister_->SaveState(CurrentPersistentStateLocked());
     if (!persist_status.ok()) {
       LOG_ERROR("Node {} failed to persist state when becoming Follower: {} — aborting",
                 group_->server_id_, persist_status.GetMessage());
@@ -87,7 +88,7 @@ void RaftNode::RaftNodeImpl::BecomeCandidateLocked() {
 
   // Persist state
   if (persister_) {
-    auto persist_status = persister_->SaveState({group_->current_term_, group_->voted_for_});
+    auto persist_status = persister_->SaveState(CurrentPersistentStateLocked());
     if (!persist_status.ok()) {
       LOG_ERROR("Node {} failed to persist state when becoming Candidate: {} — aborting",
                 group_->server_id_, persist_status.GetMessage());
@@ -182,6 +183,43 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   {
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
     StartSnapshotCheckTimerLocked();
+  }
+
+  // If the cluster is stuck in joint-consensus transition (the previous
+  // leader stepped down before FINALIZE committed), re-propose FINALIZE so
+  // the cluster can exit joint mode. The membership lock is taken first and
+  // released before replication_mtx_ to respect the lock hierarchy.
+  bool is_joint;
+  std::vector<NodeId> joint_nodes;
+  {
+    std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+    is_joint = group_->cluster_config_.is_joint;
+    joint_nodes = group_->cluster_config_.nodes;
+  }
+  if (is_joint) {
+    nlohmann::json j = joint_nodes;
+    std::string finalize_cmd = "CONFIG_CHANGE:FINALIZE:" + j.dump();
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    auto [idx, status] = group_->log_.Append(group_->current_term_, finalize_cmd);
+    if (status.ok()) {
+      if (log_persister_) {
+        auto entry_opt = group_->log_.GetEntry(idx);
+        if (entry_opt) {
+          log_persister_->Append(*entry_opt, [weak_self = weak_from_this(), idx](Status s) {
+            auto self = weak_self.lock();
+            if (!self) {
+              return;
+            }
+            self->OnLogEntryPersisted(idx, s);
+          });
+        }
+      } else {
+        // No persistence configured (test path) — treat as immediately flushed
+        group_->flushed_index_ = std::max(group_->flushed_index_, idx);
+      }
+      LOG_INFO("Node {} re-proposing FINALIZE at index {} to exit joint mode", group_->server_id_,
+               idx);
+    }
   }
 
   // Publish events

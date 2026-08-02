@@ -111,6 +111,17 @@ Status RaftNode::RaftNodeImpl::Start() {
     if (persister_->LoadState(state).ok()) {
       group_->current_term_ = state.current_term;
       group_->voted_for_ = state.voted_for;
+      // Restore committed cluster membership. Absent in state written by
+      // older versions (cluster_version == 0), in which case the static seed
+      // configuration from the ctor stays in effect.
+      if (state.cluster_version > 0) {
+        std::unique_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+        group_->cluster_config_.nodes = std::move(state.cluster_nodes);
+        group_->cluster_config_.old_nodes = std::move(state.cluster_old_nodes);
+        group_->cluster_config_.learners = std::move(state.cluster_learners);
+        group_->cluster_config_.version = state.cluster_version;
+        group_->cluster_config_.is_joint = state.cluster_is_joint;
+      }
       LOG_INFO("Restored state: term={}, voted_for={}", group_->current_term_, group_->voted_for_);
     }
 
@@ -917,6 +928,38 @@ Status RaftNode::RaftNodeImpl::ProposeBatch(
   TryCommitLocked();
 
   return Status::OK();
+}
+
+PersistentState RaftNode::RaftNodeImpl::CurrentPersistentStateLocked() {
+  PersistentState state;
+  state.current_term = group_->current_term_;
+  state.voted_for = group_->voted_for_;
+  std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+  state.cluster_nodes = group_->cluster_config_.nodes;
+  state.cluster_old_nodes = group_->cluster_config_.old_nodes;
+  state.cluster_learners = group_->cluster_config_.learners;
+  state.cluster_version = group_->cluster_config_.version;
+  state.cluster_is_joint = group_->cluster_config_.is_joint;
+  return state;
+}
+
+void RaftNode::RaftNodeImpl::PersistClusterConfigLocked() {
+  if (!persister_) {
+    return;
+  }
+  PersistentState state;
+  state.current_term = group_->current_term_;
+  state.voted_for = group_->voted_for_;
+  state.cluster_nodes = group_->cluster_config_.nodes;
+  state.cluster_old_nodes = group_->cluster_config_.old_nodes;
+  state.cluster_learners = group_->cluster_config_.learners;
+  state.cluster_version = group_->cluster_config_.version;
+  state.cluster_is_joint = group_->cluster_config_.is_joint;
+  auto status = persister_->SaveState(state);
+  if (!status.ok()) {
+    LOG_ERROR("Node {} failed to persist cluster config: {}", group_->server_id_,
+              status.GetMessage());
+  }
 }
 
 void RaftNode::RaftNodeImpl::OnLogEntryPersisted(Index index, Status status) {

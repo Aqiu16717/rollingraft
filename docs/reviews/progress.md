@@ -63,10 +63,19 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Fix: commit `daf7df3` (PersistentState + cluster fields, LevelDB/State persister JSON key, all SaveState paths persist full state, FINALIZE re-proposal on BecomeLeader, parse try/catch). Tests 356/356.
 - Test gap: no integration test for membership-survives-restart — worth adding.
 
-### ⬜ #6 Apply & ReadIndex
-- Files: `src/state_machine_applier.cpp`, `src/client_session_manager.cpp` (~600)
+### ✅ #6 Apply & ReadIndex (done 2026-08-02)
+- Files: `src/state_machine_applier.cpp` (410), `src/client_session_manager.cpp`
 - Focus: commit→apply pipeline, idempotent sessions, linearizable reads, known -Wthread-safety warnings
-- Findings: —
+- Findings:
+  - MED: ApplyLoop took applier_mtx_ before membership_mtx_ (hierarchy violation, deadlock cycle with ReadIndex path)
+  - MED: state_machine_->Apply exception → std::terminate
+  - MED: ReadIndex quorum checks used new-config majority only during joint consensus (3 sites)
+  - MED: config-change proposal callback invoked synchronously under locks
+  - LOW ×3 (recorded): CONFIG_CHANGE: prefix hijack (needs entry type framing), lease-read completion may pass lease expiry, ReadIndex heartbeat next_index_ underflow edge
+  - INFO: old-seq returns latest result, session eviction loses dedup
+- Decision: fix all MED (user)
+- Fix: commit `43e3bf4` (+ `a2b4232` test proxy bypass — local http_proxy caused false MetricsEndpoint failures during verification). Tests 356/356.
+- Phase 1 (consensus core) complete.
 
 ## Phase 2 — Data safety
 

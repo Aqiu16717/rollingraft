@@ -106,7 +106,10 @@ class MetricsEndpointTest : public ::testing::Test {
   }
 
   std::string FetchUrl(const std::string& addr, const std::string& path) {
-    std::string cmd = "curl -s --max-time 2 http://" + addr + path;
+    // --noproxy '*': loopback fetches must bypass any proxy from the
+    // environment (http_proxy et al.), otherwise the test hits the proxy
+    // instead of the node.
+    std::string cmd = "curl -s --noproxy '*' --max-time 2 http://" + addr + path;
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
       return "";
@@ -130,7 +133,7 @@ class MetricsEndpointTest : public ::testing::Test {
 
   std::string PostUrl(const std::string& addr, const std::string& path,
                       const std::string& body = "") {
-    std::string cmd = "curl -s --max-time 2 -X POST";
+    std::string cmd = "curl -s --noproxy '*' --max-time 2 -X POST";
     if (!body.empty()) {
       cmd += " -H 'Content-Type: application/json' -d '" + body + "'";
     }

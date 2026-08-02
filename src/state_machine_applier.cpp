@@ -41,8 +41,14 @@ void RaftNode::RaftNodeImpl::ApplyCommittedLocked() {
         ApplyResult result;
         result.success = true;
         result.applied_index = group_->last_enqueued_;
-        it->second.callback(result);
+        auto cb = std::move(it->second.callback);
         group_->pending_proposals_.erase(it);
+        // Invoke the user callback off the lock-protected path, consistent
+        // with the other proposal completion paths.
+        if (cb && timer_) {
+          timer_->SetTimeout(std::chrono::milliseconds(0),
+                             [cb = std::move(cb), result]() mutable { cb(result); });
+        }
       }
 
       // Enqueue a dummy task so the apply thread updates group_->last_applied_ in order
@@ -140,11 +146,23 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
         continue;
       }
 
-      // Apply to StateMachine
-      auto result = group_->state_machine_->Apply(
-          std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(task.data.data()),
-                                   task.data.size()),
-          task.index);
+      // Apply to StateMachine. A throwing state machine must not kill the
+      // apply thread (and with it the whole node / multi-raft store): the
+      // entry is consumed and reported as failed. State divergence caused by
+      // a throwing state machine is the application's bug either way.
+      ApplyResult result;
+      try {
+        result = group_->state_machine_->Apply(
+            std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(task.data.data()),
+                                     task.data.size()),
+            task.index);
+      } catch (const std::exception& e) {
+        LOG_ERROR("Node {} state machine threw applying entry {}: {}", group_->server_id_,
+                  task.index, e.what());
+        result.success = false;
+        result.error_message = std::string("state machine exception: ") + e.what();
+        result.applied_index = task.index;
+      }
 
       // Cache result in session manager if this was a session-based proposal
       if (task.session_id != 0 && group_->session_manager_) {
@@ -175,10 +193,11 @@ void RaftNode::RaftNodeImpl::ApplyLoop() {
     // GetLastAppliedIndex, snapshot logic) see the update.
     group_->last_applied_.store(new_last_applied, std::memory_order_release);
 
-    // Process pending reads that may now be satisfied.
+    // Process pending reads that may now be satisfied. Lock order follows the
+    // hierarchy: membership_mtx_ before applier_mtx_.
     {
-      std::lock_guard<std::mutex> lock_a(group_->applier_mtx_);
       std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+      std::lock_guard<std::mutex> lock_a(group_->applier_mtx_);
       ProcessPendingReadsLocked();
     }
 
@@ -217,7 +236,12 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     peers_to_send.push_back(peer_id);
   }
 
+  // Target enough peers to reach the election quorum. During joint consensus
+  // both configs must ack, so aim for the larger of the two majorities.
   uint32_t majority = group_->cluster_config_.GetMajority();
+  if (group_->cluster_config_.is_joint) {
+    majority = std::max(majority, group_->cluster_config_.GetOldMajority());
+  }
   // Leader counts itself as 1 ack, so we need at least majority-1 peers.
   if (peers_to_send.size() + 1 < majority && !peers_to_skip.empty()) {
     size_t needed = majority - 1 - peers_to_send.size();
@@ -317,9 +341,9 @@ void RaftNode::RaftNodeImpl::HandleReadIndexAckLocked(NodeId from, uint64_t read
     return;
   }
 
-  // Check if we have majority
-  uint32_t majority = group_->cluster_config_.GetMajority();
-  if (read_req.acks.size() >= majority) {
+  // Check if we have reached the election quorum (both configs in joint
+  // mode). Caller holds membership_mtx_, so use the lock-free check.
+  if (QuorumSatisfied(group_->cluster_config_, read_req.acks)) {
     LOG_INFO("ReadIndex {} received majority acks ({}/{})", read_id, read_req.acks.size(),
              group_->cluster_config_.nodes.size());
 
@@ -360,10 +384,11 @@ void RaftNode::RaftNodeImpl::ProcessPendingReadsLocked() {
   std::vector<uint64_t> completed_reads;
 
   for (auto& [read_id, read_req] : group_->pending_reads_) {
-    // Check if we have majority acks (or lease read) and log is applied
-    uint32_t majority = group_->cluster_config_.GetMajority();
-    bool acks_ok = read_req.heartbeats_sent ? read_req.acks.size() >= majority
-                                            : true;  // Lease read: acks already verified via quorum
+    // Check if we have the election quorum (or lease read) and log is applied.
+    // Caller holds membership_mtx_, so use the lock-free check.
+    bool acks_ok = read_req.heartbeats_sent
+                       ? QuorumSatisfied(group_->cluster_config_, read_req.acks)
+                       : true;  // Lease read: acks already verified via quorum
     if (acks_ok && group_->last_applied_.load(std::memory_order_acquire) >= read_req.read_index) {
       completed_reads.push_back(read_id);
     }

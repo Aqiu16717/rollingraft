@@ -262,22 +262,25 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
   BroadcastAppendEntriesLocked();
 }
 
-bool RaftNode::RaftNodeImpl::ElectionQuorumSatisfiedLocked(const std::set<NodeId>& voters) {
-  std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+bool RaftNode::RaftNodeImpl::QuorumSatisfied(const ClusterConfig& config,
+                                             const std::set<NodeId>& voters) {
   int new_count = 0;
   int old_count = 0;
   for (NodeId voter : voters) {
-    if (std::find(group_->cluster_config_.nodes.begin(), group_->cluster_config_.nodes.end(),
-                  voter) != group_->cluster_config_.nodes.end()) {
+    if (std::find(config.nodes.begin(), config.nodes.end(), voter) != config.nodes.end()) {
       ++new_count;
     }
-    if (std::find(group_->cluster_config_.old_nodes.begin(),
-                  group_->cluster_config_.old_nodes.end(),
-                  voter) != group_->cluster_config_.old_nodes.end()) {
+    if (std::find(config.old_nodes.begin(), config.old_nodes.end(), voter) !=
+        config.old_nodes.end()) {
       ++old_count;
     }
   }
-  return group_->cluster_config_.JointMajoritySatisfied(old_count, new_count);
+  return config.JointMajoritySatisfied(old_count, new_count);
+}
+
+bool RaftNode::RaftNodeImpl::ElectionQuorumSatisfiedLocked(const std::set<NodeId>& voters) {
+  std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+  return QuorumSatisfied(group_->cluster_config_, voters);
 }
 
 void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {

@@ -152,6 +152,9 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // the new config and, during joint consensus, also of the old config.
   // Acquires group_->membership_mtx_ (shared) internally.
   bool ElectionQuorumSatisfiedLocked(const std::set<NodeId>& voters);
+  // Lock-free core of the above; caller must already hold membership_mtx_
+  // (shared or unique). Used by paths that hold the lock (e.g. ReadIndex).
+  static bool QuorumSatisfied(const ClusterConfig& config, const std::set<NodeId>& voters);
 
   // ReadIndex related
   void BroadcastReadIndexHeartbeatsLocked(uint64_t read_id);

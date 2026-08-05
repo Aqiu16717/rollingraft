@@ -325,9 +325,12 @@ Status WALPersister::Open(const std::string& wal_dir) {
       checkpoint_covered_segment_id = 0;
     }
 
-    // Validate and scan segments. Skip segments already covered by checkpoint.
+    // Validate and scan segments. Skip only segments strictly older than the
+    // checkpoint's covered segment; the covered segment itself may have grown
+    // since the checkpoint was written (entries appended after the last Sync
+    // would otherwise be invisible after recovery), so always rescan it.
     for (uint64_t seg_id : segment_ids) {
-      if (seg_id <= checkpoint_covered_segment_id) {
+      if (seg_id < checkpoint_covered_segment_id) {
         // Header validation still needed for format_version tracking.
         int fd = -1;
         auto status = OpenSegment(seg_id, &fd);
@@ -663,8 +666,20 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
     index_.Clear();
   }
 
-  // Remove checkpoints that only cover deleted segments.
-  RemoveOldCheckpointsLocked(first_segment_to_keep);
+  // Persist the post-GC index so a later reopen does not resurrect deleted
+  // entries from a stale pre-GC checkpoint. Then drop older checkpoints: the
+  // fresh one covers recovery, and if writing it failed, a full scan of the
+  // retained segments is still correct (just slower).
+  if (!index_.Empty()) {
+    auto status = SaveCheckpointLocked();
+    if (!status.ok()) {
+      LOG_WARN("Failed to save checkpoint after WAL GC: {}", status.ToString());
+    }
+    RemoveOldCheckpointsLocked(active_segment_.id);
+  } else {
+    // Remove checkpoints that only cover deleted segments.
+    RemoveOldCheckpointsLocked(first_segment_to_keep);
+  }
 
   return Status::OK();
 }
@@ -1488,7 +1503,7 @@ bool WALPersister::ShouldCreateCheckpointLocked() const {
   std::string prefix = kCheckpointPrefix;
   std::string suffix = kCheckpointSuffix;
   for (const auto& path : files) {
-    size_t start = path.rfind('/') + prefix.size();
+    size_t start = path.rfind('/') + 1 + prefix.size();
     size_t end = path.size() - suffix.size();
     try {
       uint64_t seg_id = std::stoull(path.substr(start, end - start));

@@ -467,6 +467,57 @@ TEST_F(WALPersisterTest, CheckpointCreatedOnCloseAndUsedOnReopen) {
 }
 
 // ---------------------------------------------------------------------------
+// Test 14 (regression): entries appended after a Sync-time checkpoint must
+// survive recovery. The checkpoint covers the active (still-growing) segment,
+// so entries appended afterwards in that segment must be picked up by
+// rescanning that segment on Open.
+// ---------------------------------------------------------------------------
+TEST_F(WALPersisterTest, EntriesAfterCheckpointSurviveReopen) {
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+    // 50000 entries trigger the first checkpoint at Sync (entry threshold).
+    for (uint64_t i = 1; i <= 50000; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+    }
+    ASSERT_TRUE(wal.Sync().ok());
+
+    // 45001 more entries: segments 6-10, segment 10 partial (5001 entries).
+    // The next Sync checkpoints via the 5-segment interval, covering the
+    // PARTIAL active segment 10.
+    for (uint64_t i = 50001; i <= 95001; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+    }
+    ASSERT_TRUE(wal.Sync().ok());
+
+    // These 100 entries land in segment 10, AFTER the checkpoint that claims
+    // to cover it. Close() must not write a new checkpoint (thresholds not
+    // met), leaving the on-disk state a crash would leave.
+    for (uint64_t i = 95002; i <= 95101; ++i) {
+      ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(i, 1, "data")).ok());
+    }
+    wal.Close();
+  }
+
+  {
+    WALPersister wal;
+    ASSERT_TRUE(wal.Open(test_dir_).ok());
+
+    auto range = wal.GetLogRange();
+    EXPECT_EQ(range.first, 1);
+    EXPECT_EQ(range.second, 95101) << "entries appended after the checkpoint were lost";
+
+    // Spot-check the tail entries are readable.
+    for (uint64_t i = 95095; i <= 95101; ++i) {
+      RaftLogEntry entry;
+      ASSERT_TRUE(wal.GetEntry(i, entry).ok()) << "entry " << i << " lost after checkpoint";
+      EXPECT_EQ(entry.index_, i);
+    }
+    wal.Close();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Test 12: Corrupted checkpoint falls back to full segment scan
 // ---------------------------------------------------------------------------
 TEST_F(WALPersisterTest, CorruptedCheckpointFallsBack) {

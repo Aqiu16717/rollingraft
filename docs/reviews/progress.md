@@ -79,10 +79,18 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 
 ## Phase 2 — Data safety
 
-### ⬜ #7 WAL
+### ✅ #7 WAL (done 2026-08-05)
 - Files: `src/wal_persister.cpp` + `include/rollingraft/wal_persister.h` (~1900)
 - Focus: write path, checkpoint, corruption recovery, protobuf migration interplay
-- Findings: —
+- Findings:
+  - HIGH: Open() skipped scanning the checkpoint-covered (active) segment → entries appended after the last checkpoint were durable but invisible after crash recovery (data loss)
+  - MED: off-by-one in ShouldCreateCheckpointLocked filename parse → existing checkpoints never recognized, Sync/Close rewrote them constantly (masked the HIGH on clean shutdown)
+  - MED: stale pre-GC checkpoint resurrected deleted entries on reopen (first_index moved backwards)
+  - MED (recorded, not fixed): single corrupt record fails Open entirely instead of recovering to last valid record — robust-WAL truncation is a bigger semantic change
+  - MED perf (recorded): ReadLogEntryAt opens/closes fd per entry; read path rewrites trailer per read
+  - LOW: LoadMeta parses meta.json then discards it (dead code)
+- Decision: fix HIGH + both correctness MEDs + regression test (user)
+- Fix: commit `79c38f0`. Tests 357/357 (incl. new EntriesAfterCheckpointSurviveReopen).
 
 ### ⬜ #8 Other persisters
 - Files: `leveldb_persister.cpp`, `log_persister.cpp`, `hybrid_persister.cpp`, `state_persister.cpp`, `group_commit_controller.cpp` (~2600, may split)

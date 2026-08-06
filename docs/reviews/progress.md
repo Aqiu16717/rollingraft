@@ -92,10 +92,21 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix HIGH + both correctness MEDs + regression test (user)
 - Fix: commit `79c38f0`. Tests 357/357 (incl. new EntriesAfterCheckpointSurviveReopen).
 
-### ⬜ #8 Other persisters
-- Files: `leveldb_persister.cpp`, `log_persister.cpp`, `hybrid_persister.cpp`, `state_persister.cpp`, `group_commit_controller.cpp` (~2600, may split)
+### ✅ #8a Other persisters: leveldb + log_persister (done 2026-08-06)
+- Files: `src/leveldb_persister.cpp` (853), `src/log_persister.cpp` (677)
 - Focus: flushed_index_ semantics, batched fsync, crash consistency
-- Findings: —
+- Findings:
+  - MED: follower conflict truncation never persisted (no LogPersister::TruncateSuffix existed) → divergent entries resurrected from disk on every restart
+  - MED: LevelDB TruncateSuffix/Prefix wrote without sync → crash could resurrect truncated entries
+  - MED-LOW (recorded): DoFlush failure path fires error callbacks AND requeues entries — retried entries never update flushed_index_ (self-heals on next proposal)
+  - LOW (recorded): per-key delete loops in truncations (perf, DeleteRange candidate); hand-rolled SHA-256/CRC32 duplicates (project links OpenSSL); Sync-via-empty-batch idiom
+  - INFO: Index is uint32 (4B entry cap); WAL proto uses uint64
+- Decision: fix both MED (user)
+- Fix: commit `5498335`. Tests 357/357.
+
+### ⬜ #8b Other persisters: hybrid + state + group_commit
+- Files: `src/hybrid_persister.cpp` (269), `src/state_persister.cpp` (558), `src/group_commit_controller.cpp` (278)
+- Focus: WAL/LevelDB routing, epoch/callback FSM, sync thresholds
 
 ### ⬜ #9 Network transport
 - Files: `src/asio_network_transport.cpp` (1196)

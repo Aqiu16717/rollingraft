@@ -216,6 +216,22 @@ Status LogPersister::TruncatePrefix(uint64_t before_index) {
   return persister_->TruncatePrefix(before_index);
 }
 
+Status LogPersister::TruncateSuffix(uint64_t from_index) {
+  // Drain first: entries appended at or after from_index must reach the
+  // persister before the truncation runs, otherwise the truncation would
+  // delete them too when they flush later.
+  auto status = FlushSync(std::chrono::seconds(1));
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (!persister_) {
+    return Status::Error("Persister is null");
+  }
+
+  return persister_->TruncateSuffix(from_index);
+}
+
 void LogPersister::TruncatePrefixAsync(uint64_t before_index, TruncateCallback callback) {
   // 1. Check shutdown
   if (async_state_->shutdown.load(std::memory_order_acquire)) {

@@ -381,6 +381,15 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
         if (existing_term != 0 && existing_term != entry.term_) {
           LOG_INFO("Node {} truncating log from index {}", group_->server_id_, entry.index_);
           group_->log_.TruncateSuffix(entry.index_);
+          // Keep the durable log consistent with the in-memory one;
+          // otherwise truncated divergent entries resurrect on restart.
+          if (log_persister_) {
+            auto trunc_status = log_persister_->TruncateSuffix(entry.index_);
+            if (!trunc_status.ok()) {
+              LOG_ERROR("Node {} failed to persist log truncation from {}: {}", group_->server_id_,
+                        entry.index_, trunc_status.ToString());
+            }
+          }
           break;
         }
       }

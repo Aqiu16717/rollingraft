@@ -417,7 +417,11 @@ class LevelDBPersister : public Persister {
       batch.Delete(MakeLogKey(i));
     }
 
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    // Truncations are rare and must be durable: a resurrected suffix after a
+    // crash could bring back divergent entries the cluster already replaced.
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to truncate suffix: " + s.ToString());
     }
@@ -443,7 +447,10 @@ class LevelDBPersister : public Persister {
       batch.Delete(MakeLogKey(i));
     }
 
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    // Durable for the same reason as TruncateSuffix.
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to truncate prefix: " + s.ToString());
     }

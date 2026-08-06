@@ -212,6 +212,20 @@ class LogPersister {
    */
   Status TruncatePrefix(uint64_t before_index);
 
+  /**
+   * Delete persisted log entries from the given index onwards.
+   *
+   * Drains the write buffer first so the truncation cannot delete entries
+   * that were appended after from_index but not yet flushed. Used on the
+   * follower conflict path to keep the durable log consistent with the
+   * in-memory one; without it, truncated divergent entries would resurrect
+   * on restart.
+   *
+   * @param from_index Delete entries with index >= from_index
+   * @return Status::OK() on success
+   */
+  Status TruncateSuffix(uint64_t from_index);
+
   /** Callback type invoked when async truncation completes. */
   using TruncateCallback = std::function<void(Status)>;
 

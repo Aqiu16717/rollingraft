@@ -104,9 +104,14 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix both MED (user)
 - Fix: commit `5498335`. Tests 357/357.
 
-### ⬜ #8b Other persisters: hybrid + state + group_commit
+### ✅ #8b Other persisters: hybrid + state + group_commit (done 2026-08-06)
 - Files: `src/hybrid_persister.cpp` (269), `src/state_persister.cpp` (558), `src/group_commit_controller.cpp` (278)
 - Focus: WAL/LevelDB routing, epoch/callback FSM, sync thresholds
+- Findings:
+  - MED: snapshot saves in StatePersister/LevelDBPersister wrote with sync=false — crash could lose a snapshot after log compaction past it
+  - Confirmed safe: group commit FSM (epoch ordering, callback firing outside locks, Stop drain), hybrid WAL buffer ordering for truncations, SetSyncOnWrite routing
+- Decision: fix snapshot durability (user)
+- Fix: commit `eec7822` (final commit batches sync=true; chunk writes covered via ordered WAL). Tests 357/357.
 
 ### ⬜ #9 Network transport
 - Files: `src/asio_network_transport.cpp` (1196)

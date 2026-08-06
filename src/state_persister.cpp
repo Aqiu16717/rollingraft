@@ -259,7 +259,11 @@ Status StatePersister::SaveSnapshot(const std::string& snapshot_data, uint64_t l
 
   batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
-  leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+  // Snapshots are rare; the sync write also covers the chunk writes above
+  // (LevelDB's WAL is append-only and ordered).
+  leveldb::WriteOptions write_options;
+  write_options.sync = true;
+  leveldb::Status s = db_->Write(write_options, &batch);
   if (!s.ok()) {
     return Status::Error("Failed to save snapshot: " + s.ToString());
   }
@@ -356,7 +360,9 @@ Status StatePersister::SaveSnapshotStream(
     // snapshot so that HasSnapshot() returns false.
     leveldb::WriteBatch batch;
     DeleteSnapshotDataLocked(&batch);
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to clear old snapshot: " + s.ToString());
     }
@@ -397,7 +403,10 @@ Status StatePersister::SaveSnapshotStream(
     batch.Delete(tmp_key);
   }
 
-  leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+  // The sync write makes the temp chunks durable too (ordered WAL).
+  leveldb::WriteOptions write_options;
+  write_options.sync = true;
+  leveldb::Status s = db_->Write(write_options, &batch);
   if (!s.ok()) {
     // The batch did not commit; old snapshot keys are unchanged. Clean up
     // temp keys so they do not accumulate.

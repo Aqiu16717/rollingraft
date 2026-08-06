@@ -504,7 +504,11 @@ class LevelDBPersister : public Persister {
     // Save SHA-256 hash
     batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    // Snapshots are rare; make them durable (a sync write also covers all
+    // earlier unsynced writes in LevelDB's ordered WAL).
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to save snapshot: " + s.ToString());
     }
@@ -618,7 +622,10 @@ class LevelDBPersister : public Persister {
     batch.Put(kSnapshotMetaKey, leveldb::Slice(meta, sizeof(meta)));
     batch.Put(kSnapshotHashKey, leveldb::Slice(reinterpret_cast<const char*>(hash), 32));
 
-    leveldb::Status s = db_->Write(leveldb::WriteOptions(), &batch);
+    // Sync write: covers the chunk writes above as well.
+    leveldb::WriteOptions write_options;
+    write_options.sync = true;
+    leveldb::Status s = db_->Write(write_options, &batch);
     if (!s.ok()) {
       return Status::Error("Failed to save snapshot metadata: " + s.ToString());
     }

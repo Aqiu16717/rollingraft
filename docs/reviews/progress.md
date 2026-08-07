@@ -135,10 +135,13 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
   - LOW (recorded): redundant double-JSON-parse in HandleIncomingRpc; SerializeEntries drops command_/checksum_ fields; IntToMessageType rejects via switch-default rather than explicit validation
 - Decision: no fixes needed (user). Tests 357/357.
 
-### ⬜ #11 Multi-raft
-- Files: `src/raft_store.cpp`, `src/multi_raft_persister.cpp`, `src/shared_node_infra.h` (~700)
-- Focus: shared-resource boundaries, RemoveGroup (UAF fixed 2026-07-30), tick distribution
-- Findings: —
+### ✅ #11 Multi-raft (done 2026-08-07)
+- Files: `src/raft_store.cpp` (299), `src/multi_raft_persister.cpp` (125), `src/shared_node_infra.h` (34)
+- Focus: shared-resource boundaries, RemoveGroup, tick distribution
+- Findings:
+  - Confirmed safe: shared tick lock protocol, OnIncomingRpc shared_ptr keep-alive, CreateGroup idempotency, MultiRaftPersister forward-delegate + cached-settings pattern, group-isolated persist subdirs
+  - LOW (recorded): MultiRaftPersister delegate methods lack inner_ null guard — safe only because call order guarantees Open before use
+- Decision: no fixes needed (user).
 
 ### ⬜ #12 Client + metrics/events
 - Files: `src/client.cpp`, `src/client/`, `src/metrics_http_server.cpp`, `src/event.cpp`, `src/sse_connection.cpp` (~1800)

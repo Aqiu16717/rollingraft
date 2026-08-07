@@ -143,10 +143,19 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
   - LOW (recorded): MultiRaftPersister delegate methods lack inner_ null guard — safe only because call order guarantees Open before use
 - Decision: no fixes needed (user).
 
-### ⬜ #12 Client + metrics/events
-- Files: `src/client.cpp`, `src/client/`, `src/metrics_http_server.cpp`, `src/event.cpp`, `src/sse_connection.cpp` (~1800)
+### ✅ #12 Client + metrics/events (done 2026-08-07)
+- Files: `src/client.cpp` (372), `src/client/`, `src/metrics_http_server.cpp`, `src/event.cpp`, `src/sse_connection.cpp`
 - Focus: retry/backoff, pooling, SSE lifecycle, admin endpoint auth
-- Findings: —
+- Findings:
+  - MED: redirect hint from NotLeader response discarded immediately (line 217 ClearLeader nuked the UpdateLeader at line 270) — leader discovery degraded to full round-robin every retry
+  - Confirmed safe: SSE write serialization, EventBus handler-copy-outside-lock, worker thread drain, timing-safe admin token comparison
+  - LOW (recorded): stoi unguarded in MetricsHttpServer::Start; FormatPrometheus histogram label slicing
+- Decision: fix MED (user)
+- Fix: commit `6bf20ed`. Tests 357/357.
+
+---
+
+## Review complete — all 12 modules ✅
 
 ---
 

@@ -212,9 +212,13 @@ ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
         auto& status = result.error();
 
         if (status.IsNotLeader()) {
-          // Try to extract leader address from error or response
-          // For now, clear cache and let next attempt find it
-          leader_tracker_.ClearLeader();
+          // TryExecuteOnServer may have already seeded the leader tracker
+          // from the redirect hint on the response. Only clear the cache
+          // when no hint was provided — otherwise the hint is the best
+          // information we have and the next attempt will use it.
+          if (!leader_tracker_.GetLeader().has_value()) {
+            leader_tracker_.ClearLeader();
+          }
         }
 
         if (!RetryPolicy::IsRetryableError(status)) {

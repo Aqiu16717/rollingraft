@@ -204,51 +204,17 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       // failure) or explicit Close().
     });
 
-    if (batching_enabled_) {
-      // Queue message for coalesced write. Must post to TcpConnection's
-      // own strand_ because Send() may be called from PeerConnection's strand.
-      asio::post(strand_, [self = shared_from_this(), msg, correlation_id]() {
-        self->write_queue_.push_back({msg, correlation_id});
-        if (!self->write_in_progress_) {
-          self->write_in_progress_ = true;
-          self->DoWrite();
-        }
-      });
-    } else {
-      // Batching disabled: direct async_write per message. Avoids strand
-      // queue accumulation under extreme concurrency.
-      auto write_handler = [self = shared_from_this(), correlation_id, msg](std::error_code ec,
-                                                                            std::size_t) {
-        if (ec) {
-          RpcResponseCallback cb;
-          std::shared_ptr<asio::steady_timer> timer;
-          {
-            std::lock_guard<std::mutex> lock(self->mutex_);
-            auto it = self->pending_callbacks_.find(correlation_id);
-            if (it != self->pending_callbacks_.end()) {
-              cb = std::move(it->second.callback);
-              timer = std::move(it->second.timer);
-              self->pending_callbacks_.erase(it);
-            }
-          }
-          if (timer) {
-            timer->cancel();
-          }
-          if (cb) {
-            cb("", false, "Send failed: " + ec.message());
-          }
-          self->connected_.store(false, std::memory_order_release);
-        }
-      };
-
-      if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
-        asio::async_write(std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
-                          asio::bind_executor(strand_, write_handler));
-      } else {
-        asio::async_write(std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
-                          asio::buffer(*msg), asio::bind_executor(strand_, write_handler));
+    // All writes go through write_queue_ so there is at most one async_write
+    // outstanding on this socket at any time. Two concurrent async_writes on
+    // one socket can interleave bytes on the wire. The batching toggle only
+    // controls whether DoWrite coalesces queued messages into one syscall.
+    asio::post(strand_, [self = shared_from_this(), msg, correlation_id]() {
+      self->write_queue_.push_back({msg, correlation_id});
+      if (!self->write_in_progress_) {
+        self->write_in_progress_ = true;
+        self->DoWrite();
       }
-    }
+    });
   }
 
   void DoWrite() {
@@ -257,21 +223,30 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       return;
     }
 
-    // Concatenate all pending messages into a single buffer for atomic write.
-    // This avoids any issues with multi-buffer async_write implementations.
+    // With batching enabled, concatenate all pending messages into a single
+    // buffer for one atomic write. With batching disabled, send exactly one
+    // message per async_write — still serialized through the queue, so no
+    // two write operations are ever outstanding on this socket.
     std::vector<uint64_t> correlation_ids;
-    size_t total_size = 0;
-    for (const auto& entry : write_queue_) {
-      total_size += entry.msg->size();
+    std::shared_ptr<std::string> batch_msg;
+    if (batching_enabled_) {
+      batch_msg = std::make_shared<std::string>();
+      size_t total_size = 0;
+      for (const auto& entry : write_queue_) {
+        total_size += entry.msg->size();
+        correlation_ids.push_back(entry.correlation_id);
+      }
+      batch_msg->reserve(total_size);
+      for (const auto& entry : write_queue_) {
+        batch_msg->append(*entry.msg);
+      }
+      write_queue_.clear();
+    } else {
+      auto entry = std::move(write_queue_.front());
+      write_queue_.pop_front();
       correlation_ids.push_back(entry.correlation_id);
+      batch_msg = std::move(entry.msg);
     }
-
-    auto batch_msg = std::make_shared<std::string>();
-    batch_msg->reserve(total_size);
-    for (auto& entry : write_queue_) {
-      batch_msg->append(*entry.msg);
-    }
-    write_queue_.clear();
 
     auto self = shared_from_this();
     auto write_handler = [self, correlation_ids, batch_msg](std::error_code ec, std::size_t) {
@@ -413,7 +388,10 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         }
       }
 
-      // Send response
+      // Send response through the same write queue as outbound sends: at most
+      // one async_write may be outstanding on this socket at a time, or bytes
+      // from consecutive responses can interleave when the client pipelines
+      // requests. correlation_id 0 never matches a pending callback.
       uint32_t length = static_cast<uint32_t>(response.size());
       char header[4];
       header[0] = static_cast<char>((length >> 24) & 0xFF);
@@ -425,19 +403,13 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       auto msg = std::make_shared<std::string>(header, 4);
       msg->append(response);
 
-      auto write_handler = [self, msg](std::error_code ec, std::size_t) {
-        if (ec) {
-          LOG_ERROR("Write response error: {}", ec.message());
+      asio::post(strand_, [self, msg]() {
+        self->write_queue_.push_back({msg, /*correlation_id=*/0});
+        if (!self->write_in_progress_) {
+          self->write_in_progress_ = true;
+          self->DoWrite();
         }
-      };
-
-      if (std::holds_alternative<asio::ip::tcp::socket>(socket_)) {
-        asio::async_write(std::get<asio::ip::tcp::socket>(socket_), asio::buffer(*msg),
-                          asio::bind_executor(strand_, write_handler));
-      } else {
-        asio::async_write(std::get<asio::ssl::stream<asio::ip::tcp::socket>>(socket_),
-                          asio::buffer(*msg), asio::bind_executor(strand_, write_handler));
-      }
+      });
     } else {
       // This is a client connection, handle response by correlation_id
       auto callback = ExtractCallbackLocked(body_buffer_);
@@ -526,15 +498,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       }
     }
 
-    // Fallback: if no correlation_id match, return any pending callback
+    // No fallback: a response that matches no pending correlation_id is
+    // dropped. Handing it to an arbitrary pending callback could pair the
+    // response with a different RPC type and corrupt the caller's state.
     if (!pending_callbacks_.empty()) {
-      auto it = pending_callbacks_.begin();
-      auto cb = std::move(it->second.callback);
-      if (it->second.timer) {
-        it->second.timer->cancel();
-      }
-      pending_callbacks_.erase(it);
-      return cb;
+      LOG_WARN("Dropping unmatched response (correlation_id={}), {} pending", correlation_id,
+               pending_callbacks_.size());
     }
 
     return nullptr;
@@ -867,7 +836,12 @@ class AsioNetworkTransport : public NetworkTransport {
     }
 
     std::string host = listen_addr.substr(0, pos);
-    uint16_t port = static_cast<uint16_t>(std::stoi(listen_addr.substr(pos + 1)));
+    uint16_t port = 0;
+    try {
+      port = static_cast<uint16_t>(std::stoi(listen_addr.substr(pos + 1)));
+    } catch (const std::exception&) {
+      return Status::Error("Invalid port in address: " + listen_addr);
+    }
 
     try {
       asio::ip::tcp::endpoint endpoint(asio::ip::make_address(host), port);

@@ -127,10 +127,13 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 
 ## Phase 3 — Infrastructure
 
-### ⬜ #10 RPC protocol & dispatch
+### ✅ #10 RPC protocol & dispatch (done 2026-08-07)
 - Files: `src/rpc_handlers.cpp`, `src/json_protocol.cpp`, `include/rollingraft/rpc.h` (~1500)
 - Focus: deserialization robustness (malformed input), group_id routing
-- Findings: —
+- Findings:
+  - Confirmed safe: all deserialization paths fully try/caught, required-field checks, correlation_id/group_id round-trip, lock lifecycle in HandleClientRequest correct
+  - LOW (recorded): redundant double-JSON-parse in HandleIncomingRpc; SerializeEntries drops command_/checksum_ fields; IntToMessageType rejects via switch-default rather than explicit validation
+- Decision: no fixes needed (user). Tests 357/357.
 
 ### ⬜ #11 Multi-raft
 - Files: `src/raft_store.cpp`, `src/multi_raft_persister.cpp`, `src/shared_node_infra.h` (~700)

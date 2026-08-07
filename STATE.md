@@ -17,10 +17,9 @@ Last run: 2026-08-06 (manual, report-only)
 
 ## High Priority (loop is acting or waiting on human)
 
-- **Local main is 2 commits ahead of origin, unpushed** — includes `5498335 fix(persister): persist follower conflict truncation`, a correctness fix with no CI coverage yet.
-  Why: persistence correctness fix sitting unverified by the CI matrix (incl. sanitizers + Docker suite).
-  Next action: human pushes (constraint: loop never pushes). Effort: 1 min.
-  Loop-pause-all: not active.
+- (none — 2026-08-06: unpushed persister fix `5498335` was pushed and passed full CI)
+
+Loop-pause-all: not active.
 
 ## Watch List
 

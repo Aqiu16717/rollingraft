@@ -113,10 +113,17 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 - Decision: fix snapshot durability (user)
 - Fix: commit `eec7822` (final commit batches sync=true; chunk writes covered via ordered WAL). Tests 357/357.
 
-### ⬜ #9 Network transport
+### ✅ #9 Network transport (done 2026-08-07)
 - Files: `src/asio_network_transport.cpp` (1196)
-- Focus: connection pool lifecycle, strands, callback timing (inline-callback bug fixed 2026-07-30), TLS path
-- Findings: —
+- Focus: connection pool lifecycle, strands, callback timing, TLS path
+- Findings:
+  - MED: non-batching Send path could interleave bytes (two outstanding async_writes per socket)
+  - MED: server responses bypassed the write queue — same interleave risk under pipelined RPCs (default config!)
+  - MED: correlation_id fallback completed an arbitrary pending RPC with a mismatched response
+  - LOW: std::stoi in Initialize outside try/catch
+  - INFO (recorded): inbound raft handlers run synchronously on io threads — slow handler (ReadIndex forward, TruncateSuffix flush) blocks all connections on that thread; PeerConnection ctor stoi unguarded
+- Decision: fix all (user)
+- Fix: commit `59a1887` (unified write queue for all socket writes, batching toggle = coalescing only; fallback dropped; port parse guarded). Tests 357/357.
 
 ## Phase 3 — Infrastructure
 

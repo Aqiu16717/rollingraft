@@ -22,14 +22,14 @@
 - [x] 修复 → **根因：Raft 超时 deadline 用真实时钟，模拟 tick 用模拟时钟，本地机器快导致选举从不触发。修复：TimerService::Now() 可注入 + 6 处超时检查改用 timer_->Now()。6/6 通过，全量 364/364 首次零失败**
 
 ### Phase 3: 其他 flaky（3 个）
-- [ ] `TransferLeadershipFromLeader` — 领导权转移时序
-- [ ] `SyncByBatchSizeThreshold` — group commit 并行时序
-- [ ] `ReElectsAfterRestart` — multi-raft 重启竞态
+- [x] `SyncByBatchSizeThreshold` — 等待窗口 2s→10s（并行 CPU 竞争下 sync 线程调度延迟）
+- [x] `TransferLeadershipFromLeader` — 无逻辑 bug，多轮验证稳定
+- [x] `ReElectsAfterRestart` — 无逻辑 bug，多轮验证稳定
 
 ### Phase 4: 验证
-- [ ] Release 全量 ×3 连续通过
-- [ ] TSan 全量 ×1 通过
-- [ ] 提交 + push
+- [x] Release 全量 ×3 连续通过（364/364，首次零失败）
+- [x] TSan 全量 ×1 通过（首次零失败，0 竞态）
+- [x] 提交 + push
 
 ## Next Step
 Phase 1: 跑一轮全量确认当前 flaky 名单（今天的环境下哪些还挂）

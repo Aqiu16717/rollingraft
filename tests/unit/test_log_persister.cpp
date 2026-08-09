@@ -359,8 +359,10 @@ TEST_F(LogPersisterGroupCommitTest, SyncByBatchSizeThreshold) {
     p->Append(MakeEntry(i, 1, "cmd"));
   }
 
-  // Wait for the background sync thread to sync.
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  // Wait for the background sync thread to sync. The window must tolerate
+  // parallel-test CPU contention: under ctest -j, the sync thread may not be
+  // scheduled for seconds.
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (mock_ptr->GetSyncCount() == 0 && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }

@@ -10,8 +10,7 @@ void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked(uint32_t interval_ms) {
     auto cfg = infra_->runtime_config_->Get();
     interval = cfg.heartbeat_interval_ms;
   }
-  group_->heartbeat_deadline_ =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(interval);
+  group_->heartbeat_deadline_ = timer_->Now() + std::chrono::milliseconds(interval);
   group_->heartbeat_timer_enabled_ = true;
 }
 
@@ -24,8 +23,7 @@ void RaftNode::RaftNodeImpl::CheckHeartbeatTimeoutLocked() {
   std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
   std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
 
-  if (!group_->heartbeat_timer_enabled_ ||
-      std::chrono::steady_clock::now() < group_->heartbeat_deadline_) {
+  if (!group_->heartbeat_timer_enabled_ || timer_->Now() < group_->heartbeat_deadline_) {
     return;
   }
 

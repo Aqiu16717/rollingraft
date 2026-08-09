@@ -38,6 +38,19 @@ class TimerService {
   // ==================== Lifecycle ====================
 
   /**
+   * Current time as seen by this timer service.
+   *
+   * Defaults to the real wall clock. Simulated timer services (deterministic
+   * tests) override this so that Raft timeout deadlines advance with the
+   * simulated clock; without it, tick callbacks fire on simulated time while
+   * deadline comparisons run on real time, and elections never trigger on
+   * fast machines.
+   */
+  virtual std::chrono::steady_clock::time_point Now() const {
+    return std::chrono::steady_clock::now();
+  }
+
+  /**
    * Start the timer service.
    *
    * Must be called before using any timer methods.

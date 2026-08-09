@@ -302,8 +302,9 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
 
   uint32_t timeout = dis(gen);
 
-  group_->election_deadline_ =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+  // Use the timer service's clock so simulated tests advance deadlines with
+  // the simulated clock (real steady_clock would never fire on fast machines).
+  group_->election_deadline_ = timer_->Now() + std::chrono::milliseconds(timeout);
   group_->election_timer_enabled_ = true;
 
   LOG_DEBUG("Node {} election timer reset to {}ms", group_->server_id_, timeout);
@@ -322,8 +323,7 @@ void RaftNode::RaftNodeImpl::OnStoreTick() {
   // checks are evaluated under their respective manager locks.
   {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-    if (group_->election_timer_enabled_ &&
-        std::chrono::steady_clock::now() >= group_->election_deadline_) {
+    if (group_->election_timer_enabled_ && timer_->Now() >= group_->election_deadline_) {
       OnElectionTimeoutLocked();
     }
   }

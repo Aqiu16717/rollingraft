@@ -9,6 +9,15 @@ SimulatedTimerService::SimulatedTimerService(SimulatedClock* clock)
   state_->clock = clock;
 }
 
+std::chrono::steady_clock::time_point SimulatedTimerService::Now() const {
+  if (!state_ || !state_->clock) {
+    return std::chrono::steady_clock::now();
+  }
+  // Map the simulated ms clock onto steady_clock's epoch; only the difference
+  // between Now() calls matters, so any consistent origin works.
+  return std::chrono::steady_clock::time_point(std::chrono::milliseconds(state_->clock->Now()));
+}
+
 void SimulatedTimerService::Stop() {
   if (!state_) {
     return;

@@ -19,6 +19,10 @@ class SimulatedTimerService : public TimerService {
   void Start() override {}
   void Stop() override;
 
+  // Report the simulated clock as a steady_clock::time_point so Raft timeout
+  // deadlines advance deterministically with the test clock.
+  std::chrono::steady_clock::time_point Now() const override;
+
   TimerId SetTimeout(std::chrono::milliseconds delay, std::function<void()> callback) override;
   TimerId SetInterval(std::chrono::milliseconds interval, std::function<void()> callback) override;
   bool CancelTimer(TimerId id) override;

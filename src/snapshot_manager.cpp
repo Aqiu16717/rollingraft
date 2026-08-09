@@ -12,7 +12,7 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
 
   auto cfg = infra_->runtime_config_->Get();
   group_->snapshot_check_deadline_ =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
+      timer_->Now() + std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
   group_->snapshot_check_timer_enabled_ = true;
 
   LOG_INFO("Node {} started auto-snapshot check (every {}ms)", group_->server_id_,
@@ -28,7 +28,7 @@ void RaftNode::RaftNodeImpl::CheckSnapshotTimeoutLocked() {
   {
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
     if (!group_->snapshot_check_timer_enabled_ ||
-        std::chrono::steady_clock::now() < group_->snapshot_check_deadline_) {
+        timer_->Now() < group_->snapshot_check_deadline_) {
       return;
     }
 

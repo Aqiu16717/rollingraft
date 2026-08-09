@@ -332,14 +332,19 @@ TEST_F(WALPersisterTest, CorruptionDetection) {
     }
   }
 
-  // Reopen should detect corruption during scan
+  // Reopen must recover: the segment is truncated at the corrupt record and
+  // Open succeeds. The corrupted bytes are gone, so a second Open is clean.
   {
     WALPersister wal;
     auto status = wal.Open(test_dir_);
-    // We expect either OK (if corruption is after valid data) or Corruption
-    if (!status.ok()) {
-      EXPECT_TRUE(status.IsCorruption());
-    }
+    EXPECT_TRUE(status.ok()) << "Open should recover by truncating corruption: "
+                             << status.ToString();
+    wal.Close();
+  }
+  {
+    WALPersister wal;
+    auto status = wal.Open(test_dir_);
+    EXPECT_TRUE(status.ok()) << "Second Open after truncation should be clean";
     wal.Close();
   }
 }

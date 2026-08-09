@@ -27,6 +27,10 @@ void SerializeEntries(nlohmann::json& j, const std::vector<RaftLogEntry>& entrie
     entry_json["index"] = entry.index_;
     entry_json["term"] = entry.term_;
     entry_json["data"] = entry.data_;
+    // command_ and checksum_ were silently dropped before; round-trip them
+    // now (older peers that omit them still deserialize fine).
+    entry_json["command"] = entry.command_;
+    entry_json["checksum"] = entry.checksum_;
     j["entries"].push_back(entry_json);
   }
 }
@@ -47,6 +51,13 @@ Status DeserializeEntries(const nlohmann::json& j, std::vector<RaftLogEntry>& en
     entry.term_ = entry_json["term"];
     if (entry_json.contains("data")) {
       entry.data_ = entry_json["data"];
+    }
+    // Optional for backward compatibility with peers that predate these fields.
+    if (entry_json.contains("command")) {
+      entry.command_ = entry_json["command"];
+    }
+    if (entry_json.contains("checksum")) {
+      entry.checksum_ = entry_json["checksum"];
     }
     entries.push_back(entry);
   }

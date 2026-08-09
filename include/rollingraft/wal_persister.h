@@ -265,7 +265,11 @@ class WALPersister {
   Status WriteRecord(int fd, WALRecordType type, const std::string& payload, uint64_t* out_offset);
   Status WriteTrailer(int fd, uint64_t end_offset);
   Status ReadTrailer(int fd, uint64_t* end_offset);
-  Status ScanSegment(uint64_t segment_id, const std::function<bool(const WALRecord&)>& callback);
+  Status ScanSegment(uint64_t segment_id, const std::function<bool(const WALRecord&)>& callback,
+                     uint64_t* out_truncate_offset = nullptr);
+  // Physically truncate a segment file at the given offset and rewrite its
+  // trailer (corruption recovery).
+  Status TruncateSegmentFile(uint64_t segment_id, uint64_t truncate_offset);
   Status RotateSegmentIfNeeded();
   Status LoadMeta();
   Status SaveMeta();

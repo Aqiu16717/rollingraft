@@ -352,11 +352,23 @@ Status WALPersister::Open(const std::string& wal_dir) {
         return status;
       }
 
-      // Scan the segment to rebuild index
+      // Scan the segment to rebuild index. A corrupt record truncates the
+      // segment at that point (partial write / crash tail): recover instead
+      // of failing the whole Open. Raft logs are rebuilt from the leader, so
+      // dropping the tail is safe. Entries before the corrupt record remain.
       close(fd);
-      auto scan_status = ScanSegment(seg_id, nullptr);
+      uint64_t truncate_offset = 0;
+      auto scan_status = ScanSegment(seg_id, nullptr, &truncate_offset);
       if (!scan_status.ok()) {
-        return scan_status;
+        if (truncate_offset > 0) {
+          auto trunc_status = TruncateSegmentFile(seg_id, truncate_offset);
+          if (!trunc_status.ok()) {
+            LOG_ERROR("Failed to truncate corrupt segment {}: {}", seg_id, trunc_status.ToString());
+            return trunc_status;
+          }
+        } else {
+          return scan_status;
+        }
       }
     }
 
@@ -1059,24 +1071,29 @@ Status WALPersister::ReadTrailer(int fd, uint64_t* end_offset) {
 }
 
 Status WALPersister::ScanSegment(uint64_t segment_id,
-                                 const std::function<bool(const WALRecord&)>& callback) {
+                                 const std::function<bool(const WALRecord&)>& callback,
+                                 uint64_t* out_truncate_offset) {
   int fd = -1;
   auto status = OpenSegment(segment_id, &fd);
   if (!status.ok()) {
     return status;
   }
 
-  // Get end offset from trailer
+  // Get end offset from trailer. If the trailer is missing or invalid (crash
+  // before it was written), fall back to the physical file size and let the
+  // record scan below find the corruption point.
   uint64_t end_offset = 0;
   status = ReadTrailer(fd, &end_offset);
   if (!status.ok()) {
-    // If segment is empty (just header), treat as OK
     off_t file_size = lseek(fd, 0, SEEK_END);
-    close(fd);
-    if (file_size == static_cast<off_t>(kHeaderSize)) {
+    if (file_size <= static_cast<off_t>(kHeaderSize)) {
+      // Empty segment (just header): nothing to scan.
+      close(fd);
       return Status::OK();
     }
-    return status;
+    end_offset = static_cast<uint64_t>(file_size);
+    LOG_WARN("Segment {} has no valid trailer (size {}), scanning to physical end", segment_id,
+             file_size);
   }
 
   // Determine format version for this segment
@@ -1093,29 +1110,44 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
   while (current_offset < end_offset) {
     uint32_t crc;
     if (read(fd, &crc, sizeof(crc)) != sizeof(crc)) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
-      return Status::Error("Failed to read CRC");
+      return Status::Corruption("Failed to read CRC (truncated tail)");
     }
 
     uint32_t length;
     if (read(fd, &length, sizeof(length)) != sizeof(length)) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
-      return Status::Error("Failed to read length");
+      return Status::Corruption("Failed to read length (truncated tail)");
     }
 
     uint16_t type_val;
     if (read(fd, &type_val, sizeof(type_val)) != sizeof(type_val)) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
-      return Status::Error("Failed to read type");
+      return Status::Corruption("Failed to read type (truncated tail)");
     }
 
     uint64_t record_total_len = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + length;
     if (current_offset + record_total_len > end_offset) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
       return Status::Corruption("Record extends beyond segment end");
     }
 
     if (length > kMaxRecordSize) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
       return Status::Corruption("Record too large");
     }
@@ -1124,6 +1156,9 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
     if (length > 0) {
       payload.resize(length);
       if (read(fd, payload.data(), length) != static_cast<ssize_t>(length)) {
+        if (out_truncate_offset) {
+          *out_truncate_offset = current_offset;
+        }
         close(fd);
         return Status::Corruption("Failed to read payload");
       }
@@ -1138,6 +1173,9 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
 
     uint32_t computed_crc = ComputeCRC32(crc_data);
     if (computed_crc != crc) {
+      if (out_truncate_offset) {
+        *out_truncate_offset = current_offset;
+      }
       close(fd);
       return Status::Corruption("CRC mismatch in segment " + std::to_string(segment_id));
     }
@@ -1345,6 +1383,41 @@ Status WALPersister::SaveMeta() {
   fs << j.dump(2);
   fs.close();
 
+  return Status::OK();
+}
+
+// ==================== Corruption recovery ====================
+
+// Physically truncate a segment file at the given offset and rewrite its
+// trailer. Used to recover from a partially-written/corrupt tail: entries
+// after the cut point are dropped (safe — Raft logs are rebuilt from the
+// leader), and subsequent Open/Replay runs no longer trip on the same bytes.
+Status WALPersister::TruncateSegmentFile(uint64_t segment_id, uint64_t truncate_offset) {
+  std::string path = wal_dir_ + "/" + std::to_string(segment_id) + ".wal";
+  int fd = open(path.c_str(), O_RDWR, 0644);
+  if (fd < 0) {
+    return Status::Error("Failed to open segment for truncation: " + path);
+  }
+
+  // Align the cut to a record boundary: the corrupt record itself is at
+  // truncate_offset; everything from there on is dropped.
+  if (ftruncate(fd, static_cast<off_t>(truncate_offset)) != 0) {
+    close(fd);
+    return Status::Error("Failed to truncate segment: " + path);
+  }
+  // Seek to the cut point before writing the trailer — the fd position is at
+  // 0 after open(), and writing there would clobber the segment header.
+  if (lseek(fd, static_cast<off_t>(truncate_offset), SEEK_SET) < 0) {
+    close(fd);
+    return Status::Error("Failed to seek in segment for truncation: " + path);
+  }
+  auto status = WriteTrailer(fd, truncate_offset);
+  close(fd);
+  if (!status.ok()) {
+    return status;
+  }
+  LOG_WARN("WAL segment {} truncated at offset {} after corrupt record", segment_id,
+           truncate_offset);
   return Status::OK();
 }
 

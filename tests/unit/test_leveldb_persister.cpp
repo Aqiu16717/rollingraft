@@ -160,10 +160,18 @@ TEST_F(LevelDBPersisterTest, DetectsCorruptedData) {
     }
   }
 
-  // Reopen should detect WAL corruption during segment scan
+  // Reopen detects the WAL corruption and recovers by truncating the segment
+  // at the corrupt record (Raft logs are rebuilt from the leader). Entries
+  // before the corruption point remain readable.
   persister_ = CreateLevelDBPersister();
   auto status = persister_->Open(test_dir_);
-  EXPECT_FALSE(status.ok());
+  EXPECT_TRUE(status.ok()) << "Open should recover from WAL corruption: " << status.ToString();
+
+  // GetLastLogInfo returns {last_index, term_of_last}.
+  auto [last_index, last_term] = persister_->GetLastLogInfo();
+  EXPECT_EQ(last_term, 1u) << "Term of the surviving tail entry must be intact";
+  EXPECT_GE(last_index, 1u) << "At least the first entries must remain readable";
+  EXPECT_LT(last_index, 10u) << "Entries at/after the corruption point are truncated";
 }
 
 TEST_F(LevelDBPersisterTest, StatePersistence) {

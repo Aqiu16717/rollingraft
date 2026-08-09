@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/persister.h"
 #include "rollingraft/raft_node.h"
 
 #include "ephemeral_port.h"
@@ -516,6 +517,92 @@ TEST_F(Cluster3NodesTest, AutoRemovesDeadNode) {
     }
   }
   EXPECT_FALSE(found) << "Dead node " << dead_id << " should have been auto-removed";
+}
+
+// Membership change must survive a full cluster restart: AddNode commits a
+// config entry that the restarted nodes restore from persistent state
+// (regression for the pre-#5 behavior where cluster_config_ was rebuilt from
+// the static seed config after a restart).
+TEST_F(Cluster3NodesTest, MembershipChangeSurvivesRestart) {
+  StartCluster();
+  WaitForLeader();
+
+  // Add a 4th node; wait until every node's config contains it.
+  // This test exercises the persistent-membership path, so the nodes must use
+  // a real persister (the rest of the suite runs without one).
+  for (auto& config : configs_) {
+    config.persister_factory = []() { return CreateLevelDBPersister(); };
+  }
+  for (auto& node : nodes_) {
+    node->Stop();
+    node.reset();
+  }
+  nodes_.clear();
+  state_machines_.clear();
+  for (int i = 0; i < 3; ++i) {
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    auto node = std::make_unique<RaftNode>(configs_[i], sm);
+    auto start_status = node->Start();
+    ASSERT_TRUE(start_status.ok()) << "Restart failed for node " << (i + 1);
+    nodes_.push_back(std::move(node));
+  }
+  WaitForLeader();
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+  auto ports = AllocateEphemeralPorts(1);
+  std::string new_addr = FormatAddrs({ports[0]})[0];
+  auto status = leader->AddNode(4, new_addr);
+  ASSERT_TRUE(status.ok()) << "AddNode failed: " << status.ToString();
+
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  bool committed = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    bool all_have = true;
+    for (auto& node : nodes_) {
+      auto cfg = node->GetConfig();
+      if (cfg.nodes.size() != 4 ||
+          std::find(cfg.nodes.begin(), cfg.nodes.end(), 4) == cfg.nodes.end()) {
+        all_have = false;
+        break;
+      }
+    }
+    if (all_have) {
+      committed = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  ASSERT_TRUE(committed) << "Node 4 config change was not committed on all nodes";
+
+  // Restart all nodes from the same data dirs. This test exercises the
+  // persistent-membership path, so the nodes must use a real persister (the
+  // rest of the suite runs without one).
+  for (auto& node : nodes_) {
+    node->Stop();
+    node.reset();
+  }
+  nodes_.clear();
+
+  for (int i = 0; i < 3; ++i) {
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    configs_[i].persister_factory = []() { return CreateLevelDBPersister(); };
+    auto node = std::make_unique<RaftNode>(configs_[i], sm);
+    auto start_status = node->Start();
+    ASSERT_TRUE(start_status.ok()) << "Restart failed for node " << (i + 1);
+    nodes_.push_back(std::move(node));
+  }
+
+  // The persisted membership must survive: node 4 is still in the config.
+  for (auto& node : nodes_) {
+    auto cfg = node->GetConfig();
+    EXPECT_EQ(cfg.nodes.size(), 4u)
+        << "Node 4 lost from config after restart (got " << cfg.nodes.size() << " nodes)";
+    EXPECT_NE(std::find(cfg.nodes.begin(), cfg.nodes.end(), 4), cfg.nodes.end())
+        << "Node 4 missing from config after restart";
+  }
 }
 
 TEST_F(Cluster3NodesTest, DoesNotRemoveNodeAfterPartitionHeals) {

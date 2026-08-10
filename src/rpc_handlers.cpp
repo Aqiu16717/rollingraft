@@ -443,6 +443,82 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
   }
 }
 
+// No locks held: stream the received snapshot file into the state machine.
+// Returns false (and logs) if the restore fails; the caller drops the temp
+// file in that case.
+bool RaftNode::RaftNodeImpl::RestoreFromSnapshotFile(const std::string& temp_path, Index index,
+                                                     Term term) {
+  std::ifstream ifs_size(temp_path, std::ios::binary | std::ios::ate);
+  auto file_size = static_cast<int64_t>(ifs_size.tellg());
+
+  LOG_INFO("Node {} restoring from snapshot: {} bytes, up to index {} term {}", group_->server_id_,
+           file_size, index, term);
+
+  auto restore_ifs = std::make_shared<std::ifstream>();
+  auto restore_initialized = std::make_shared<bool>(false);
+  auto restore_provider = [&](std::string& chunk) -> bool {
+    if (!*restore_initialized) {
+      restore_ifs->open(temp_path, std::ios::binary);
+      *restore_initialized = true;
+    }
+    if (!*restore_ifs) {
+      return false;
+    }
+    constexpr size_t kChunkSize = 64 * 1024;
+    chunk.resize(kChunkSize);
+    restore_ifs->read(chunk.data(), kChunkSize);
+    auto bytes_read = restore_ifs->gcount();
+    if (bytes_read <= 0) {
+      restore_ifs->close();
+      *restore_initialized = false;
+      return false;
+    }
+    chunk.resize(bytes_read);
+    return true;
+  };
+
+  if (!group_->state_machine_->RestoreStream(restore_provider)) {
+    LOG_ERROR("Node {} failed to restore from snapshot", group_->server_id_);
+    return false;
+  }
+  return true;
+}
+
+// No locks held: persist the received snapshot file. Failures are non-fatal
+// (the snapshot will be resent if needed) — matches the pre-split semantics.
+void RaftNode::RaftNodeImpl::PersistSnapshotFile(const std::string& temp_path, Index index,
+                                                 Term term) {
+  if (!persister_) {
+    return;
+  }
+  auto persist_ifs = std::make_shared<std::ifstream>();
+  auto persist_initialized = std::make_shared<bool>(false);
+  auto persist_provider = [&](std::string& chunk) -> bool {
+    if (!*persist_initialized) {
+      persist_ifs->open(temp_path, std::ios::binary);
+      *persist_initialized = true;
+    }
+    if (!*persist_ifs) {
+      return false;
+    }
+    constexpr size_t kChunkSize = 64 * 1024;
+    chunk.resize(kChunkSize);
+    persist_ifs->read(chunk.data(), kChunkSize);
+    auto bytes_read = persist_ifs->gcount();
+    if (bytes_read <= 0) {
+      persist_ifs->close();
+      *persist_initialized = false;
+      return false;
+    }
+    chunk.resize(bytes_read);
+    return true;
+  };
+  auto status = persister_->SaveSnapshotStream(persist_provider, index, term);
+  if (!status.ok()) {
+    LOG_WARN("Node {} failed to persist snapshot: {}", group_->server_id_, status.ToString());
+  }
+}
+
 void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest& req,
                                                    InstallSnapshotResponse& resp) {
   // Phase 1: Election state check under group_->election_mtx_ only.
@@ -486,6 +562,13 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
   }
 
   // Phase 2: Snapshot + replication + applier work.
+  // Chunk writes are cheap and stay under the locks; the final chunk's heavy
+  // I/O (state-machine restore + persister write) runs WITHOUT locks, then
+  // the state changes are applied back under the locks.
+  std::string done_temp_path;
+  Index done_index = 0;
+  Term done_term = 0;
+  bool received_done = false;
   {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
@@ -561,66 +644,52 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
     LOG_DEBUG("Node {} received snapshot chunk: offset={}, size={}, done={}", group_->server_id_,
               req.offset_, req.data_.size(), req.done_);
 
-    // Final chunk: restore state machine and persist
+    // Final chunk: capture the receive info under the locks; the heavy
+    // restore/persist I/O runs outside them below.
     if (req.done_) {
       // Transfer is over on every path below — reset receive state.
       group_->snapshot_recv_index_ = 0;
       group_->snapshot_recv_term_ = 0;
       group_->snapshot_recv_expected_offset_ = 0;
-      try {
-        // Get file size for logging
-        std::ifstream ifs_size(group_->snapshot_temp_path_, std::ios::binary | std::ios::ate);
-        auto file_size = static_cast<int64_t>(ifs_size.tellg());
+      done_temp_path = std::move(group_->snapshot_temp_path_);
+      group_->snapshot_temp_path_.clear();
+      done_index = req.last_included_index_;
+      done_term = req.last_included_term_;
+      received_done = true;
+    }
+  }
 
-        LOG_INFO("Node {} restoring from snapshot: {} bytes, up to index {} term {}",
-                 group_->server_id_, file_size, req.last_included_index_, req.last_included_term_);
+  // Phase 2b (no locks): restore the state machine and persist the snapshot.
+  if (received_done) {
+    if (!RestoreFromSnapshotFile(done_temp_path, done_index, done_term)) {
+      if (std::remove(done_temp_path.c_str()) != 0) {
+        LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
+                 done_temp_path);
+      }
+      return;
+    }
+    PersistSnapshotFile(done_temp_path, done_index, done_term);
 
-        // Restore state machine via streaming interface
-        auto restore_ifs = std::make_shared<std::ifstream>();
-        auto restore_initialized = std::make_shared<bool>(false);
-        auto restore_provider = [&](std::string& chunk) -> bool {
-          if (!*restore_initialized) {
-            restore_ifs->open(group_->snapshot_temp_path_, std::ios::binary);
-            *restore_initialized = true;
-          }
-          if (!*restore_ifs) {
-            return false;
-          }
-          constexpr size_t kChunkSize = 64 * 1024;
-          chunk.resize(kChunkSize);
-          restore_ifs->read(chunk.data(), kChunkSize);
-          auto bytes_read = restore_ifs->gcount();
-          if (bytes_read <= 0) {
-            restore_ifs->close();
-            *restore_initialized = false;
-            return false;
-          }
-          chunk.resize(bytes_read);
-          return true;
-        };
-
-        if (!group_->state_machine_->RestoreStream(restore_provider)) {
-          LOG_ERROR("Node {} failed to restore from snapshot", group_->server_id_);
-          if (std::remove(group_->snapshot_temp_path_.c_str()) != 0) {
-            LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
-                     group_->snapshot_temp_path_);
-          }
-          group_->snapshot_temp_path_.clear();
-          return;
-        }
-
+    // Phase 2c (locked): apply the snapshot to in-memory state. The node may
+    // have applied a newer snapshot while we were unlocked — skip if so.
+    {
+      std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+      std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+      std::lock_guard<std::mutex> lock_a(group_->applier_mtx_);
+      if (done_index <= group_->last_snapshot_index_) {
+        LOG_WARN("Node {} skipping snapshot apply: index {} <= last snapshot {}",
+                 group_->server_id_, done_index, group_->last_snapshot_index_);
+      } else {
         // Update log: discard all entries covered by snapshot
         uint64_t old_first_index = group_->log_.GetFirstIndex();
-        group_->log_.SetStartIndex(req.last_included_index_ + 1);
-        group_->last_snapshot_index_ = req.last_included_index_;
-        group_->last_snapshot_term_ = req.last_included_term_;
+        group_->log_.SetStartIndex(done_index + 1);
+        group_->last_snapshot_index_ = done_index;
+        group_->last_snapshot_term_ = done_term;
 
         // Schedule async truncation of persisted log after releasing locks.
-        // TruncatePrefix I/O can be slow; performing it asynchronously prevents
-        // blocking the Raft event loop while holding manager locks.
         if (log_persister_) {
           NodeId my_id = group_->server_id_;
-          log_persister_->TruncatePrefixAsync(req.last_included_index_ + 1, [my_id](Status status) {
+          log_persister_->TruncatePrefixAsync(done_index + 1, [my_id](Status status) {
             if (!status.ok()) {
               LOG_WARN("Node {} async truncate failed after snapshot: {}", my_id,
                        status.ToString());
@@ -632,82 +701,33 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
           auto labels = group_->metrics_node_label_;
           labels["trigger"] = "snapshot";
           metrics_->GetCounter("raft_log_compactions_total", labels).Increment();
-          if (req.last_included_index_ >= old_first_index) {
-            uint64_t compacted = req.last_included_index_ - old_first_index + 1;
+          if (done_index >= old_first_index) {
+            uint64_t compacted = done_index - old_first_index + 1;
             metrics_->GetCounter("raft_log_entries_compacted_total", group_->metrics_node_label_)
                 .Increment(compacted);
           }
         }
 
         // Update indices
-        group_->last_applied_.store(req.last_included_index_, std::memory_order_release);
-        group_->commit_index_ = req.last_included_index_;
+        group_->last_applied_.store(done_index, std::memory_order_release);
+        group_->commit_index_ = done_index;
 
         // Clear async apply queue — entries covered by snapshot are obsolete
         {
           std::lock_guard<std::mutex> lock(group_->apply_queue_mtx_);
           group_->apply_queue_.clear();
-          group_->last_enqueued_ = req.last_included_index_;
+          group_->last_enqueued_ = done_index;
         }
 
-        // Persist snapshot if persister available
-        if (persister_) {
-          auto persist_ifs = std::make_shared<std::ifstream>();
-          auto persist_initialized = std::make_shared<bool>(false);
-          auto persist_provider = [&](std::string& chunk) -> bool {
-            if (!*persist_initialized) {
-              persist_ifs->open(group_->snapshot_temp_path_, std::ios::binary);
-              *persist_initialized = true;
-            }
-            if (!*persist_ifs) {
-              return false;
-            }
-            constexpr size_t kChunkSize = 64 * 1024;
-            chunk.resize(kChunkSize);
-            persist_ifs->read(chunk.data(), kChunkSize);
-            auto bytes_read = persist_ifs->gcount();
-            if (bytes_read <= 0) {
-              persist_ifs->close();
-              *persist_initialized = false;
-              return false;
-            }
-            chunk.resize(bytes_read);
-            return true;
-          };
-          auto status = persister_->SaveSnapshotStream(persist_provider, req.last_included_index_,
-                                                       req.last_included_term_);
-          if (!status.ok()) {
-            LOG_WARN("Node {} failed to persist snapshot: {}", group_->server_id_,
-                     status.ToString());
-            // Non-fatal: we can continue, snapshot will be resent if needed
-          }
-        }
-
-        // Clean up temp file
-        if (!group_->snapshot_temp_path_.empty()) {
-          if (std::remove(group_->snapshot_temp_path_.c_str()) != 0) {
-            LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
-                     group_->snapshot_temp_path_);
-          }
-          group_->snapshot_temp_path_.clear();
-        }
-
-        LOG_INFO(
-            "Node {} successfully restored from snapshot, log start={}, "
-            "commit_index={}",
-            group_->server_id_, group_->log_.GetFirstIndex(), group_->commit_index_);
-      } catch (const std::exception& e) {
-        // A throwing state machine must not crash the node: log, drop the
-        // transfer, and let the leader's retry machinery restart it.
-        LOG_ERROR("Node {} exception during snapshot restore: {}", group_->server_id_, e.what());
-        if (!group_->snapshot_temp_path_.empty()) {
-          if (std::remove(group_->snapshot_temp_path_.c_str()) != 0) {
-            LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
-                     group_->snapshot_temp_path_);
-          }
-          group_->snapshot_temp_path_.clear();
-        }
+        LOG_INFO("Node {} successfully restored from snapshot, log start={}, commit_index={}",
+                 group_->server_id_, group_->log_.GetFirstIndex(), group_->commit_index_);
       }
+    }
+
+    // Clean up temp file (outside locks).
+    if (std::remove(done_temp_path.c_str()) != 0) {
+      LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
+               done_temp_path);
     }
   }
 }

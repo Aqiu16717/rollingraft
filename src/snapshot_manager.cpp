@@ -36,29 +36,55 @@ void RaftNode::RaftNodeImpl::CheckSnapshotTimeoutLocked() {
     group_->snapshot_check_deadline_ += std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
   }
 
-  MaybeTriggerAutoSnapshotLocked();
+  // Snapshot I/O runs outside the manager locks (two-phase); this call takes
+  // the locks itself only for the cheap threshold check and the apply.
+  RunAutoSnapshotIfNeeded();
 }
 
 // Core snapshot logic. PRECONDITION: group_->election_mtx_, group_->replication_mtx_,
 // group_->snapshot_mtx_ are held by caller.
 void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
+  // Kept as the locked thin wrapper for the (rare) synchronous call sites;
+  // the tick-driven and manual paths use the two-phase version below.
+  Index snapshot_index = 0;
+  Term snapshot_term = 0;
+  auto status = CreateAndPersistSnapshot(trigger, snapshot_index, snapshot_term);
+  if (!status.ok()) {
+    return;
+  }
+  ApplySnapshotLocked(snapshot_index, snapshot_term, trigger);
+}
+
+// Lock-free: true when log growth since the last snapshot exceeds the
+// configured thresholds. PRECONDITION: election+replication+snapshot locks held.
+bool RaftNode::RaftNodeImpl::ShouldTriggerSnapshotLocked() {
   auto [last_index, last_term] = group_->log_.GetLastLogInfo();
   (void)last_term;
   Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
 
-  if (metrics_) {
-    auto labels = group_->metrics_node_label_;
-    labels["trigger"] = trigger;
-    metrics_->GetCounter("raft_snapshots_created_total", labels).Increment();
-  }
-  LOG_INFO("Node {} triggering {}-snapshot ({} entries since last)", group_->server_id_, trigger,
-           entries_since_snapshot);
+  auto [entry_count, byte_size] = group_->log_.GetLogStats();
+  (void)entry_count;
 
+  auto cfg = infra_->runtime_config_->Get();
+  if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
+    return true;
+  }
+  if (byte_size >= cfg.snapshot_threshold_bytes) {
+    return true;
+  }
+  return false;
+}
+
+// No locks held: create the snapshot from the state machine and stream it to
+// the persister. The state machine must be safe to call concurrently with
+// Apply (it already is for Query). Returns the snapshot's meta via out params.
+Status RaftNode::RaftNodeImpl::CreateAndPersistSnapshot(const std::string& trigger,
+                                                        Index& out_index, Term& out_term) {
   // Create snapshot
   auto snapshot = group_->state_machine_->CreateSnapshot();
   if (!snapshot) {
     LOG_ERROR("Node {} failed to create {}-snapshot", group_->server_id_, trigger);
-    return;
+    return Status::Error("Failed to create snapshot");
   }
 
   // Get snapshot metadata
@@ -89,7 +115,7 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
           "Node {} {}-snapshot exceeds max size ({} > {} bytes). "
           "Increase max_snapshot_size_bytes or implement streaming persister.",
           group_->server_id_, trigger, total_size, kMaxSnapshotSize);
-      return;
+      return Status::Error("Snapshot exceeds max size");
     }
     check_offset += bytes_read;
   }
@@ -111,9 +137,32 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
     if (!status.ok()) {
       LOG_ERROR("Node {} failed to persist {}-snapshot: {}", group_->server_id_, trigger,
                 status.ToString());
-      return;
+      return status;
     }
   }
+
+  out_index = snapshot_index;
+  out_term = snapshot_term;
+  return Status::OK();
+}
+
+// Apply a persisted snapshot to in-memory state. PRECONDITION:
+// election+replication+snapshot locks held. No-ops if the node stepped down or
+// the snapshot is older than the one already applied (I/O happened without
+// locks, so both are possible).
+void RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snapshot_term,
+                                                 const std::string& trigger) {
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+    LOG_WARN("Node {} skipping {}-snapshot apply: no longer leader", group_->server_id_, trigger);
+    return;
+  }
+  if (snapshot_index <= group_->last_snapshot_index_) {
+    LOG_WARN("Node {} skipping {}-snapshot apply: index {} <= last snapshot {}", group_->server_id_,
+             trigger, snapshot_index, group_->last_snapshot_index_);
+    return;
+  }
+
+  Index entries_since_snapshot = snapshot_index - group_->last_snapshot_index_;
 
   // Truncate log - entries before snapshot_index are now covered by snapshot
   group_->log_.SetStartIndex(snapshot_index + 1);
@@ -145,70 +194,117 @@ void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
         .Increment(entries_since_snapshot);
   }
 
-  LOG_INFO(
-      "Node {} {}-snapshot completed at index {} term {} ({} bytes, "
-      "{} entries truncated)",
-      group_->server_id_, trigger, snapshot_index, snapshot_term, total_size,
-      entries_since_snapshot);
+  LOG_INFO("Node {} {}-snapshot applied at index {} term {}", group_->server_id_, trigger,
+           snapshot_index, snapshot_term);
+}
+
+// Two-phase auto-snapshot entry: no locks held on entry. Checks thresholds
+// under locks, creates+persists the snapshot without locks, then reapplies.
+Status RaftNode::RaftNodeImpl::RunAutoSnapshotIfNeeded() {
+  bool expected = false;
+  if (!snapshot_in_progress_.compare_exchange_strong(expected, true)) {
+    return Status::OK();  // Another snapshot is mid-flight
+  }
+  struct Guard {
+    std::atomic<bool>& flag;
+    ~Guard() { flag.store(false, std::memory_order_release); }
+  } guard{snapshot_in_progress_};
+
+  // Phase 1 (locked, fast): role + threshold check.
+  bool should_trigger = false;
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+      return Status::OK();
+    }
+    should_trigger = ShouldTriggerSnapshotLocked();
+  }
+  if (!should_trigger) {
+    return Status::OK();
+  }
+
+  LOG_INFO("Node {} triggering auto-snapshot", group_->server_id_);
+  if (metrics_) {
+    auto labels = group_->metrics_node_label_;
+    labels["trigger"] = "auto";
+    metrics_->GetCounter("raft_snapshots_created_total", labels).Increment();
+  }
+
+  // Phase 2 (no locks): user state machine + disk I/O.
+  Index snapshot_index = 0;
+  Term snapshot_term = 0;
+  auto status = CreateAndPersistSnapshot("auto", snapshot_index, snapshot_term);
+  if (!status.ok()) {
+    return status;
+  }
+
+  // Phase 3 (locked, fast): apply.
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    ApplySnapshotLocked(snapshot_index, snapshot_term, "auto");
+  }
+  return Status::OK();
 }
 
 void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
-  // Bridge pattern: acquire group_->election_mtx_ -> group_->replication_mtx_ ->
-  // group_->snapshot_mtx_ Auto-snapshot reads group_->role_ (election), group_->log_ stats
-  // (replication), and updates group_->last_snapshot_index_ (snapshot).
-  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-  std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
-
-  if (group_->role_ != RaftNodeRole::LEADER) {
-    return;  // Only leader triggers auto-snapshot
-  }
-
-  auto [last_index, last_term] = group_->log_.GetLastLogInfo();
-  (void)last_term;
-
-  // Calculate entries since last snapshot
-  Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
-
-  // Get byte size for logging
-  auto [entry_count, byte_size] = group_->log_.GetLogStats();
-  (void)entry_count;
-
-  bool should_trigger = false;
-
-  auto cfg = infra_->runtime_config_->Get();
-
-  // Check entry count threshold
-  if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
-    should_trigger = true;
-  }
-
-  // Check byte size threshold
-  if (!should_trigger && byte_size >= cfg.snapshot_threshold_bytes) {
-    should_trigger = true;
-  }
-
-  if (!should_trigger) {
+  // PRECONDITION: caller holds all three locks (legacy call sites). The
+  // tick-driven path uses RunAutoSnapshotIfNeeded instead; keep this as a
+  // thin locked wrapper so remaining callers behave as before.
+  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
     return;
   }
-
-  DoSnapshotLocked("auto");
+  if (!ShouldTriggerSnapshotLocked()) {
+    return;
+  }
+  Index snapshot_index = 0;
+  Term snapshot_term = 0;
+  auto status = CreateAndPersistSnapshot("auto", snapshot_index, snapshot_term);
+  if (!status.ok()) {
+    return;
+  }
+  ApplySnapshotLocked(snapshot_index, snapshot_term, "auto");
 }
 
 Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
-  std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
-  std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
-  std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+  // Two-phase manual snapshot: validate under locks, do the I/O without them.
+  bool expected = false;
+  if (!snapshot_in_progress_.compare_exchange_strong(expected, true)) {
+    return Status::Error("A snapshot is already in progress");
+  }
+  struct Guard {
+    std::atomic<bool>& flag;
+    ~Guard() { flag.store(false, std::memory_order_release); }
+  } guard{snapshot_in_progress_};
 
-  if (!IsRunning()) {
-    return Status::Error("Node not running");
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    if (!IsRunning()) {
+      return Status::Error("Node not running");
+    }
+    if (group_->role_ != RaftNodeRole::LEADER) {
+      return Status::NotLeader(group_->leader_id_, group_->leader_addr_);
+    }
   }
 
-  if (group_->role_ != RaftNodeRole::LEADER) {
-    return Status::NotLeader(group_->leader_id_, group_->leader_addr_);
+  Index snapshot_index = 0;
+  Term snapshot_term = 0;
+  auto status = CreateAndPersistSnapshot("manual", snapshot_index, snapshot_term);
+  if (!status.ok()) {
+    return status;
   }
 
-  DoSnapshotLocked("manual");
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+    ApplySnapshotLocked(snapshot_index, snapshot_term, "manual");
+  }
   return Status::OK();
 }
 

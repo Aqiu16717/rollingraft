@@ -103,6 +103,10 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   void HandleClientRequest(const ClientRequest&, ClientResponse&);
   void HandleReadIndexRequest(const ReadIndexRequest&, ReadIndexResponse&);
 
+  // Snapshot receive helpers (two-phase: heavy I/O outside the manager locks).
+  bool RestoreFromSnapshotFile(const std::string& temp_path, Index index, Term term);
+  void PersistSnapshotFile(const std::string& temp_path, Index index, Term term);
+
  private:
   // State transitions (must hold group_->election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
@@ -126,6 +130,13 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // Snapshot related
   void MaybeTriggerAutoSnapshotLocked();
   void DoSnapshotLocked(const std::string& trigger);
+  // Two-phase snapshot creation: snapshot data is created and persisted
+  // WITHOUT holding manager locks (user state machine + disk I/O can be slow),
+  // then applied under locks. snapshot_in_progress_ guards against re-entry.
+  bool ShouldTriggerSnapshotLocked();
+  Status CreateAndPersistSnapshot(const std::string& trigger, Index& out_index, Term& out_term);
+  void ApplySnapshotLocked(Index snapshot_index, Term snapshot_term, const std::string& trigger);
+  Status RunAutoSnapshotIfNeeded();
 
   // Election related
   void BroadcastRequestVoteLocked();
@@ -238,6 +249,9 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   std::atomic<NodeState> state_{NodeState::kInitialized};
   std::atomic<uint64_t> next_correlation_id_{1};
   bool manage_network_ = true;
+  // Set while a two-phase snapshot is between the unlocked I/O and the locked
+  // apply, so a concurrent tick cannot start a second snapshot.
+  std::atomic<bool> snapshot_in_progress_{false};
 
   // ========== Event Bus ==========
   EventBus event_bus_;

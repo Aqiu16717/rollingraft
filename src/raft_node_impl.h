@@ -177,6 +177,7 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
 
   // Snapshot related
   void SendInstallSnapshotToPeerLocked(NodeId peer_id);
+  void PrepareSnapshotForPeer(NodeId peer_id);  // Unlocked: CreateSnapshot + relock/send
   void SendNextSnapshotChunkLocked(NodeId peer_id);
   void HandleInstallSnapshotResponse(NodeId from, const InstallSnapshotResponse& resp,
                                      bool rpc_success);

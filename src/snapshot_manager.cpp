@@ -321,29 +321,82 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
     return;
   }
 
-  // Create new snapshot if needed
-  if (!state.snapshot) {
-    LOG_INFO("Node {}: creating snapshot for {}", group_->server_id_, peer_id);
-    state.snapshot = group_->state_machine_->CreateSnapshot();
-    if (!state.snapshot) {
-      LOG_ERROR("Node {}: failed to create snapshot", group_->server_id_);
+  // Snapshot already prepared: start sending its first chunk.
+  if (state.snapshot) {
+    if (metrics_) {
+      auto labels = group_->metrics_node_label_;
+      labels["peer_id"] = std::to_string(peer_id);
+      metrics_->GetCounter("raft_snapshot_sends_started_total", labels).Increment();
+    }
+    state.in_progress = true;
+    LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", group_->server_id_,
+             peer_id, state.last_included_index, state.last_included_term);
+    SendNextSnapshotChunkLocked(peer_id);
+    return;
+  }
+
+  // No snapshot prepared: create it WITHOUT the manager locks (user state
+  // machine can be slow), then relock and send. Weak-guarded timer so a
+  // destroyed group is a no-op.
+  LOG_INFO("Node {}: preparing snapshot for {}", group_->server_id_, peer_id);
+  infra_->timer_->SetTimeout(std::chrono::milliseconds(0),
+                             [weak_self = weak_from_this(), peer_id]() {
+                               auto self = weak_self.lock();
+                               if (!self) {
+                                 return;
+                               }
+                               self->PrepareSnapshotForPeer(peer_id);
+                             });
+}
+
+// No locks held: create a snapshot for the given peer and, if it is still
+// needed, install it into the send state and dispatch the first chunk.
+void RaftNode::RaftNodeImpl::PrepareSnapshotForPeer(NodeId peer_id) {
+  auto snapshot = group_->state_machine_->CreateSnapshot();
+  if (!snapshot) {
+    LOG_ERROR("Node {}: failed to create snapshot for {}", group_->server_id_, peer_id);
+    return;
+  }
+  auto meta = snapshot->GetMeta();
+
+  {
+    std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+    std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+    std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+
+    // The world may have changed while we were unlocked.
+    if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
       return;
     }
+    auto it = group_->snapshot_sends_.find(peer_id);
+    if (it == group_->snapshot_sends_.end()) {
+      return;  // Peer removed meanwhile
+    }
+    auto& state = it->second;
+    if (state.in_progress || state.snapshot) {
+      return;  // Another preparation won the race
+    }
+    // Peer may no longer need a snapshot (caught up meanwhile).
+    auto nit = group_->next_index_.find(peer_id);
+    if (nit == group_->next_index_.end() || nit->second >= group_->log_.GetFirstIndex()) {
+      return;
+    }
+
+    state.snapshot = std::move(snapshot);
     state.offset = 0;
-    state.last_included_index = state.snapshot->GetMeta().last_included_index_;
-    state.last_included_term = state.snapshot->GetMeta().last_included_term_;
-  }
+    state.last_included_index = meta.last_included_index_;
+    state.last_included_term = meta.last_included_term_;
+    state.in_progress = true;
 
-  if (metrics_) {
-    auto labels = group_->metrics_node_label_;
-    labels["peer_id"] = std::to_string(peer_id);
-    metrics_->GetCounter("raft_snapshot_sends_started_total", labels).Increment();
+    if (metrics_) {
+      auto labels = group_->metrics_node_label_;
+      labels["peer_id"] = std::to_string(peer_id);
+      metrics_->GetCounter("raft_snapshot_sends_started_total", labels).Increment();
+    }
+    LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", group_->server_id_,
+             peer_id, state.last_included_index, state.last_included_term);
+    SendNextSnapshotChunkLocked(peer_id);
   }
-  state.in_progress = true;
-  LOG_INFO("Node {}: starting snapshot send to {}: index={}, term={}, size=?", group_->server_id_,
-           peer_id, state.last_included_index, state.last_included_term);
-
-  SendNextSnapshotChunkLocked(peer_id);
 }
 
 void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {

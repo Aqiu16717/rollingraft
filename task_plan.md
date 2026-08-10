@@ -20,6 +20,11 @@
 - [x] 正确性：ApplySnapshotLocked 验证（下台/过期快照跳过）；snapshot_in_progress_ 防重入；StateMachine 线程安全（Apply/Query 已并发）
 - [x] 实现：ShouldTriggerSnapshotLocked / CreateAndPersistSnapshot / ApplySnapshotLocked / RunAutoSnapshotIfNeeded；TriggerSnapshot + CheckSnapshotTimeoutLocked 改两阶段
 
+### Phase 1b: 发送侧快照准备移出锁（B）
+- [x] 设计：SendInstallSnapshotToPeerLocked 检测需要快照 → 异步锁外 PrepareSnapshotForPeer（CreateSnapshot）→ 重锁装填 + 发送第一块
+- [x] 防护：weak 守卫 timer；重锁后检查 role/peer 存在/in_progress/快照仍需要（next_index < first_index）
+- [x] 实现 + 验证：365/365 通过（提交待 push）
+
 ### Phase 2: 快照接收两阶段（C）
 - [x] 设计：锁内捕获 done 信息 + 移交临时文件所有权 → 解锁 → 锁外 RestoreFromSnapshotFile + PersistSnapshotFile → 重锁 ApplySnapshot（done_index 过期检查）
 - [x] 实现：RestoreFromSnapshotFile / PersistSnapshotFile helpers；HandleInstallSnapshot done 分支拆三阶段

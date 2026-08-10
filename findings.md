@@ -1,4 +1,14 @@
-# Findings — flaky 测试
+# Findings
+
+## 偶发竞态：TcpConnection pending_callbacks_（2026-08-10 记录）
+
+两阶段快照改造后 TSan 全量首跑报 1 个竞态（MultiRaft2GroupsTest.BothGroupsElectIndependentLeaders 触发，Subprocess aborted + LeaderCanProposeInEachGroup timeout）。单跑不触发；第二次 TSan 全量 0 竞态全绿。
+
+竞态栈：Read 在 `TcpConnection::ExtractCallbackLocked`（HandleMessage，io 线程），Previous write 在 `Send` 的 `timer->async_wait` 注册（io 线程）。代码审查未发现 pending_callbacks_ 的无锁访问（所有读写都在 mutex_ 内）；TSan 报 size-1 字段疑似 asio 库内部状态与 TcpConnection 布局的边界情况。
+
+**判断**：网络层 pre-existing 偶发竞态，两阶段快照改变的调度时序使其暴露一次。无法稳定复现，代码审查无无锁访问 → 记录待查，不阻塞。
+
+## 已解决：确定性 Chaos 测试（2026-08-09）
 
 ## 已解决：确定性 Chaos 测试（2026-08-09）
 

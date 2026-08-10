@@ -29,8 +29,8 @@
 
 ### Phase 4: 验证 + 提交
 - [x] Release 全量 365/365 通过（Phase 1+2 各验证一轮）
-- [ ] TSan
-- [ ] 提交 + push（待 push）
+- [x] TSan ×2：首轮 1 偶发竞态（网络层，见 findings.md，二次全绿 0 竞态）
+- [x] 提交（bed8ccb）+ push（待 push）
 
 ## Next Step
 Phase 1: 设计快照创建两阶段（读 DoSnapshotLocked 现状 + 快照阈值触发路径）

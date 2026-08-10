@@ -14,3 +14,11 @@
 - Phase 3：新增 MembershipChangeSurvivesRestart（真实 LevelDB 持久化路径；发现测试套件默认无 persister）
 - Phase 4：全量 365/365 通过，提交推送（6f67085）
 - **3 项正确性遗留全部完成** ✅
+
+## Session 2026-08-10 — 锁内 I/O 改造（Phase 1+2）
+- Phase 1：快照创建两阶段（ShouldTriggerSnapshotLocked/CreateAndPersistSnapshot/ApplySnapshotLocked/RunAutoSnapshotIfNeeded + snapshot_in_progress_ 防重入）
+- Phase 2：快照接收三阶段（锁内捕获 → 锁外 Restore/Persist → 重锁应用 + 过期检查）
+- Phase 3：截断保留现状（FlushSync 顺序性要求，评估后为设计决策）
+- 验证：Release 365/365；TSan ×2（首轮 1 偶发网络层竞态已记录 findings.md，二次全绿）
+- 提交：bed8ccb（perf）+ a02fcba（docs），已推送
+- **锁内 I/O 改造 Phase 1+2 完成** ✅

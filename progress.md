@@ -22,3 +22,10 @@
 - 验证：Release 365/365；TSan ×2（首轮 1 偶发网络层竞态已记录 findings.md，二次全绿）
 - 提交：bed8ccb（perf）+ a02fcba（docs），已推送
 - **锁内 I/O 改造 Phase 1+2 完成** ✅
+
+## Session 2026-08-10（延续）— 锁内 I/O Phase 1b（B 项）
+- 发送侧快照准备移出锁：SendInstallSnapshotToPeerLocked → 异步 PrepareSnapshotForPeer（锁外 CreateSnapshot + 重锁验证 + 发送）
+- 防护：weak 守卫 + role/peer/next_index 四重检查
+- 验证：Release 365/365
+- 提交：890de54，已推送
+- **锁内 I/O 清单全部完成（A/B/C 移出，D 设计决策保留）** ✅

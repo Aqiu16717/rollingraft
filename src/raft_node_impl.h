@@ -61,6 +61,7 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   RaftNodeRole GetRole() const;
   Term CurrentTerm() const;
   std::string GetLeaderAddr() const;
+  NodeId GetLeaderId() const;
   Index GetCommitIndex() const;
 
   EventBus& GetEventBus() { return event_bus_; }

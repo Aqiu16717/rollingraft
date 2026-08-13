@@ -320,7 +320,7 @@ Status RaftNode::RaftNodeImpl::Start() {
 
         // Control plane handlers (#19 API implementation)
         infra_->metrics_server_->SetAddMemberHandler(
-            [this](int32_t node_id, const std::string& addr) -> std::string {
+            [this](int32_t node_id, const std::string& addr, uint64_t /*group_id*/) -> std::string {
               if (node_id < 0 || addr.empty()) {
                 nlohmann::json j;
                 j["error"] = "BAD_REQUEST";
@@ -342,43 +342,45 @@ Status RaftNode::RaftNodeImpl::Start() {
               return j.dump();
             });
 
-        infra_->metrics_server_->SetRemoveMemberHandler([this](int32_t node_id) -> std::string {
-          if (node_id < 0) {
-            nlohmann::json j;
-            j["error"] = "BAD_REQUEST";
-            j["message"] = "Invalid node_id";
-            return j.dump();
-          }
-          auto status = RemoveNode(static_cast<NodeId>(node_id));
-          nlohmann::json j;
-          if (status.ok()) {
-            j["status"] = "accepted";
-            j["message"] = "Node removal proposed";
-          } else {
-            j["error"] = "NOT_LEADER";
-            j["message"] = status.GetMessage();
-            if (!GetLeaderAddr().empty()) {
-              j["leader_hint"] = GetLeaderAddr();
-            }
-          }
-          return j.dump();
-        });
+        infra_->metrics_server_->SetRemoveMemberHandler(
+            [this](int32_t node_id, uint64_t /*group_id*/) -> std::string {
+              if (node_id < 0) {
+                nlohmann::json j;
+                j["error"] = "BAD_REQUEST";
+                j["message"] = "Invalid node_id";
+                return j.dump();
+              }
+              auto status = RemoveNode(static_cast<NodeId>(node_id));
+              nlohmann::json j;
+              if (status.ok()) {
+                j["status"] = "accepted";
+                j["message"] = "Node removal proposed";
+              } else {
+                j["error"] = "NOT_LEADER";
+                j["message"] = status.GetMessage();
+                if (!GetLeaderAddr().empty()) {
+                  j["leader_hint"] = GetLeaderAddr();
+                }
+              }
+              return j.dump();
+            });
 
-        infra_->metrics_server_->SetTriggerSnapshotHandler([this]() -> std::string {
-          auto status = TriggerSnapshot();
-          nlohmann::json j;
-          if (status.ok()) {
-            j["status"] = "triggered";
-            j["message"] = "Snapshot creation initiated";
-          } else {
-            j["error"] = "NOT_LEADER";
-            j["message"] = status.GetMessage();
-          }
-          return j.dump();
-        });
+        infra_->metrics_server_->SetTriggerSnapshotHandler(
+            [this](uint64_t /*group_id*/) -> std::string {
+              auto status = TriggerSnapshot();
+              nlohmann::json j;
+              if (status.ok()) {
+                j["status"] = "triggered";
+                j["message"] = "Snapshot creation initiated";
+              } else {
+                j["error"] = "NOT_LEADER";
+                j["message"] = status.GetMessage();
+              }
+              return j.dump();
+            });
 
         infra_->metrics_server_->SetTransferLeadershipHandler(
-            [this](int32_t target_id) -> std::string {
+            [this](int32_t target_id, uint64_t /*group_id*/) -> std::string {
               nlohmann::json j;
               if (target_id < 0) {
                 j["error"] = "BAD_REQUEST";
@@ -733,6 +735,11 @@ Term RaftNode::RaftNodeImpl::CurrentTerm() const {
 std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
   return group_->leader_addr_;
+}
+
+NodeId RaftNode::RaftNodeImpl::GetLeaderId() const {
+  std::lock_guard<std::mutex> lock(group_->election_mtx_);
+  return group_->leader_id_;
 }
 
 Index RaftNode::RaftNodeImpl::GetCommitIndex() const {

@@ -31,6 +31,8 @@ struct RaftStoreConfig {
 
   bool metrics_enabled = false;
   std::string metrics_addr;
+  // Admin API authentication token, forwarded to the shared metrics server.
+  std::string admin_token;
 
   bool tls_enabled = false;
   std::string tls_cert_file;
@@ -95,6 +97,9 @@ class RaftStore {
 
  private:
   RaftNodeConfig MakeGroupConfig(uint64_t group_id, const RaftGroupOptions& options) const;
+  // Wire store-level /v1/status and admin providers on the shared metrics
+  // server. Call after infra_->metrics_server_ exists.
+  void RegisterStoreProviders();
 
   RaftStoreConfig config_;
   std::shared_ptr<SharedNodeInfra> infra_;

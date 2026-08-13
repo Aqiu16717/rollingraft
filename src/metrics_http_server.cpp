@@ -411,36 +411,64 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
       status_line = "HTTP/1.1 400 Bad Request\r\n";
     }
     if (status_line == "HTTP/1.1 404 Not Found\r\n") {
-      response_body = add_member_handler_(node_id, addr);
+      uint64_t group_id = 0;
+      try {
+        auto j = nlohmann::json::parse(body);
+        group_id = j.value("group_id", 0);
+      } catch (...) {
+        // Body parse already failed above; group_id stays 0.
+      }
+      response_body = add_member_handler_(node_id, addr, group_id);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
   } else if (path.starts_with("/v1/members/") && request.starts_with("DELETE") &&
              remove_member_handler_) {
-    int32_t node_id = -1;
-    size_t last_slash = path.find_last_of('/');
-    if (last_slash != std::string::npos && last_slash + 1 < path.size()) {
-      node_id = std::stoi(path.substr(last_slash + 1));
+    // group_id comes from the query string (?group_id=N) since DELETE has no body.
+    uint64_t group_id = 0;
+    size_t q = path.find('?');
+    std::string path_no_query = path;
+    if (q != std::string::npos) {
+      try {
+        group_id = std::stoull(path.substr(q + 1));
+      } catch (...) {
+        group_id = 0;
+      }
+      path_no_query = path.substr(0, q);
     }
-    response_body = remove_member_handler_(node_id);
+    int32_t node_id = -1;
+    size_t last_slash = path_no_query.find_last_of('/');
+    if (last_slash != std::string::npos && last_slash + 1 < path_no_query.size()) {
+      node_id = std::stoi(path_no_query.substr(last_slash + 1));
+    }
+    response_body = remove_member_handler_(node_id, group_id);
     status_line = "HTTP/1.1 202 Accepted\r\n";
   } else if (path == "/v1/snapshot/trigger" && request.starts_with("POST") &&
              trigger_snapshot_handler_) {
-    response_body = trigger_snapshot_handler_();
+    uint64_t group_id = 0;
+    try {
+      auto j = nlohmann::json::parse(body);
+      group_id = j.value("group_id", 0);
+    } catch (...) {
+      group_id = 0;
+    }
+    response_body = trigger_snapshot_handler_(group_id);
     status_line = "HTTP/1.1 202 Accepted\r\n";
   } else if (path == "/v1/leadership/transfer" && request.starts_with("POST") &&
              transfer_leadership_handler_) {
     int32_t target_id = -1;
+    uint64_t group_id = 0;
     try {
       auto j = nlohmann::json::parse(body);
       if (j.contains("target_node_id")) {
         target_id = j["target_node_id"];
       }
+      group_id = j.value("group_id", 0);
     } catch (const std::exception& e) {
       response_body = nlohmann::json{{"error", "BAD_REQUEST"}, {"message", e.what()}}.dump() + "\n";
       status_line = "HTTP/1.1 400 Bad Request\r\n";
     }
     if (status_line == "HTTP/1.1 404 Not Found\r\n") {
-      response_body = transfer_leadership_handler_(target_id);
+      response_body = transfer_leadership_handler_(target_id, group_id);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
   } else if (path == "/v1/config" && request.starts_with("GET") && config_provider_) {

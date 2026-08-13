@@ -122,6 +122,22 @@ Status RaftStore::Start() {
     }
   });
 
+  // Create the store-owned metrics HTTP server and wire store-level status /
+  // admin providers. Groups skip creation via the create-once guard in
+  // RaftNodeImpl::Start and never register group-capturing handlers.
+  if (config_.metrics_enabled && !config_.metrics_addr.empty()) {
+    MetricsHttpServer::TlsConfig tls_config;
+    tls_config.enabled = config_.tls_enabled;
+    tls_config.cert_file = config_.tls_cert_file;
+    tls_config.key_file = config_.tls_key_file;
+    tls_config.ca_file = config_.tls_ca_file;
+    infra_->metrics_server_ = std::make_unique<MetricsHttpServer>(
+        config_.metrics_addr, infra_->metrics_.get(), tls_config, config_.admin_token);
+
+    RegisterStoreProviders();
+    infra_->metrics_server_->Start();
+  }
+
   return infra_->network_->Start();
 }
 
@@ -266,6 +282,178 @@ void RaftStore::OnIncomingRpc(NodeId from, uint64_t group_id, const std::string&
   group->HandleIncomingRpc(from, data, response);
 }
 
+void RaftStore::RegisterStoreProviders() {
+  if (!infra_->metrics_server_) {
+    return;
+  }
+
+  // /v1/status: aggregate every group's status. Uses each group's public
+  // getters (which take the group's own locks), so no store lock is held
+  // while building the JSON.
+  infra_->metrics_server_->SetStatusProvider([this]() -> std::string {
+    nlohmann::json root;
+    root["node_id"] = config_.node_id;
+    nlohmann::json groups = nlohmann::json::array();
+
+    std::vector<std::pair<uint64_t, std::shared_ptr<RaftNode::RaftNodeImpl>>> group_snapshot;
+    {
+      std::shared_lock<std::shared_mutex> lock(groups_mtx_);
+      group_snapshot.reserve(groups_.size());
+      for (const auto& [gid, g] : groups_) {
+        group_snapshot.emplace_back(gid, g);
+      }
+    }
+
+    for (const auto& [gid, group] : group_snapshot) {
+      nlohmann::json j;
+      j["group_id"] = gid;
+      j["role"] = RaftNodeRoleToString(group->GetRole());
+      j["term"] = group->CurrentTerm();
+      j["leader_id"] = group->GetLeaderAddr().empty() ? nlohmann::json(nullptr)
+                                                      : nlohmann::json(group->GetLeaderId());
+      j["leader_addr"] = group->GetLeaderAddr();
+      j["commit_index"] = group->GetCommitIndex();
+      auto cfg = group->GetConfig();
+      j["config_version"] = cfg.version;
+      groups.push_back(std::move(j));
+    }
+    root["groups"] = std::move(groups);
+    return root.dump();
+  });
+
+  // Admin endpoints route by group_id (0 is rejected — multi-raft groups are
+  // always >= 1).
+  infra_->metrics_server_->SetAddMemberHandler(
+      [this](int32_t node_id, const std::string& addr, uint64_t group_id) -> std::string {
+        nlohmann::json j;
+        if (group_id == 0) {
+          j["error"] = "BAD_REQUEST";
+          j["message"] = "group_id must be > 0";
+          return j.dump();
+        }
+        auto group = GetGroup(group_id);
+        if (!group) {
+          j["error"] = "GROUP_NOT_FOUND";
+          j["message"] = "Group " + std::to_string(group_id) + " not found";
+          return j.dump();
+        }
+        auto status = group->AddNode(static_cast<NodeId>(node_id), addr);
+        if (status.ok()) {
+          j["status"] = "accepted";
+          j["message"] = "Configuration change proposed";
+        } else {
+          j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+          j["message"] = status.GetMessage();
+          if (!group->GetLeaderAddr().empty()) {
+            j["leader_hint"] = group->GetLeaderAddr();
+          }
+        }
+        return j.dump();
+      });
+
+  infra_->metrics_server_->SetRemoveMemberHandler(
+      [this](int32_t node_id, uint64_t group_id) -> std::string {
+        nlohmann::json j;
+        if (group_id == 0) {
+          j["error"] = "BAD_REQUEST";
+          j["message"] = "group_id must be > 0";
+          return j.dump();
+        }
+        auto group = GetGroup(group_id);
+        if (!group) {
+          j["error"] = "GROUP_NOT_FOUND";
+          j["message"] = "Group " + std::to_string(group_id) + " not found";
+          return j.dump();
+        }
+        auto status = group->RemoveNode(static_cast<NodeId>(node_id));
+        if (status.ok()) {
+          j["status"] = "accepted";
+          j["message"] = "Configuration change proposed";
+        } else {
+          j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+          j["message"] = status.GetMessage();
+          if (!group->GetLeaderAddr().empty()) {
+            j["leader_hint"] = group->GetLeaderAddr();
+          }
+        }
+        return j.dump();
+      });
+
+  infra_->metrics_server_->SetTriggerSnapshotHandler([this](uint64_t group_id) -> std::string {
+    nlohmann::json j;
+    if (group_id == 0) {
+      j["error"] = "BAD_REQUEST";
+      j["message"] = "group_id must be > 0";
+      return j.dump();
+    }
+    auto group = GetGroup(group_id);
+    if (!group) {
+      j["error"] = "GROUP_NOT_FOUND";
+      j["message"] = "Group " + std::to_string(group_id) + " not found";
+      return j.dump();
+    }
+    auto status = group->TriggerSnapshot();
+    if (status.ok()) {
+      j["status"] = "triggered";
+      j["message"] = "Snapshot creation initiated";
+    } else {
+      j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+      j["message"] = status.GetMessage();
+      if (!group->GetLeaderAddr().empty()) {
+        j["leader_hint"] = group->GetLeaderAddr();
+      }
+    }
+    return j.dump();
+  });
+
+  infra_->metrics_server_->SetTransferLeadershipHandler(
+      [this](int32_t target_id, uint64_t group_id) -> std::string {
+        nlohmann::json j;
+        if (group_id == 0) {
+          j["error"] = "BAD_REQUEST";
+          j["message"] = "group_id must be > 0";
+          return j.dump();
+        }
+        auto group = GetGroup(group_id);
+        if (!group) {
+          j["error"] = "GROUP_NOT_FOUND";
+          j["message"] = "Group " + std::to_string(group_id) + " not found";
+          return j.dump();
+        }
+        auto status = group->TransferLeadershipTo(static_cast<NodeId>(target_id));
+        if (status.ok()) {
+          j["status"] = "initiated";
+          j["message"] = "Leadership transfer initiated";
+        } else {
+          j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
+          j["message"] = status.GetMessage();
+          if (!group->GetLeaderAddr().empty()) {
+            j["leader_hint"] = group->GetLeaderAddr();
+          }
+        }
+        return j.dump();
+      });
+
+  // Runtime config is store-shared; GET/PATCH apply to all groups.
+  infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
+    return infra_->runtime_config_ ? infra_->runtime_config_->ToJson()
+                                   : "{\"error\":\"runtime_config_not_initialized\"}";
+  });
+  infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+    if (!infra_->runtime_config_) {
+      return "{\"error\":\"runtime_config_not_initialized\"}";
+    }
+    auto status = infra_->runtime_config_->UpdateFromJson(json);
+    if (status.ok()) {
+      return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
+    }
+    nlohmann::json j;
+    j["error"] = "INVALID_CONFIG";
+    j["message"] = status.GetMessage();
+    return j.dump();
+  });
+}
+
 RaftNodeConfig RaftStore::MakeGroupConfig(uint64_t group_id,
                                           const RaftGroupOptions& options) const {
   RaftNodeConfig config;
@@ -288,6 +476,7 @@ RaftNodeConfig RaftStore::MakeGroupConfig(uint64_t group_id,
 
   config.metrics_enabled = config_.metrics_enabled;
   config.metrics_addr = config_.metrics_addr;
+  config.admin_token = config_.admin_token;
   config.tls_enabled = config_.tls_enabled;
   config.tls_cert_file = config_.tls_cert_file;
   config.tls_key_file = config_.tls_key_file;

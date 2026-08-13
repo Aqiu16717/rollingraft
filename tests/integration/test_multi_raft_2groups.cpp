@@ -7,6 +7,8 @@
 #include "rollingraft/logger.h"
 #include "rollingraft/raft_node.h"
 
+#include <nlohmann/json.hpp>
+
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
 #include "raft_store.h"
@@ -342,6 +344,97 @@ TEST_F(MultiRaft2GroupsTest, MetricsEnabledWithTwoGroupsSharesOneServer) {
   // targeting the removed group must no-op via their weak_ptr guards.
   stores_[0]->RemoveGroup(1);
   propose_and_wait(2, "metrics_cmd_g2_after_remove");
+}
+
+// Store-level endpoints: /v1/status aggregates all groups; admin endpoints
+// route by group_id from the request body/query.
+TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
+  uint16_t base_port = 20000 + static_cast<uint16_t>((getpid() % 4000) * 10);
+  std::vector<uint16_t> ports = {base_port, static_cast<uint16_t>(base_port + 1),
+                                 static_cast<uint16_t>(base_port + 2)};
+  addrs_ = FormatAddrs(ports);
+
+  for (int i = 0; i < 3; ++i) {
+    RaftStoreConfig store_config;
+    store_config.node_id = i + 1;
+    store_config.listen_addr = addrs_[i];
+    store_config.data_dir = data_dirs_[i];
+    store_config.metrics_enabled = true;
+    store_config.metrics_addr = "127.0.0.1:" + std::to_string(base_port + 5 + i);
+    for (size_t j = 0; j < addrs_.size(); ++j) {
+      if (j != static_cast<size_t>(i)) {
+        store_config.peers.push_back(addrs_[j]);
+        store_config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
+      }
+    }
+
+    auto store = std::make_unique<RaftStore>(store_config);
+    auto status = store->Initialize();
+    ASSERT_TRUE(status.ok());
+    status = store->Start();
+    ASSERT_TRUE(status.ok());
+    stores_.push_back(std::move(store));
+  }
+
+  for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
+    for (int i = 0; i < 3; ++i) {
+      RaftGroupOptions options;
+      options.group_id = group_id;
+      options.election_timeout_ms = 300;
+      options.heartbeat_interval_ms = 50;
+      auto sm = std::make_shared<MockStateMachine>();
+      state_machines_[group_id].push_back(sm);
+      auto status = stores_[i]->CreateGroup(group_id, options, sm);
+      ASSERT_TRUE(status.ok());
+    }
+  }
+
+  WaitForLeader(1);
+  WaitForLeader(2);
+
+  // /v1/status: aggregated JSON with both groups and a leader.
+  auto fetch = [](const std::string& url) -> std::string {
+    std::string cmd = "curl -s --noproxy '*' --max-time 3 " + url;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+      return "";
+    }
+    char buffer[4096];
+    std::string result;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      result += buffer;
+    }
+    pclose(pipe);
+    return result;
+  };
+
+  std::string status_body;
+  for (int i = 0; i < 3 && status_body.empty(); ++i) {
+    status_body = fetch("http://127.0.0.1:" + std::to_string(base_port + 5 + i) + "/v1/status");
+  }
+  ASSERT_FALSE(status_body.empty()) << "/v1/status returned nothing";
+  auto j = nlohmann::json::parse(status_body);
+  ASSERT_TRUE(j.contains("groups")) << "status should aggregate groups: " << status_body;
+  ASSERT_EQ(j["groups"].size(), 2u) << "expected both groups in status";
+  bool saw_leader = false;
+  for (const auto& g : j["groups"]) {
+    if (g.contains("leader_id") && !g["leader_id"].is_null()) {
+      saw_leader = true;
+    }
+  }
+  EXPECT_TRUE(saw_leader) << "at least one group should report a leader";
+
+  // Admin endpoint routes by group_id: trigger snapshot on group 1's leader.
+  // Only the leader accepts; try each node until one returns "triggered".
+  bool triggered = false;
+  for (int i = 0; i < 3 && !triggered; ++i) {
+    std::string body = fetch("http://127.0.0.1:" + std::to_string(base_port + 5 + i) +
+                             "/v1/snapshot/trigger -X POST -d '{\"group_id\":1}'");
+    if (body.find("\"triggered\"") != std::string::npos) {
+      triggered = true;
+    }
+  }
+  EXPECT_TRUE(triggered) << "snapshot trigger should route to group 1's leader";
 }
 
 TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {

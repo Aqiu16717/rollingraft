@@ -30,10 +30,15 @@ struct MetricsHttpServerTlsConfig {
 class MetricsHttpServer {
  public:
   using StatusProvider = std::function<std::string()>;
-  using AddMemberHandler = std::function<std::string(int32_t node_id, const std::string& addr)>;
-  using RemoveMemberHandler = std::function<std::string(int32_t node_id)>;
-  using TriggerSnapshotHandler = std::function<std::string()>;
-  using TransferLeadershipHandler = std::function<std::string(int32_t target_node_id)>;
+  // Admin handlers take the target raft group_id (0 for the legacy
+  // single-group path). group_id comes from the JSON body ("group_id") for
+  // POSTs and from the ?group_id= query parameter for DELETE.
+  using AddMemberHandler =
+      std::function<std::string(int32_t node_id, const std::string& addr, uint64_t group_id)>;
+  using RemoveMemberHandler = std::function<std::string(int32_t node_id, uint64_t group_id)>;
+  using TriggerSnapshotHandler = std::function<std::string(uint64_t group_id)>;
+  using TransferLeadershipHandler =
+      std::function<std::string(int32_t target_node_id, uint64_t group_id)>;
   using ConfigProvider = std::function<std::string()>;
   using ConfigUpdater = std::function<std::string(const std::string& json)>;
   using TlsConfig = MetricsHttpServerTlsConfig;

@@ -29,3 +29,12 @@
 - 验证：Release 365/365
 - 提交：890de54，已推送
 - **锁内 I/O 清单全部完成（A/B/C 移出，D 设计决策保留）** ✅
+
+## Session 2026-08-13 — Store 级 endpoints
+- MetricsHttpServer admin handler 加 group_id 参数（POST body / DELETE query）
+- RaftStore 创建 store 级 metrics server + RegisterStoreProviders（/v1/status 聚合 + admin group 路由）
+- RaftStoreConfig.admin_token 透传；RaftNodeImpl.GetLeaderId()
+- 新测试 StoreEndpointsWork（聚合 status + group 路由 snapshot trigger）
+- Release 366/366（1 已知 flaky）；TSan 0 竞态（BothGroupsElectIndependentLeaders 并行偶发，单跑 3/3 过）
+- 提交 787969e，已推送
+- **Store 级 endpoints 完成** ✅

@@ -1,4 +1,28 @@
-# Task Plan: 锁内 I/O 移出改造
+# Task Plan: Store 级 endpoints（已完成）
+
+## Goal
+
+补齐 multi-raft 模式下的控制平面端点（review #1 遗留）：/v1/status 聚合 + admin 端点按 group_id 路由。
+
+## Phases
+
+### Phase 1: 基础设施
+- [x] MetricsHttpServer admin handler 签名加 group_id（POST body / DELETE ?group_id=）
+- [x] RaftStoreConfig 加 admin_token 透传
+- [x] RaftNodeImpl 加 GetLeaderId()
+
+### Phase 2: Store 级 providers
+- [x] RaftStore::Start 创建 store 级 metrics server + RegisterStoreProviders
+- [x] /v1/status 聚合所有 group（public getter，不持 store 锁构建 JSON）
+- [x] AddMember/RemoveMember/TriggerSnapshot/TransferLeadership 按 group_id 路由；config GET/PATCH store 全局
+
+### Phase 3: 验证
+- [x] Release 全量 366/366（1 已知 flaky 单跑通过）
+- [x] TSan：0 竞态；BothGroupsElectIndependentLeaders 并行偶发（单跑 3/3 过，与已知网络层偶发竞态同族）
+- [x] 提交 787969e + push
+
+---
+# 历史：锁内 I/O 移出改造
 
 ## Goal
 

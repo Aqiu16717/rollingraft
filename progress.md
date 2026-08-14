@@ -38,3 +38,11 @@
 - Release 366/366（1 已知 flaky）；TSan 0 竞态（BothGroupsElectIndependentLeaders 并行偶发，单跑 3/3 过）
 - 提交 787969e，已推送
 - **Store 级 endpoints 完成** ✅
+
+## Session 2026-08-14 — SSE 事件流
+- 抽取 FormatSseEvent（legacy 广播 + store 订阅复用）
+- RaftStore::CreateGroup 订阅 group EventBus → 共享 metrics server SSE 广播（带 group_id）
+- **发现并修复真 bug**：sse_connections_ 存 weak_ptr → 连接在 headers 写完后被销毁，SSE 从未真正工作过。改 shared_ptr + RemoveDeadSseConnections 按 IsOpen 清理
+- 测试：StoreEndpointsWork 扩展 3-store SSE + transfer 验证 group_id 事件
+- Release 366/366；提交 a394c77（fix）+ d666312（feat），已推送
+- **SSE 事件流完成** ✅

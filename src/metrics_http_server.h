@@ -88,7 +88,10 @@ class MetricsHttpServer {
   std::shared_ptr<asio::ssl::context> ssl_ctx_;
 
   std::mutex sse_mutex_;
-  std::vector<std::weak_ptr<SseConnection>> sse_connections_;
+  // Strong refs: SSE connections must outlive the headers write,
+  // otherwise they are destroyed as soon as the write callback
+  // releases its shared_from_this and the socket closes.
+  std::vector<std::shared_ptr<SseConnection>> sse_connections_;
 
   StatusProvider status_provider_;
   AddMemberHandler add_member_handler_;

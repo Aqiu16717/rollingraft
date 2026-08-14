@@ -162,10 +162,8 @@ void MetricsHttpServer::Stop() {
 
   {
     std::lock_guard<std::mutex> lock(sse_mutex_);
-    for (auto& weak_conn : sse_connections_) {
-      if (auto conn = weak_conn.lock()) {
-        conn->Close();
-      }
+    for (auto& conn : sse_connections_) {
+      conn->Close();
     }
     sse_connections_.clear();
   }
@@ -267,10 +265,8 @@ void MetricsHttpServer::BroadcastEvent(const std::string& json_event) {
   {
     std::lock_guard<std::mutex> lock(sse_mutex_);
     RemoveDeadSseConnections();
-    for (auto& weak_conn : sse_connections_) {
-      if (auto conn = weak_conn.lock()) {
-        connections.push_back(conn);
-      }
+    for (auto& conn : sse_connections_) {
+      connections.push_back(conn);
     }
   }
 
@@ -281,7 +277,7 @@ void MetricsHttpServer::BroadcastEvent(const std::string& json_event) {
 
 void MetricsHttpServer::RemoveDeadSseConnections() {
   sse_connections_.erase(std::remove_if(sse_connections_.begin(), sse_connections_.end(),
-                                        [](const auto& w) { return w.expired(); }),
+                                        [](const auto& conn) { return !conn->IsOpen(); }),
                          sse_connections_.end());
 }
 
@@ -311,10 +307,8 @@ void MetricsHttpServer::OnHeartbeat(std::error_code ec) {
   {
     std::lock_guard<std::mutex> lock(sse_mutex_);
     RemoveDeadSseConnections();
-    for (auto& weak_conn : sse_connections_) {
-      if (auto conn = weak_conn.lock()) {
-        connections.push_back(conn);
-      }
+    for (auto& conn : sse_connections_) {
+      connections.push_back(conn);
     }
   }
 

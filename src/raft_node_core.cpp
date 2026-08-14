@@ -430,69 +430,8 @@ Status RaftNode::RaftNodeImpl::Start() {
           if (!metrics_server_) {
             return;
           }
-          nlohmann::json j;
-          j["event"] = event.Name();
-          j["node_id"] = group_->server_id_;
-          j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now().time_since_epoch())
-                                  .count();
-
-          // Serialize event-specific fields based on type
-          if (event.Is<NodeRoleChangedEvent>()) {
-            const auto& e = event.As<NodeRoleChangedEvent>();
-            j["old_role"] = RaftNodeRoleToString(e.old_role);
-            j["new_role"] = RaftNodeRoleToString(e.new_role);
-            j["term"] = e.term;
-          } else if (event.Is<LeaderChangedEvent>()) {
-            const auto& e = event.As<LeaderChangedEvent>();
-            j["old_leader_id"] = e.old_leader_id;
-            j["new_leader_id"] = e.new_leader_id;
-            j["new_leader_addr"] = e.new_leader_addr;
-            j["term"] = e.term;
-          } else if (event.Is<MembershipChangedEvent>()) {
-            const auto& e = event.As<MembershipChangedEvent>();
-            j["change_type"] =
-                (e.change_type == MembershipChangedEvent::ChangeType::kAdd) ? "add" : "remove";
-            j["target_node_id"] = e.target_node_id;
-            j["target_node_addr"] = e.target_node_addr;
-            j["config_version"] = e.config_version;
-            j["term"] = e.term;
-          } else if (event.Is<LogCompactedEvent>()) {
-            const auto& e = event.As<LogCompactedEvent>();
-            j["snapshot_index"] = e.snapshot_index;
-            j["snapshot_term"] = e.snapshot_term;
-            j["bytes_reclaimed"] = e.bytes_reclaimed;
-            j["log_size_before"] = e.log_size_before;
-            j["log_size_after"] = e.log_size_after;
-          } else if (event.Is<SnapshotInstalledEvent>()) {
-            const auto& e = event.As<SnapshotInstalledEvent>();
-            j["from_leader_id"] = e.from_leader_id;
-            j["snapshot_index"] = e.snapshot_index;
-            j["snapshot_term"] = e.snapshot_term;
-            j["bytes_received"] = e.bytes_received;
-            j["success"] = e.success;
-            if (!e.error_message.empty()) {
-              j["error_message"] = e.error_message;
-            }
-          } else if (event.Is<ProposalCommittedEvent>()) {
-            const auto& e = event.As<ProposalCommittedEvent>();
-            j["index"] = e.index;
-            j["term"] = e.term;
-          } else if (event.Is<ProposalAppliedEvent>()) {
-            const auto& e = event.As<ProposalAppliedEvent>();
-            j["index"] = e.index;
-            j["term"] = e.term;
-            j["success"] = e.success;
-          } else if (event.Is<ElectionTimeoutEvent>()) {
-            const auto& e = event.As<ElectionTimeoutEvent>();
-            j["current_term"] = e.current_term;
-            j["current_role"] = RaftNodeRoleToString(e.current_role);
-          } else if (event.Is<NodeLifecycleEvent>()) {
-            const auto& e = event.As<NodeLifecycleEvent>();
-            j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
-          }
-
-          infra_->metrics_server_->BroadcastEvent(j.dump());
+          infra_->metrics_server_->BroadcastEvent(
+              FormatSseEvent(event, group_->server_id_, group_->group_id_));
         });
       }
 
@@ -740,6 +679,74 @@ std::string RaftNode::RaftNodeImpl::GetLeaderAddr() const {
 NodeId RaftNode::RaftNodeImpl::GetLeaderId() const {
   std::lock_guard<std::mutex> lock(group_->election_mtx_);
   return group_->leader_id_;
+}
+
+std::string RaftNode::RaftNodeImpl::FormatSseEvent(const RaftEvent& event, NodeId node_id,
+                                                   uint64_t group_id) {
+  nlohmann::json j;
+  j["event"] = event.Name();
+  j["node_id"] = node_id;
+  j["group_id"] = group_id;
+  j["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+
+  // Serialize event-specific fields based on type
+  if (event.Is<NodeRoleChangedEvent>()) {
+    const auto& e = event.As<NodeRoleChangedEvent>();
+    j["old_role"] = RaftNodeRoleToString(e.old_role);
+    j["new_role"] = RaftNodeRoleToString(e.new_role);
+    j["term"] = e.term;
+  } else if (event.Is<LeaderChangedEvent>()) {
+    const auto& e = event.As<LeaderChangedEvent>();
+    j["old_leader_id"] = e.old_leader_id;
+    j["new_leader_id"] = e.new_leader_id;
+    j["new_leader_addr"] = e.new_leader_addr;
+    j["term"] = e.term;
+  } else if (event.Is<MembershipChangedEvent>()) {
+    const auto& e = event.As<MembershipChangedEvent>();
+    j["change_type"] =
+        (e.change_type == MembershipChangedEvent::ChangeType::kAdd) ? "add" : "remove";
+    j["target_node_id"] = e.target_node_id;
+    j["target_node_addr"] = e.target_node_addr;
+    j["config_version"] = e.config_version;
+    j["term"] = e.term;
+  } else if (event.Is<LogCompactedEvent>()) {
+    const auto& e = event.As<LogCompactedEvent>();
+    j["snapshot_index"] = e.snapshot_index;
+    j["snapshot_term"] = e.snapshot_term;
+    j["bytes_reclaimed"] = e.bytes_reclaimed;
+    j["log_size_before"] = e.log_size_before;
+    j["log_size_after"] = e.log_size_after;
+  } else if (event.Is<SnapshotInstalledEvent>()) {
+    const auto& e = event.As<SnapshotInstalledEvent>();
+    j["from_leader_id"] = e.from_leader_id;
+    j["snapshot_index"] = e.snapshot_index;
+    j["snapshot_term"] = e.snapshot_term;
+    j["bytes_received"] = e.bytes_received;
+    j["success"] = e.success;
+    if (!e.error_message.empty()) {
+      j["error_message"] = e.error_message;
+    }
+  } else if (event.Is<ProposalCommittedEvent>()) {
+    const auto& e = event.As<ProposalCommittedEvent>();
+    j["index"] = e.index;
+    j["term"] = e.term;
+  } else if (event.Is<ProposalAppliedEvent>()) {
+    const auto& e = event.As<ProposalAppliedEvent>();
+    j["index"] = e.index;
+    j["term"] = e.term;
+    j["success"] = e.success;
+  } else if (event.Is<ElectionTimeoutEvent>()) {
+    const auto& e = event.As<ElectionTimeoutEvent>();
+    j["current_term"] = e.current_term;
+    j["current_role"] = RaftNodeRoleToString(e.current_role);
+  } else if (event.Is<NodeLifecycleEvent>()) {
+    const auto& e = event.As<NodeLifecycleEvent>();
+    j["state"] = (e.state == NodeLifecycleEvent::State::kStarted) ? "started" : "stopped";
+  }
+
+  return j.dump();
 }
 
 Index RaftNode::RaftNodeImpl::GetCommitIndex() const {

@@ -217,8 +217,19 @@ Status RaftStore::CreateGroup(uint64_t group_id, const RaftGroupOptions& options
     if (it != groups_.end()) {
       it->second->Stop();
     }
-    groups_[group_id] = std::move(group);
+    groups_[group_id] = group;
   }
+
+  // Wire the group's EventBus to the shared metrics server's SSE broadcast.
+  // The handler captures the store (not the group), so it stays valid after
+  // the group is removed; the subscription dies with the group's EventBus.
+  group->GetEventBus().SubscribeAll(
+      [this, node_id = config_.node_id, group_id](const RaftEvent& event) {
+        if (infra_ && infra_->metrics_server_) {
+          infra_->metrics_server_->BroadcastEvent(
+              RaftNode::RaftNodeImpl::FormatSseEvent(event, node_id, group_id));
+        }
+      });
 
   LOG_INFO("RaftStore created group {} on node {}", group_id, config_.node_id);
   return Status::OK();

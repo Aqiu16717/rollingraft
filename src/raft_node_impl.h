@@ -108,6 +108,11 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   bool RestoreFromSnapshotFile(const std::string& temp_path, Index index, Term term);
   void PersistSnapshotFile(const std::string& temp_path, Index index, Term term);
 
+  // Serialize a raft event into the SSE JSON payload (event name, node_id,
+  // group_id, timestamp, type-specific fields). Shared by the legacy
+  // single-group broadcast and the multi-raft store subscription.
+  static std::string FormatSseEvent(const RaftEvent& event, NodeId node_id, uint64_t group_id);
+
  private:
   // State transitions (must hold group_->election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);

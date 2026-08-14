@@ -7,12 +7,11 @@
 #include "rollingraft/logger.h"
 #include "rollingraft/raft_node.h"
 
-#include <nlohmann/json.hpp>
-
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
 #include "raft_store.h"
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 using namespace rollingraft;
 
@@ -435,6 +434,68 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
     }
   }
   EXPECT_TRUE(triggered) << "snapshot trigger should route to group 1's leader";
+
+  // SSE event stream: connect /v1/events on all three stores (the leader
+  // can be anywhere), then transfer leadership on the actual leader so both
+  // role-change and leader-change events fire on its store. Proposals do not
+  // emit SSE events today, so the transfer is the reliable event source.
+  std::vector<std::string> sse_bodies(3);
+  std::vector<std::thread> sse_threads;
+  for (int i = 0; i < 3; ++i) {
+    sse_threads.emplace_back([&, i]() {
+      std::string cmd = "curl -s -N --noproxy '*' --max-time 4 -v http://127.0.0.1:" +
+                        std::to_string(base_port + 5 + i) + "/v1/events 2>&1";
+      FILE* pipe = popen(cmd.c_str(), "r");
+      if (!pipe) {
+        return;
+      }
+      char buffer[4096];
+      while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        sse_bodies[i] += buffer;
+      }
+      pclose(pipe);
+    });
+  }
+
+  // Give the connections a moment to establish, then find the leader and
+  // transfer to another node through its store's admin endpoint.
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  int leader_store = -1;
+  for (int attempt = 0; attempt < 30 && leader_store < 0; ++attempt) {
+    for (int i = 0; i < 3; ++i) {
+      auto* g = stores_[i]->GetGroup(1);
+      if (g && g->IsLeader()) {
+        leader_store = i;
+        break;
+      }
+    }
+    if (leader_store < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
+  ASSERT_GE(leader_store, 0) << "no group 1 leader found";
+
+  NodeId target = (leader_store + 1 == 1) ? 2 : 1;
+  std::string body = "{\"group_id\":1,\"target_node_id\":" + std::to_string(target) + "}";
+  std::string cmd = "curl -s --noproxy '*' --max-time 3 -X POST -d '" + body +
+                    "' http://127.0.0.1:" + std::to_string(base_port + 5 + leader_store) +
+                    "/v1/leadership/transfer";
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (pipe) {
+    pclose(pipe);
+  }
+  for (auto& t : sse_threads) {
+    t.join();
+  }
+
+  std::string all_sse;
+  for (const auto& b : sse_bodies) {
+    all_sse += b;
+  }
+  EXPECT_NE(all_sse.find("\"group_id\""), std::string::npos)
+      << "SSE events should carry group_id: " << all_sse.substr(0, 500);
+  EXPECT_NE(all_sse.find("\"event\""), std::string::npos)
+      << "SSE stream should carry events: " << all_sse.substr(0, 500);
 }
 
 TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {

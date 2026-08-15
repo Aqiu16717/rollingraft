@@ -46,3 +46,8 @@
 - 测试：StoreEndpointsWork 扩展 3-store SSE + transfer 验证 group_id 事件
 - Release 366/366；提交 a394c77（fix）+ d666312（feat），已推送
 - **SSE 事件流完成** ✅
+
+## Session 2026-08-15 — 性能热点
+- WAL 读取 fd 缓存：ReadLogEntryAt/ScanSegment 不再每次 open/close（GC/Close 时失效）
+- DeleteRange 评估后推迟：bundled LevelDB 版本不支持该 API（需依赖升级）
+- Release 366/366；提交 3276997，已推送

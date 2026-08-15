@@ -448,6 +448,7 @@ void WALPersister::Close() {
     active_segment_ = Segment{};
   }
 
+  InvalidateSegmentFdCache();
   wal_dir_.clear();
   meta_path_.clear();
   index_.Clear();
@@ -655,6 +656,9 @@ Status WALPersister::GarbageCollect(uint64_t before_log_index) {
     closedir(dir);
   }
 
+  if (!segments_to_delete.empty()) {
+    InvalidateSegmentFdCache();
+  }
   for (uint64_t seg_id : segments_to_delete) {
     std::string path = wal_dir_ + "/" + std::to_string(seg_id) + ".wal";
     unlink(path.c_str());
@@ -831,34 +835,29 @@ static Status ParseProtobufPayload(const std::string& payload, RaftLogEntry& ent
 
 Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
                                     RaftLogEntry& entry) {
-  int fd = -1;
-  auto status = OpenSegment(segment_id, &fd);
-  if (!status.ok()) {
-    return status;
+  int fd = GetCachedSegmentFd(segment_id);
+  if (fd < 0) {
+    return Status::Error("Failed to open segment for read: " + std::to_string(segment_id));
   }
 
   lseek(fd, file_offset, SEEK_SET);
 
   uint32_t crc;
   if (read(fd, &crc, sizeof(crc)) != sizeof(crc)) {
-    close(fd);
     return Status::Error("Failed to read CRC");
   }
 
   uint32_t length;
   if (read(fd, &length, sizeof(length)) != sizeof(length)) {
-    close(fd);
     return Status::Error("Failed to read length");
   }
 
   uint16_t type_val;
   if (read(fd, &type_val, sizeof(type_val)) != sizeof(type_val)) {
-    close(fd);
     return Status::Error("Failed to read type");
   }
 
   if (length > kMaxRecordSize) {
-    close(fd);
     return Status::Corruption("Record too large");
   }
 
@@ -866,12 +865,9 @@ Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
   if (length > 0) {
     payload.resize(length);
     if (read(fd, payload.data(), length) != static_cast<ssize_t>(length)) {
-      close(fd);
       return Status::Corruption("Failed to read payload");
     }
   }
-
-  close(fd);
 
   // Verify CRC
   std::string crc_data;
@@ -898,7 +894,7 @@ Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
   }
 
   if (format_version == kFormatVersionProtobuf) {
-    status = ParseProtobufPayload(payload, entry, computed_crc);
+    auto status = ParseProtobufPayload(payload, entry, computed_crc);
     if (status.ok()) {
       return status;
     }
@@ -907,6 +903,33 @@ Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
   }
 
   return ParseJsonPayload(payload, entry, computed_crc);
+}
+
+int WALPersister::GetCachedSegmentFd(uint64_t segment_id) {
+  if (cached_segment_id_ == segment_id && cached_fd_ >= 0) {
+    return cached_fd_;
+  }
+  if (cached_fd_ >= 0) {
+    close(cached_fd_);
+    cached_fd_ = -1;
+    cached_segment_id_ = 0;
+  }
+  int fd = -1;
+  auto status = OpenSegment(segment_id, &fd);
+  if (!status.ok()) {
+    return -1;
+  }
+  cached_fd_ = fd;
+  cached_segment_id_ = segment_id;
+  return fd;
+}
+
+void WALPersister::InvalidateSegmentFdCache() {
+  if (cached_fd_ >= 0) {
+    close(cached_fd_);
+    cached_fd_ = -1;
+    cached_segment_id_ = 0;
+  }
 }
 
 Status WALPersister::OpenSegment(uint64_t segment_id, int* fd) {
@@ -1073,22 +1096,20 @@ Status WALPersister::ReadTrailer(int fd, uint64_t* end_offset) {
 Status WALPersister::ScanSegment(uint64_t segment_id,
                                  const std::function<bool(const WALRecord&)>& callback,
                                  uint64_t* out_truncate_offset) {
-  int fd = -1;
-  auto status = OpenSegment(segment_id, &fd);
-  if (!status.ok()) {
-    return status;
+  int fd = GetCachedSegmentFd(segment_id);
+  if (fd < 0) {
+    return Status::Error("Failed to open segment for scan: " + std::to_string(segment_id));
   }
 
   // Get end offset from trailer. If the trailer is missing or invalid (crash
   // before it was written), fall back to the physical file size and let the
   // record scan below find the corruption point.
   uint64_t end_offset = 0;
-  status = ReadTrailer(fd, &end_offset);
+  auto status = ReadTrailer(fd, &end_offset);
   if (!status.ok()) {
     off_t file_size = lseek(fd, 0, SEEK_END);
     if (file_size <= static_cast<off_t>(kHeaderSize)) {
       // Empty segment (just header): nothing to scan.
-      close(fd);
       return Status::OK();
     }
     end_offset = static_cast<uint64_t>(file_size);
@@ -1113,7 +1134,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("Failed to read CRC (truncated tail)");
     }
 
@@ -1122,7 +1142,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("Failed to read length (truncated tail)");
     }
 
@@ -1131,7 +1150,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("Failed to read type (truncated tail)");
     }
 
@@ -1140,7 +1158,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("Record extends beyond segment end");
     }
 
@@ -1148,7 +1165,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("Record too large");
     }
 
@@ -1159,7 +1175,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
         if (out_truncate_offset) {
           *out_truncate_offset = current_offset;
         }
-        close(fd);
         return Status::Corruption("Failed to read payload");
       }
     }
@@ -1176,7 +1191,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       if (out_truncate_offset) {
         *out_truncate_offset = current_offset;
       }
-      close(fd);
       return Status::Corruption("CRC mismatch in segment " + std::to_string(segment_id));
     }
 
@@ -1186,7 +1200,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
       uint64_t log_index = 0;
       auto parse_status = ExtractLogIndexFromPayload(payload, format_version, log_index);
       if (!parse_status.ok()) {
-        close(fd);
         return parse_status;
       }
       uint64_t record_len = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + length;
@@ -1197,7 +1210,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
         uint64_t before_index = j["before_index"].get<uint64_t>();
         index_.TruncatePrefix(before_index);
       } catch (const std::exception& e) {
-        close(fd);
         return Status::Corruption("Failed to parse truncate prefix: " + std::string(e.what()));
       }
     } else if (type == WALRecordType::kTruncateSuffix) {
@@ -1206,7 +1218,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
         uint64_t from_index = j["from_index"].get<uint64_t>();
         index_.TruncateSuffix(from_index);
       } catch (const std::exception& e) {
-        close(fd);
         return Status::Corruption("Failed to parse truncate suffix: " + std::string(e.what()));
       }
     }
@@ -1215,7 +1226,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
     if (callback) {
       WALRecord record{type, payload};
       if (!callback(record)) {
-        close(fd);
         return Status::OK();
       }
     }
@@ -1223,7 +1233,6 @@ Status WALPersister::ScanSegment(uint64_t segment_id,
     current_offset += sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + length;
   }
 
-  close(fd);
   return Status::OK();
 }
 

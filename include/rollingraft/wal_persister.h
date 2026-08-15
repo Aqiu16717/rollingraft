@@ -251,11 +251,20 @@ class WALPersister {
   // Segment id -> format version (protected by mtx_)
   std::map<uint64_t, uint16_t> segment_format_versions_;
 
+  // Cached read fd (protected by mtx_)
+  int cached_fd_ = -1;
+  uint64_t cached_segment_id_ = 0;
+
   // Write buffer (protected by mtx_). Records are appended here and flushed
   // to the active segment in batches.
   std::string write_buf_;
 
   // Internal helpers
+  // Get an fd for a segment, caching it across reads so GetEntry/GetEntries
+  // don't pay open()+header-validate+close() per call. The cache is
+  // invalidated on GarbageCollect (segment deleted) and Close.
+  int GetCachedSegmentFd(uint64_t segment_id);
+  void InvalidateSegmentFdCache();
   Status OpenSegment(uint64_t segment_id, int* fd);
   Status CreateSegment(uint64_t segment_id);
   Status CloseSegment(Segment* seg);

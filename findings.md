@@ -1,6 +1,8 @@
 # Findings
 
-## 落后 follower 补全振荡（2026-08-16 记录，待验证）
+## 落后 follower 补全振荡（2026-08-16 已关闭）
+
+**结论：模拟环境时序限制，非真实 bug。** 真实网络集成测试 `FollowerCatchesUpAfterRestart`（停 follower → leader 提交 → 重启 → 验证补全）3/3 通过，1.7 秒内完成补全——真实网络延迟/重试交错打破模拟环境里 pipeline 推进 vs 回退的对称振荡。
 
 确定性测试 `LaggingFollowerCatchesUp`（已移除）暴露：隔离 laggard 后愈合，leader 的 next_index 在 9↔10 振荡——pipeline 发送时立即推进（next=9 发 prev=8 批 → 推进 11 → 发 prev=10 批）与失败回退竞争，prev=8 的批（能成功的那批）在模拟环境时序下从未到达 laggard，重试额度耗尽后靠心跳重启循环，6000ms 不收敛。
 

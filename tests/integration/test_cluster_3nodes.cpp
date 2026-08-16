@@ -605,6 +605,85 @@ TEST_F(Cluster3NodesTest, MembershipChangeSurvivesRestart) {
   }
 }
 
+// A follower that goes away while the leader commits must catch up after it
+// comes back — this exercises the AppendEntries rewind/catch-up path on real
+// network timing (the deterministic-clock variant oscillates; see
+// findings.md "lagging follower catch-up oscillation").
+TEST_F(Cluster3NodesTest, FollowerCatchesUpAfterRestart) {
+  StartCluster();
+  WaitForLeader();
+
+  // The cluster must persist logs for a restart to make sense; the rest of
+  // this suite runs without a persister, so enable it and restart.
+  for (auto& config : configs_) {
+    config.persister_factory = []() { return CreateLevelDBPersister(); };
+  }
+  for (auto& node : nodes_) {
+    node->Stop();
+    node.reset();
+  }
+  nodes_.clear();
+  state_machines_.clear();
+  for (int i = 0; i < 3; ++i) {
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    auto node = std::make_unique<RaftNode>(configs_[i], sm);
+    ASSERT_TRUE(node->Start().ok());
+    nodes_.push_back(std::move(node));
+  }
+  WaitForLeader();
+
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+
+  // Baseline commits that reach every node.
+  for (int i = 0; i < 5; ++i) {
+    std::atomic<bool> done{false};
+    leader->Propose("base_" + std::to_string(i), [&](const ApplyResult&) { done = true; });
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!done && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  }
+
+  // Stop a follower entirely.
+  size_t follower_idx = 0;
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    if (nodes_[i].get() != leader) {
+      follower_idx = i;
+      break;
+    }
+  }
+  ASSERT_LT(follower_idx, nodes_.size());
+  nodes_[follower_idx]->Stop();
+  nodes_[follower_idx].reset();
+
+  // Leader commits more entries while the follower is gone.
+  auto* leader2 = GetLeader();
+  ASSERT_NE(leader2, nullptr);
+  for (int i = 5; i < 10; ++i) {
+    std::atomic<bool> done{false};
+    leader2->Propose("lag_" + std::to_string(i), [&](const ApplyResult&) { done = true; });
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!done && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  }
+
+  // Bring the follower back; it must catch up via log replication.
+  auto sm = std::make_shared<MockStateMachine>();
+  state_machines_[follower_idx] = sm;
+  auto node = std::make_unique<RaftNode>(configs_[follower_idx], sm);
+  ASSERT_TRUE(node->Start().ok());
+  nodes_[follower_idx] = std::move(node);
+
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (sm->GetLastAppliedIndex() < 10 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  EXPECT_GE(sm->GetLastAppliedIndex(), 10) << "follower should have caught up after restart";
+}
+
 TEST_F(Cluster3NodesTest, DoesNotRemoveNodeAfterPartitionHeals) {
   auto ports = AllocateEphemeralPorts(3);
   addrs_ = FormatAddrs(ports);

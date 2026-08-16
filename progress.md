@@ -51,3 +51,9 @@
 - WAL 读取 fd 缓存：ReadLogEntryAt/ScanSegment 不再每次 open/close（GC/Close 时失效）
 - DeleteRange 评估后推迟：bundled LevelDB 版本不支持该 API（需依赖升级）
 - Release 366/366；提交 3276997，已推送
+
+## Session 2026-08-16 — 确定性测试扩展
+- 新增 3 个确定性场景测试：PartitionStormConverges、IsolatedLeaderCannotCommit、MembershipAddRemoveConverges（+DropMessagesTo/CountLeaders 基础设施）
+- **发现并修复真实 bug**：心跳拒绝不回退 next_index（HandleHeartbeatResponse）→ 落后 follower 永不补全；心跳失败不再消耗重试额度
+- 发现 pipeline 推进 vs 回退的振荡（模拟环境），记录 findings.md 待真实网络验证
+- Release 369/369；提交 b928652，已推送

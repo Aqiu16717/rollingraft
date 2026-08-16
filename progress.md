@@ -57,3 +57,8 @@
 - **发现并修复真实 bug**：心跳拒绝不回退 next_index（HandleHeartbeatResponse）→ 落后 follower 永不补全；心跳失败不再消耗重试额度
 - 发现 pipeline 推进 vs 回退的振荡（模拟环境），记录 findings.md 待真实网络验证
 - Release 369/369；提交 b928652，已推送
+
+## Session 2026-08-16（延续）— pipeline 振荡验证
+- 真实网络集成测试 FollowerCatchesUpAfterRestart：停 follower → leader 提交 → 重启 → 补全验证，3/3 通过
+- **结论**：pipeline 推进/回退振荡是模拟时钟时序限制，非真实 bug（findings.md 已关闭）
+- Release 370/370；提交 4cc2ae6，已推送

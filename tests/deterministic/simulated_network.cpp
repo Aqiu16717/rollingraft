@@ -26,7 +26,7 @@ void SimulatedNetwork::Send(NodeId from, NodeId to, const std::string& payload,
   if (partitions_.find({std::min(from, to), std::max(from, to)}) != partitions_.end()) {
     return;
   }
-  if (drop_probability_ > 0.0f) {
+  if (drop_probability_ > 0.0f && (drop_target_ < 0 || to == drop_target_)) {
     std::uniform_real_distribution<float> d(0.0f, 1.0f);
     if (d(rng_) < drop_probability_) {
       return;
@@ -129,6 +129,13 @@ void SimulatedNetwork::HealAllPartitions() {
 void SimulatedNetwork::DropMessages(float probability) {
   std::lock_guard<std::mutex> lock(mtx_);
   drop_probability_ = std::clamp(probability, 0.0f, 1.0f);
+  drop_target_ = -1;
+}
+
+void SimulatedNetwork::DropMessagesTo(NodeId to, float probability) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  drop_probability_ = std::clamp(probability, 0.0f, 1.0f);
+  drop_target_ = to;
 }
 
 void SimulatedNetwork::DelayAll(uint64_t delay_ms) {

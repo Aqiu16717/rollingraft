@@ -126,6 +126,7 @@ target_link_libraries(integration_tests
 add_executable(deterministic_tests
   deterministic/test_chaos.cpp
   deterministic/test_chaos_scenarios.cpp
+  deterministic/test_scenarios.cpp
 )
 
 target_include_directories(deterministic_tests

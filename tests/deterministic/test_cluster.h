@@ -39,6 +39,7 @@ class TestCluster {
   void DelayMessages(uint64_t delay_ms);
   Status ProposeToLeader(const std::string& command);
   Status ProposeToNode(NodeId id, const std::string& command);
+  int CountLeaders() const;
   void AssertNoLeader() const;
   void AssertSingleLeader() const;
   void AssertCommitted(Index index) const;

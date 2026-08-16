@@ -168,6 +168,8 @@ Status TestCluster::ProposeToNode(NodeId id, const std::string& command) {
 }
 void TestCluster::AssertNoLeader() const { ASSERT_EQ(GetLeaderIds().size(), 0); }
 void TestCluster::AssertSingleLeader() const { ASSERT_EQ(GetLeaderIds().size(), 1); }
+
+int TestCluster::CountLeaders() const { return static_cast<int>(GetLeaderIds().size()); }
 void TestCluster::AssertCommitted(Index index) const {
   for (size_t i = 0; i < options_.num_nodes; ++i) {
     if (nodes_[i]) {

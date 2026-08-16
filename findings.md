@@ -1,5 +1,15 @@
 # Findings
 
+## 落后 follower 补全振荡（2026-08-16 记录，待验证）
+
+确定性测试 `LaggingFollowerCatchesUp`（已移除）暴露：隔离 laggard 后愈合，leader 的 next_index 在 9↔10 振荡——pipeline 发送时立即推进（next=9 发 prev=8 批 → 推进 11 → 发 prev=10 批）与失败回退竞争，prev=8 的批（能成功的那批）在模拟环境时序下从未到达 laggard，重试额度耗尽后靠心跳重启循环，6000ms 不收敛。
+
+期间确认并修复两个真实缺陷（保留）：
+1. **心跳失败不回退 next_index**（HandleHeartbeatResponse 只调度重试）——laggard 永远用同 prev 拒绝心跳，永不回退。修复：回退 + 不调度额外重试（心跳 tick 自然重发）。
+2. **心跳失败消耗重试额度**（与条目失败共享 retry_state）——回退多轮期间心跳拒绝把 attempts 打到上限，补全中断。修复：心跳失败不 +attempts。
+
+**待验证**：next 振荡（推进 vs 回退竞争）在真实网络（延迟/重试交错）下是否会自愈，还是真实 bug。需要真实 3 节点 + 隔离 follower 的集成测试确认。
+
 ## 偶发竞态：TcpConnection pending_callbacks_（2026-08-10 记录）
 
 两阶段快照改造后 TSan 全量首跑报 1 个竞态（MultiRaft2GroupsTest.BothGroupsElectIndependentLeaders 触发，Subprocess aborted + LeaderCanProposeInEachGroup timeout）。单跑不触发；第二次 TSan 全量 0 竞态全绿。

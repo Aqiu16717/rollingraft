@@ -35,6 +35,9 @@ class SimulatedNetwork {
   void HealPartition(NodeId a, NodeId b);
   void HealAllPartitions();
   void DropMessages(float probability);
+  // Drop all messages sent TO the given node while drop_probability_for_ is
+  // set; used to isolate a single lagging follower deterministically.
+  void DropMessagesTo(NodeId to, float probability);
   void DelayAll(uint64_t delay_ms);
   void DelayNext(uint64_t delay_ms, size_t count = 1);
   void DuplicateMessages(float probability);
@@ -51,6 +54,7 @@ class SimulatedNetwork {
   std::vector<SimulatedMessage> pending_messages_;
   std::set<std::pair<NodeId, NodeId>> partitions_;
   float drop_probability_ = 0.0f;
+  NodeId drop_target_ = -1;
   uint64_t fixed_delay_ms_ = 0;
   uint64_t next_delay_ms_ = 0;
   size_t next_delay_count_ = 0;

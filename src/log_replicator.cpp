@@ -585,8 +585,25 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
   }
 
   if (!resp.success_) {
-    // Stale term or other rejection — schedule retry
-    ScheduleAppendEntriesRetryLocked(from);
+    // A heartbeat carries the same prev_log check as a real append, so a
+    // rejection may carry a conflict hint. Without rewinding next_index here,
+    // a lagging follower would never catch up: every retry sends another
+    // heartbeat at the same prev_log and gets rejected again.
+    if (resp.conflict_index_ > 0) {
+      group_->next_index_[from] = resp.conflict_index_;
+      if (resp.conflict_index_ <= group_->match_index_[from]) {
+        group_->match_index_[from] = resp.conflict_index_ - 1;
+      }
+    } else {
+      group_->next_index_[from] = std::max<Index>(1, group_->next_index_[from] - 1);
+      if (group_->next_index_[from] <= group_->match_index_[from]) {
+        group_->match_index_[from] = group_->next_index_[from] - 1;
+      }
+    }
+    // Do NOT schedule a retry or bump the retry counter here: heartbeats are
+    // periodic, so the next tick will resend at the rewound index. Counting
+    // heartbeat rejections against max_retry_attempts would exhaust the
+    // budget during a multi-step catch-up and stall replication.
     return;
   }
 

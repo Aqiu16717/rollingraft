@@ -18,21 +18,19 @@ Last run: 2026-08-17 (interactive: docker-test segfault fix)
 
 ## High Priority (loop is acting or waiting on human)
 
-- **docker-test segfault on main — root-caused and fixed locally, awaiting push approval (08-17)**.
-  `Cluster3NodesTest.FollowerCatchesUpAfterRestart` (added 08-16 in `4cc2ae6`) segfaulted in docker-test (exit 139) — the only CI job that runs the integration suite. Root cause is a **test bug, not a product bug**: `GetLeader()` in `test_cluster_3nodes.cpp` called `IsLeader()` on a reset (null) `nodes_` slot. Fixed with a null-slot guard (matches existing idiom). Verified: 10/10 bare runs + full `make test` (370/370) green locally. CI on main stays red until the fix commit is pushed.
+- **TSan RPC-timer race — fixed and verified locally, awaiting push approval (08-17)**.
+  Root cause confirmed in code: `Send()` armed the per-RPC `steady_timer` on the PeerConnection strand thread while `cancel()` ran on the TcpConnection strand / Close threads (ASIO shared-object violation). Fix: all timer ops (expires_after/async_wait/cancel) serialized on the connection strand via `asio::post` + `CancelTimer` helper. Regression test added: `tests/integration/test_transport_timer_race.cpp` (3-node Propose hammer under TSan). Verified: `make test` 371/371, `make test-tsan` 371/371, stress test 8/8 TSan-clean.
+  Note: the timer race never reproduced locally on macOS TSan (Linux-only manifestation) — Linux CI TSan is the definitive gate post-push.
   Awaiting: human approval to push.
 
-- **Intermittent TSan race — fix proposal delivered, awaiting human go/no-go (08-15)**.
-  Root cause identified: NOT the `pending_callbacks_` map (that's mutex-protected) — it's the `asio::steady_timer` object itself. `async_wait`/`expires_after` initiated on Send's caller thread vs `cancel()` on io thread / Close's thread, without strand serialization (ASIO "shared objects: unsafe"). Sites: `asio_network_transport.cpp:175,184,494,116,140`.
-  Proposed fix (~20 lines): post all timer initiations through the strand + cancel helper. TSan suppression is forbidden by constraints.
-  Awaiting: human decision to implement on a branch/worktree.
-  Loop-pause-all: not active.
+- ~~docker-test segfault on main~~ → pushed 08-17, CI green (run 32039682301). Closed out.
 
 ## Watch List
 
 - ~~Intermittent TSan race~~ → in High Priority (escalated 08-13).
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
+- macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
 - Issue #18 (open, enhancement): multi-raft 3-node example + README usage guide — unassigned, no recent activity.
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
 

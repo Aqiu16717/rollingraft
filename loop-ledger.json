@@ -12,5 +12,18 @@
         }
       ]
     }
+  ,
+    {
+      "item": "TSan race: RPC timer arm/cancel across strands (asio_network_transport.cpp)",
+      "root_cause": "Send() armed the steady_timer on the PeerConnection strand thread; cancel() ran on the TcpConnection strand / Close threads — ASIO shared-object violation",
+      "attempts": [
+        {
+          "n": 1,
+          "date": "2026-08-17",
+          "change": "serialize expires_after/async_wait via connection strand + CancelTimer helper; regression stress test test_transport_timer_race.cpp",
+          "result": "verified — make test 371/371, make test-tsan 371/371, stress test 8/8 TSan clean"
+        }
+      ]
+    }
   ]
 }

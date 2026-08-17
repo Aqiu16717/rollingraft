@@ -185,3 +185,18 @@ Notes: WAL perf workstream green (08-15). TSan race awaiting human go/no-go on p
 ```
 
 Notes: docker-test segfault (FollowerCatchesUpAfterRestart, exit 139, both 08-16 commits red) reproduced locally. Root cause: GetLeader() null-slot deref in test_cluster_3nodes.cpp — test bug, not product. Fixed with null-slot guard; 10/10 bare runs + make test 370/370 green. Fix committed locally, NOT pushed — awaiting human approval. TSan race still awaiting go/no-go.
+
+```json
+{
+  "run_id": "2026-08-17T15:04:02Z",
+  "pattern": "interactive",
+  "duration_s": 4200,
+  "items_found": 2,
+  "actions_taken": 2,
+  "escalations": 0,
+  "tokens_estimate": 85000,
+  "outcome": "fix-verified"
+}
+```
+
+Notes: (1) docker segfault fix pushed, CI green (run 32039682301). (2) TSan timer race fixed: timer ops serialized on connection strand (post + CancelTimer) + regression stress test. Verified make test 371/371, make test-tsan 371/371, stress 8/8 TSan-clean. macOS kqueue TSan noise confirmed pre-suppressed in tsan_suppressions.txt — no new escalation. Commits local, awaiting push approval.

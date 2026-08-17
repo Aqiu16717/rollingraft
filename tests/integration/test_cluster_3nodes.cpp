@@ -139,6 +139,10 @@ class Cluster3NodesTest : public ::testing::Test {
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start)
             .count() < timeout_sec) {
       for (auto& node : nodes_) {
+        if (!node) {
+          // Slots can be null mid-test (a stopped node was reset); skip them.
+          continue;
+        }
         if (node->IsLeader()) {
           return node.get();
         }

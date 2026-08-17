@@ -199,4 +199,4 @@ Notes: docker-test segfault (FollowerCatchesUpAfterRestart, exit 139, both 08-16
 }
 ```
 
-Notes: (1) docker segfault fix pushed, CI green (run 32039682301). (2) TSan timer race fixed: timer ops serialized on connection strand (post + CancelTimer) + regression stress test. Verified make test 371/371, make test-tsan 371/371, stress 8/8 TSan-clean. macOS kqueue TSan noise confirmed pre-suppressed in tsan_suppressions.txt — no new escalation. Commits local, awaiting push approval.
+Notes: (1) docker segfault fix pushed, CI green (run 32039682301). (2) TSan timer race fixed: timer ops serialized on connection strand (post + CancelTimer) + regression stress test. Verified make test 371/371, make test-tsan 371/371, stress 8/8 TSan-clean. macOS kqueue TSan noise confirmed pre-suppressed in tsan_suppressions.txt — no new escalation. Both pushed 08-17; run 32041263920 all 12 jobs green incl. Linux CI TSan. Both items closed out.

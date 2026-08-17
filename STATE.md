@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-17 (interactive: docker-test segfault fix)
+Last run: 2026-08-17 (interactive: segfault fix + TSan timer fix, both CI green)
 
 ## Project context (static, keep updated)
 
@@ -18,11 +18,7 @@ Last run: 2026-08-17 (interactive: docker-test segfault fix)
 
 ## High Priority (loop is acting or waiting on human)
 
-- **TSan RPC-timer race — fixed and verified locally, awaiting push approval (08-17)**.
-  Root cause confirmed in code: `Send()` armed the per-RPC `steady_timer` on the PeerConnection strand thread while `cancel()` ran on the TcpConnection strand / Close threads (ASIO shared-object violation). Fix: all timer ops (expires_after/async_wait/cancel) serialized on the connection strand via `asio::post` + `CancelTimer` helper. Regression test added: `tests/integration/test_transport_timer_race.cpp` (3-node Propose hammer under TSan). Verified: `make test` 371/371, `make test-tsan` 371/371, stress test 8/8 TSan-clean.
-  Note: the timer race never reproduced locally on macOS TSan (Linux-only manifestation) — Linux CI TSan is the definitive gate post-push.
-  Awaiting: human approval to push.
-
+- ~~TSan RPC-timer race~~ → fixed (`ca8c39a`), pushed 08-17, **Linux CI TSan green** (run 32041263920, all 12 jobs). Closed out.
 - ~~docker-test segfault on main~~ → pushed 08-17, CI green (run 32039682301). Closed out.
 
 ## Watch List

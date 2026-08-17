@@ -21,7 +21,7 @@
           "n": 1,
           "date": "2026-08-17",
           "change": "serialize expires_after/async_wait via connection strand + CancelTimer helper; regression stress test test_transport_timer_race.cpp",
-          "result": "verified — make test 371/371, make test-tsan 371/371, stress test 8/8 TSan clean"
+          "result": "verified — make test 371/371, make test-tsan 371/371, stress 8/8 TSan-clean; pushed 08-17, Linux CI TSan green (run 32041263920)"
         }
       ]
     }

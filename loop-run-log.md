@@ -155,3 +155,33 @@ Notes: CI red (format-check gate) on feat(store) commit — root cause isolated 
 ```
 
 Notes: CI red resolved (SSE commits green 08-14). TSan race remains the only High Priority item. No code edited.
+
+```json
+{
+  "run_id": "2026-08-16T07:23:00Z",
+  "pattern": "daily-triage",
+  "duration_s": 70,
+  "items_found": 3,
+  "actions_taken": 1,
+  "escalations": 0,
+  "tokens_estimate": 16000,
+  "outcome": "report-only"
+}
+```
+
+Notes: WAL perf workstream green (08-15). TSan race awaiting human go/no-go on proposed strand fix. No code edited.
+
+```json
+{
+  "run_id": "2026-08-17T14:36:02Z",
+  "pattern": "interactive",
+  "duration_s": 1500,
+  "items_found": 2,
+  "actions_taken": 1,
+  "escalations": 0,
+  "tokens_estimate": 45000,
+  "outcome": "fix-verified"
+}
+```
+
+Notes: docker-test segfault (FollowerCatchesUpAfterRestart, exit 139, both 08-16 commits red) reproduced locally. Root cause: GetLeader() null-slot deref in test_cluster_3nodes.cpp — test bug, not product. Fixed with null-slot guard; 10/10 bare runs + make test 370/370 green. Fix committed locally, NOT pushed — awaiting human approval. TSan race still awaiting go/no-go.

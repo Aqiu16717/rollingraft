@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "item": "docker-test segfault: Cluster3NodesTest.FollowerCatchesUpAfterRestart (exit 139)",
+      "root_cause": "GetLeader() in test_cluster_3nodes.cpp dereferenced a reset (null) unique_ptr slot; IsLeader() called with this==nullptr",
+      "attempts": [
+        {
+          "n": 1,
+          "date": "2026-08-17",
+          "change": "null-check skipped-slot guard in GetLeader() loop",
+          "result": "verified — 10/10 bare runs + full make test 370/370 green"
+        }
+      ]
+    }
+  ]
+}

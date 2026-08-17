@@ -113,7 +113,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
     for (auto& [id, pending] : drained) {
       if (pending.timer) {
-        pending.timer->cancel();
+        CancelTimer(pending.timer);
       }
       if (pending.callback) {
         pending.callback("", false, "Connection closed");
@@ -170,9 +170,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     (*msg)[3] = static_cast<char>(length & 0xFF);
     std::memcpy(msg->data() + 4, data.data(), data.size());
 
-    // Set timeout that covers FULL request-response lifecycle
+    // Set timeout that covers FULL request-response lifecycle. All timer
+    // operations (expires_after/async_wait/cancel) are serialized on the
+    // connection strand: Send runs on the PeerConnection strand, while the
+    // response path and Close() cancel from other threads. ASIO timers are
+    // shared objects — only one thread may touch them at a time.
     auto timer = std::make_shared<asio::steady_timer>(strand_);
-    timer->expires_after(timeout);
 
     // CRITICAL: Store callback + timer BEFORE sending to avoid race condition
     // where response arrives before callback is stored
@@ -181,27 +184,30 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       pending_callbacks_[correlation_id] = {std::move(callback), timer};
     }
 
-    timer->async_wait([self, correlation_id](std::error_code ec) {
-      if (ec) {
-        return;  // Cancelled
-      }
-      RpcResponseCallback cb;
-      {
-        std::lock_guard<std::mutex> lock(self->mutex_);
-        auto it = self->pending_callbacks_.find(correlation_id);
-        if (it != self->pending_callbacks_.end()) {
-          cb = std::move(it->second.callback);
-          self->pending_callbacks_.erase(it);
+    asio::post(strand_, [self, timer, correlation_id, timeout]() {
+      timer->expires_after(timeout);
+      timer->async_wait([self, correlation_id](std::error_code ec) {
+        if (ec) {
+          return;  // Cancelled
         }
-      }
-      if (cb) {
-        cb("", false, "Request timeout");
-      }
-      // NOTE: Do NOT set connected_ = false here. RPC timeout is an
-      // application-layer event, not a transport-layer disconnect.
-      // PeerConnection handles connection lifecycle; TcpConnection should
-      // only mark itself disconnected on actual socket errors (read/write
-      // failure) or explicit Close().
+        RpcResponseCallback cb;
+        {
+          std::lock_guard<std::mutex> lock(self->mutex_);
+          auto it = self->pending_callbacks_.find(correlation_id);
+          if (it != self->pending_callbacks_.end()) {
+            cb = std::move(it->second.callback);
+            self->pending_callbacks_.erase(it);
+          }
+        }
+        if (cb) {
+          cb("", false, "Request timeout");
+        }
+        // NOTE: Do NOT set connected_ = false here. RPC timeout is an
+        // application-layer event, not a transport-layer disconnect.
+        // PeerConnection handles connection lifecycle; TcpConnection should
+        // only mark itself disconnected on actual socket errors (read/write
+        // failure) or explicit Close().
+      });
     });
 
     // All writes go through write_queue_ so there is at most one async_write
@@ -443,6 +449,16 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
   }
 
+  // Cancels a request timer on the connection strand. All timer operations
+  // are serialized there (see Send); callers on other threads defer via post.
+  void CancelTimer(const std::shared_ptr<asio::steady_timer>& timer) {
+    if (strand_.running_in_this_thread()) {
+      timer->cancel();
+    } else {
+      asio::post(strand_, [timer]() { timer->cancel(); });
+    }
+  }
+
   SocketVariant socket_;
   asio::strand<asio::io_context::executor_type> strand_;
   NodeId peer_id_;
@@ -491,7 +507,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       if (it != pending_callbacks_.end()) {
         auto cb = std::move(it->second.callback);
         if (it->second.timer) {
-          it->second.timer->cancel();
+          CancelTimer(it->second.timer);
         }
         pending_callbacks_.erase(it);
         return cb;

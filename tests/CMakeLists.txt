@@ -108,6 +108,7 @@ add_executable(integration_tests
   integration/test_cluster_3nodes.cpp
   integration/test_metrics_endpoint.cpp
   integration/test_multi_raft_2groups.cpp
+  integration/test_transport_timer_race.cpp
 )
 
 target_include_directories(integration_tests

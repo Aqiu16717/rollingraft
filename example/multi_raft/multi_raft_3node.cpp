@@ -1,43 +1,3 @@
-# Multi-Raft 3-Node Example + README Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** Add a self-contained single-binary multi-raft demo (`example/multi_raft/multi_raft_3node.cpp`) and a README "Multi-Raft" section documenting `RaftStore`/`RaftGroup`/`SharedNodeInfra` with build/run instructions.
-
-**Architecture:** The demo runs 3 `RaftStore` instances in one process (node IDs 1–3 on `127.0.0.1:9101–9103`), creates 2 groups per store each backed by a minimal in-memory `CounterMachine`, waits for a leader per group, proposes 5 increments per group, prints all six counters (must read 5), then stops everything gracefully and removes its temp data dirs. The README section explains the shared-infra model with a diagram and quick-start commands.
-
-**Tech Stack:** C++20, ASIO (via RollingRaft internals), CMake + the project Makefile, Google-style clang-format.
-
-**Spec:** `docs/superpowers/specs/2026-08-18-multi-raft-3node-example-design.md`
-
-## Global Constraints
-
-- Conventional Commits, imperative subject ≤ 50 chars, no AI attribution trailers.
-- Braces on all `if` bodies; build warning-free under `-Wall -Wextra -Wpedantic`.
-- Never edit `third_party/`, `cmake/patches/`, CI workflows, or Docker scripts.
-- Every `Status` return value in the demo is checked; failures print and exit non-zero.
-- Repo path convention is `example/` (singular) — the issue text's `examples/` is deliberately not used.
-- Do not modify the existing `multi_raft_server.cpp` / `multi_raft_client.cpp`.
-- Do not push without human approval; do not close issue #18 without human approval.
-
----
-
-### Task 1: Demo binary + CMake target
-
-**Files:**
-- Create: `example/multi_raft/multi_raft_3node.cpp`
-- Modify: `example/CMakeLists.txt`
-- Reference (read, do not edit): `example/multi_raft/multi_raft_server.cpp` (CounterMachine pattern), `tests/integration/test_multi_raft_2groups.cpp` (3-store setup pattern), `src/raft_store.h` (API)
-
-**Interfaces:**
-- Consumes: `rollingraft::RaftStore(store_config)` → `Initialize()` / `Start()` / `Stop()` / `CreateGroup(gid, options, sm)` / `GetGroup(gid)` (returns `RaftNode::RaftNodeImpl*` with `IsLeader()` and `Propose(data, callback)` returning `Status`); `RaftStoreConfig{node_id, listen_addr, peers, peer_node_ids, data_dir}`; `RaftGroupOptions{group_id, election_timeout_ms, heartbeat_interval_ms}`; `rollingraft::StateMachine` virtuals (`Apply`, `Query`, `GetLastAppliedIndex`, `CreateSnapshot`, `Restore`, `WaitIndex`) and `rollingraft::Snapshot`.
-- Produces: executable `example_multi_raft_3node` in `build/<config>/example/`; demo exits 0 with all six counters at 5 and temp dirs removed.
-
-- [ ] **Step 1: Write the demo source**
-
-Create `example/multi_raft/multi_raft_3node.cpp` with this exact content:
-
-```cpp
 /**
  * @file multi_raft_3node.cpp
  * @brief Single-binary multi-raft demo: 3 nodes, 2 Raft groups per node
@@ -296,10 +256,9 @@ int main() {
 
   std::cout << "-------------------------------------------\n";
   std::cout << " Multi-Raft 3-node demo started\n";
-  std::cout << " nodes: 127.0.0.1:" << kBasePort << "-" << (kBasePort + kNumNodes - 1)
-            << "\n";
+  std::cout << " nodes: 127.0.0.1:" << kBasePort << "-" << (kBasePort + kNumNodes - 1) << "\n";
   std::cout << " groups per node: " << kGroupIds.size() << "\n";
-  std::cout << " data: " << data_root << "\n";
+  std::cout << " data: " << data_root.string() << "\n";
   std::cout << "-------------------------------------------\n";
 
   // 4. Wait for a leader per group and propose.
@@ -308,8 +267,8 @@ int main() {
     if (leader == nullptr) {
       return fail("no leader elected for group " + std::to_string(group_id));
     }
-    std::cout << "group " << group_id << ": leader elected, proposing "
-              << kProposalsPerGroup << " increments\n";
+    std::cout << "group " << group_id << ": leader elected, proposing " << kProposalsPerGroup
+              << " increments\n";
     for (int i = 0; i < kProposalsPerGroup; ++i) {
       if (!ProposeAndWait(leader, "inc")) {
         return fail("proposal " + std::to_string(i) + " on group " + std::to_string(group_id));
@@ -339,8 +298,7 @@ int main() {
 
   // 6. Print the final state: every node x group must read the same value
   //    (per-group state is replicated independently).
-  std::cout << "\nFinal counter state (all cells must read " << kProposalsPerGroup
-            << "):\n";
+  std::cout << "\nFinal counter state (all cells must read " << kProposalsPerGroup << "):\n";
   std::cout << "              group 1   group 2\n";
   for (int i = 0; i < kNumNodes; ++i) {
     std::cout << "  node " << (i + 1) << "        " << machines[1][i]->GetValue() << "         "
@@ -364,189 +322,3 @@ int main() {
   std::cout << "\nDemo complete: all groups converged, stores stopped, data removed.\n";
   return 0;
 }
-```
-
-- [ ] **Step 2: Register the target in CMake**
-
-In `example/CMakeLists.txt`, after the existing multi-raft server/client targets (line 13-17 area), add:
-
-```cmake
-# Multi-raft single-binary 3-node demo
-add_executable(example_multi_raft_3node multi_raft/multi_raft_3node.cpp)
-target_link_libraries(example_multi_raft_3node PRIVATE rollingraft)
-target_include_directories(example_multi_raft_3node PRIVATE ${PROJECT_SOURCE_DIR}/src)
-```
-
-And add `example_multi_raft_3node` to the `install(TARGETS ...)` list at the bottom of the file.
-
-- [ ] **Step 3: Build**
-
-Run: `make release`
-Expected: build completes with no warnings; `build/release/example/example_multi_raft_3node` exists.
-
-- [ ] **Step 4: Run the demo and verify output**
-
-Run: `./build/release/example/example_multi_raft_3node`
-Expected: exit code 0. Output contains:
-- "Multi-Raft 3-node demo started"
-- "group 1: leader elected" and "group 2: leader elected"
-- The final table: six cells, all reading `5`. (The demo polls up to 5 s for
-  follower convergence — followers apply one RPC round-trip behind the
-  leader — and exits non-zero with a message if any cell fails to converge.)
-- "Demo complete: all groups converged, stores stopped, data removed."
-- `/tmp/rollingraft_3node_demo` no longer exists afterwards.
-
-Run it a second time to confirm re-runs are clean (dir recreated and removed).
-
-- [ ] **Step 5: Format check**
-
-Run: `make format-check`
-Expected: `Code formatting OK!`
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add example/multi_raft/multi_raft_3node.cpp example/CMakeLists.txt
-git commit -m "feat(example): add multi-raft 3-node demo binary"
-```
-
----
-
-### Task 2: README multi-raft section
-
-**Files:**
-- Modify: `README.md` (insert new section after the existing single-group usage docs, before any closing sections)
-
-**Interfaces:**
-- Consumes: the demo binary from Task 1 (`example_multi_raft_3node`), the existing `example_multi_raft_server` / `example_multi_raft_client`, `tests/integration/test_multi_raft_2groups.cpp`.
-- Produces: a README section users can follow end-to-end with the commands shown.
-
-- [ ] **Step 1: Add the section**
-
-Insert the following into `README.md` (adjust the anchor placement to sit naturally after the single-group examples):
-
-````markdown
-## Multi-Raft (Multiple Groups per Node)
-
-RollingRaft can host many independent Raft groups in one process, sharing a
-single network transport, timer service, and protocol stack:
-
-- **`SharedNodeInfra`** — per-node shared infrastructure: network transport,
-  timer service, protocol codec, metrics registry.
-- **`RaftGroup`** — all per-group state: term, log, leader state, membership.
-  Groups on the same node elect leaders and replicate independently.
-- **`RaftStore`** — owns the infra plus the group table. Inbound RPCs carry a
-  `group_id` and are routed to the matching group (`group_id == 0` keeps the
-  legacy single-group path).
-
-```
-                 ┌─────────────────────────────────────┐
-  node 1         │  RaftStore                          │
-  (127.0.0.1)    │  ┌────────────┐  ┌────────────┐     │
-                 │  │ group 1    │  │ group 2    │     │
-                 │  │ term/log/  │  │ term/log/  │     │
-                 │  │ leader     │  │ leader     │     │
-                 │  └────────────┘  └────────────┘     │
-                 │  SharedNodeInfra: transport/timers/ │
-                 │  protocol/metrics (one per node)    │
-                 └─────────────────────────────────────┘
-        replicated across node 1, node 2, node 3 (each runs a RaftStore)
-```
-
-### Quick start (single binary, 3 nodes in one process)
-
-```bash
-make release
-./build/release/example/example_multi_raft_3node
-```
-
-The demo starts 3 nodes on `127.0.0.1:9101-9103`, creates 2 groups per node,
-waits for a leader per group, proposes 5 increments per group, and prints the
-converged counters — every node × group cell must read `5`:
-
-```
--------------------------------------------
- Multi-Raft 3-node demo started
- nodes: 127.0.0.1:9101-9103
- groups per node: 2
- data: /tmp/rollingraft_3node_demo
--------------------------------------------
-group 1: leader elected, proposing 5 increments
-group 2: leader elected, proposing 5 increments
-
-Final counter state (all cells must read 5):
-              group 1   group 2
-  node 1        5         5
-  node 2        5         5
-  node 3        5         5
-
-Demo complete: all groups converged, stores stopped, data removed.
-```
-
-### Running nodes in separate processes (multi-host)
-
-For a multi-host deployment, run one `RaftStore` per process:
-
-```bash
-./build/release/example/example_multi_raft_server 1 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
-./build/release/example/example_multi_raft_server 2 127.0.0.1:8002 127.0.0.1:8001 127.0.0.1:8003
-./build/release/example/example_multi_raft_server 3 127.0.0.1:8003 127.0.0.1:8001 127.0.0.1:8002
-```
-
-Each process hosts groups 1 and 2; see `example/multi_raft/multi_raft_client.cpp`
-for the matching client. Integration coverage lives in
-`tests/integration/test_multi_raft_2groups.cpp`.
-````
-
-- [ ] **Step 2: Verify markdown structure**
-
-Run: `grep -n "^## " README.md`
-Expected: the new "## Multi-Raft (Multiple Groups per Node)" heading appears exactly once, in a sensible order relative to other top-level sections.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add README.md
-git commit -m "docs: add multi-raft usage guide to README"
-```
-
----
-
-### Task 3: Acceptance sweep
-
-**Files:** none (verification only)
-
-**Interfaces:** consumes the deliverables of Tasks 1-2.
-
-- [ ] **Step 1: Full test suite**
-
-Run: `make test`
-Expected: `100% tests passed` (371 tests; the example is compile-only and does not add test cases).
-
-- [ ] **Step 2: Warning-free werror build**
-
-Run: `make werror`
-Expected: build completes.
-
-- [ ] **Step 3: Demo end-to-end re-run**
-
-Run: `./build/release/example/example_multi_raft_3node`
-Expected: exit 0, all six counters read 5 (same checks as Task 1 Step 4).
-
-- [ ] **Step 4: Map acceptance criteria and report**
-
-Check against the issue checklist:
-- `multi_raft_3node.cpp` compiles and runs locally ✓ (Task 1)
-- README has a multi-raft section ✓ (Task 2)
-- Format check passes ✓ (Task 1 Step 5)
-- CI build passes — the example compiles in the default build matrix; confirm on the next CI run after push (do not push without human approval)
-
-Report results to the human; do NOT close issue #18 without explicit approval.
-
----
-
-## Self-Review Notes
-
-- Spec coverage: demo binary (Task 1), README section + diagram + both run modes (Task 2), verification + acceptance mapping (Task 3). CMake registration folded into Task 1 per the spec's build-integration section. ✓
-- Placeholder scan: no TBD/TODO; all code blocks complete. The README sample output shows representative (not guaranteed-identical) leader election output — acceptable for docs. ✓
-- Type consistency: `CounterMachine` / `GetGroupLeader` / `ProposeAndWait` signatures are identical across all steps; `machines[1][i]` indexing matches `node_id - 1` convention stated in the comment. ✓

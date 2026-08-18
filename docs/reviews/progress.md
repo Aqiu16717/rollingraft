@@ -155,7 +155,33 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 
 ---
 
-## Review complete — all 12 modules ✅
+## Review complete — all 12 modules ✅ (2026-08-07)
+
+---
+
+## Phase 4 — Delta review (changes since 2026-08-07)
+
+Re-review the codebase surface that changed since the 12-module review
+closed: the SSE store workstream, the lock-I/O refactor, and WAL perf work.
+Same process per module: read + /code-review (scoped) → findings by severity
+→ user decides fix-now vs. follow-up → fix + test + commit.
+
+### 🔶 #13 Multi-raft store + SSE/events delta (in progress 2026-08-18)
+- Files: `src/raft_store.cpp/h` (+202), `src/sse_connection.cpp`, `src/event.cpp`,
+  `src/metrics_http_server.cpp/h`, store endpoints in `src/rpc_handlers.cpp`
+- Focus: SSE broadcast lifecycle, group event routing, admin endpoint auth
+
+### ⬜ #14 Lock-I/O refactor delta
+- Files: `src/snapshot_manager.cpp` (+295), `src/raft_node_core.cpp` (+210),
+  `src/log_replicator.cpp`, `src/election_manager.cpp`
+- Focus: two-phase snapshot creation/receive, peer snapshot prep outside
+  manager locks, lock-hierarchy adherence after the refactor
+
+### ⬜ #15 WAL perf + transport/protocol delta
+- Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,
+  `src/json_protocol.cpp`
+- Focus: segment fd caching correctness (restart/truncate paths), the timer
+  strand fix (fresh, already TSan-verified), protocol changes
 
 ---
 

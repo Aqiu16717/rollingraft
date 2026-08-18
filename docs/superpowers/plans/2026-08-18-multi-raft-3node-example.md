@@ -317,8 +317,28 @@ int main() {
     }
   }
 
-  // 5. Print the converged state: every node x group must read the same
-  //    value (per-group state is replicated independently).
+  // 5. Wait for every node to observe all proposals. Followers apply one RPC
+  //    round-trip behind the leader, so the leader's apply callbacks alone do
+  //    not guarantee the followers have caught up yet.
+  bool converged = false;
+  auto converge_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < converge_deadline) {
+    converged = true;
+    for (uint64_t group_id : kGroupIds) {
+      for (const auto& machine : machines[group_id]) {
+        if (machine->GetValue() != kProposalsPerGroup) {
+          converged = false;
+        }
+      }
+    }
+    if (converged) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  // 6. Print the final state: every node x group must read the same value
+  //    (per-group state is replicated independently).
   std::cout << "\nFinal counter state (all cells must read " << kProposalsPerGroup
             << "):\n";
   std::cout << "              group 1   group 2\n";
@@ -326,8 +346,12 @@ int main() {
     std::cout << "  node " << (i + 1) << "        " << machines[1][i]->GetValue() << "         "
               << machines[2][i]->GetValue() << "\n";
   }
+  if (!converged) {
+    return fail("counters did not converge: expected every cell to read " +
+                std::to_string(kProposalsPerGroup) + " within 5s");
+  }
 
-  // 6. Graceful shutdown and cleanup.
+  // 7. Graceful shutdown and cleanup.
   for (auto& store : stores) {
     auto stop_status = store->Stop();
     if (!stop_status.ok()) {
@@ -366,7 +390,9 @@ Run: `./build/release/example/example_multi_raft_3node`
 Expected: exit code 0. Output contains:
 - "Multi-Raft 3-node demo started"
 - "group 1: leader elected" and "group 2: leader elected"
-- The final table: six cells, all reading `5`.
+- The final table: six cells, all reading `5`. (The demo polls up to 5 s for
+  follower convergence — followers apply one RPC round-trip behind the
+  leader — and exits non-zero with a message if any cell fails to converge.)
 - "Demo complete: all groups converged, stores stopped, data removed."
 - `/tmp/rollingraft_3node_demo` no longer exists afterwards.
 
@@ -500,7 +526,11 @@ Expected: `100% tests passed` (371 tests; the example is compile-only and does n
 - [ ] **Step 2: Warning-free werror build**
 
 Run: `make werror`
-Expected: build completes.
+Expected: all rollingraft/src/example objects compile clean under `-Werror`.
+Known pre-existing local failures (not part of this work, do not fix here):
+`third_party/googletest` (`gtest-printers.h:524`, `char8_t` conversion) and
+`benchmark/protobuf_mvp_benchmark.cpp:60` (sign-compare). CI's werror job is
+the authoritative gate.
 
 - [ ] **Step 3: Demo end-to-end re-run**
 

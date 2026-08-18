@@ -526,7 +526,11 @@ Expected: `100% tests passed` (371 tests; the example is compile-only and does n
 - [ ] **Step 2: Warning-free werror build**
 
 Run: `make werror`
-Expected: build completes.
+Expected: all rollingraft/src/example objects compile clean under `-Werror`.
+Known pre-existing local failures (not part of this work, do not fix here):
+`third_party/googletest` (`gtest-printers.h:524`, `char8_t` conversion) and
+`benchmark/protobuf_mvp_benchmark.cpp:60` (sign-compare). CI's werror job is
+the authoritative gate.
 
 - [ ] **Step 3: Demo end-to-end re-run**
 

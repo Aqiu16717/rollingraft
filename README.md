@@ -343,6 +343,77 @@ if (status.ok() && resp.success) {
 }
 ```
 
+## Multi-Raft (Multiple Groups per Node)
+
+RollingRaft can host many independent Raft groups in one process, sharing a
+single network transport, timer service, and protocol stack:
+
+- **`SharedNodeInfra`** — per-node shared infrastructure: network transport,
+  timer service, protocol codec, metrics registry.
+- **`RaftGroup`** — all per-group state: term, log, leader state, membership.
+  Groups on the same node elect leaders and replicate independently.
+- **`RaftStore`** — owns the infra plus the group table. Inbound RPCs carry a
+  `group_id` and are routed to the matching group (`group_id == 0` keeps the
+  legacy single-group path).
+
+```
+                 ┌─────────────────────────────────────┐
+  node 1         │  RaftStore                          │
+  (127.0.0.1)    │  ┌────────────┐  ┌────────────┐     │
+                 │  │ group 1    │  │ group 2    │     │
+                 │  │ term/log/  │  │ term/log/  │     │
+                 │  │ leader     │  │ leader     │     │
+                 │  └────────────┘  └────────────┘     │
+                 │  SharedNodeInfra: transport/timers/ │
+                 │  protocol/metrics (one per node)    │
+                 └─────────────────────────────────────┘
+        replicated across node 1, node 2, node 3 (each runs a RaftStore)
+```
+
+### Quick start (single binary, 3 nodes in one process)
+
+```bash
+make release
+./build/release/example/example_multi_raft_3node
+```
+
+The demo starts 3 nodes on `127.0.0.1:9101-9103`, creates 2 groups per node,
+waits for a leader per group, proposes 5 increments per group, and prints the
+converged counters — every node × group cell must read `5`:
+
+```
+-------------------------------------------
+ Multi-Raft 3-node demo started
+ nodes: 127.0.0.1:9101-9103
+ groups per node: 2
+ data: /tmp/rollingraft_3node_demo
+-------------------------------------------
+group 1: leader elected, proposing 5 increments
+group 2: leader elected, proposing 5 increments
+
+Final counter state (all cells must read 5):
+              group 1   group 2
+  node 1        5         5
+  node 2        5         5
+  node 3        5         5
+
+Demo complete: all groups converged, stores stopped, data removed.
+```
+
+### Running nodes in separate processes (multi-host)
+
+For a multi-host deployment, run one `RaftStore` per process:
+
+```bash
+./build/release/example/example_multi_raft_server 1 127.0.0.1:8001 127.0.0.1:8002 127.0.0.1:8003
+./build/release/example/example_multi_raft_server 2 127.0.0.1:8002 127.0.0.1:8001 127.0.0.1:8003
+./build/release/example/example_multi_raft_server 3 127.0.0.1:8003 127.0.0.1:8001 127.0.0.1:8002
+```
+
+Each process hosts groups 1 and 2; see `example/multi_raft/multi_raft_client.cpp`
+for the matching client. Integration coverage lives in
+`tests/integration/test_multi_raft_2groups.cpp`.
+
 ## Configuration Reference
 
 | Option | Default | Description |

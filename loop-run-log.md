@@ -200,3 +200,17 @@ Notes: docker-test segfault (FollowerCatchesUpAfterRestart, exit 139, both 08-16
 ```
 
 Notes: (1) docker segfault fix pushed, CI green (run 32039682301). (2) TSan timer race fixed: timer ops serialized on connection strand (post + CancelTimer) + regression stress test. Verified make test 371/371, make test-tsan 371/371, stress 8/8 TSan-clean. macOS kqueue TSan noise confirmed pre-suppressed in tsan_suppressions.txt — no new escalation. Both pushed 08-17; run 32041263920 all 12 jobs green incl. Linux CI TSan. Both items closed out.
+```json
+{
+  "run_id": "2026-08-18T15:10:00Z",
+  "pattern": "interactive",
+  "duration_s": 3600,
+  "items_found": 1,
+  "actions_taken": 1,
+  "escalations": 0,
+  "tokens_estimate": 60000,
+  "outcome": "fix-verified"
+}
+```
+
+Notes: issue #18 implemented (single-binary 3-node demo + README multi-raft section + CMake target). Verified: make test 371/371 on merged tree, format-check green, demo 6 runs converged exit 0. werror locally pre-existing-broken (googletest char8_t + benchmark sign-compare, unrelated). Merged to main (30a1ccb), branch deleted. Awaiting: push approval + issue close approval.

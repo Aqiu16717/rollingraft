@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-17 (interactive: segfault fix + TSan timer fix, both CI green)
+Last run: 2026-08-18 (interactive: issue #18 multi-raft 3-node example + README)
 
 ## Project context (static, keep updated)
 
@@ -27,7 +27,7 @@ Last run: 2026-08-17 (interactive: segfault fix + TSan timer fix, both CI green)
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
-- Issue #18 (open, enhancement): multi-raft 3-node example + README usage guide — unassigned, no recent activity.
+- Issue #18: implemented 08-18 on `feature/multi-raft-pr-g-example-readme`, merged to main locally (30a1ccb), branch deleted. Spec/plan in `docs/superpowers/{specs,plans}/`. NOT pushed, NOT closed — awaiting human approval for both.
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
 
 ## Recent Noise (ignored this run)

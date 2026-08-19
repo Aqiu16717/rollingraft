@@ -586,24 +586,51 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
 
   if (!resp.success_) {
     // A heartbeat carries the same prev_log check as a real append, so a
-    // rejection may carry a conflict hint. Without rewinding next_index here,
-    // a lagging follower would never catch up: every retry sends another
-    // heartbeat at the same prev_log and gets rejected again.
+    // rejection may carry a conflict hint. The peer is alive even though it
+    // rejected us — refresh its contact time so dead-node detection does not
+    // remove a live, catchable-up voter during a multi-step walk.
+    group_->last_contact_time_[from] = std::chrono::steady_clock::now();
+
+    Index leader_last = group_->log_.GetLastLogInfo().first;
     if (resp.conflict_index_ > 0) {
-      group_->next_index_[from] = resp.conflict_index_;
-      if (resp.conflict_index_ <= group_->match_index_[from]) {
-        group_->match_index_[from] = resp.conflict_index_ - 1;
+      if (resp.conflict_index_ > leader_last) {
+        // The follower is ahead of this leader's log — typically it holds a
+        // snapshot from a previous leader. Rewinding next_index_ to the hint
+        // would oscillate forever: the follower fast-forwards back to its
+        // snapshot boundary on every heartbeat. Send our snapshot instead —
+        // installing it truncates the follower's state to our log.
+        LOG_INFO("Node {}: peer {} ahead of leader log ({} > {}), sending snapshot",
+                 group_->server_id_, from, resp.conflict_index_, leader_last);
+        std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+        SendInstallSnapshotToPeerLocked(from);
+        return;
       }
-    } else {
-      group_->next_index_[from] = std::max<Index>(1, group_->next_index_[from] - 1);
+      // Clamp to the leader's own last index: the follower hint must never
+      // drive next_index_ beyond what this leader can actually send.
+      group_->next_index_[from] = std::min(resp.conflict_index_, leader_last + 1);
       if (group_->next_index_[from] <= group_->match_index_[from]) {
         group_->match_index_[from] = group_->next_index_[from] - 1;
       }
+    } else {
+      // No conflict hint: back off one index, never below acked progress.
+      Index floor = group_->match_index_[from] + 1;
+      group_->next_index_[from] = std::max({floor, group_->next_index_[from] - 1});
     }
-    // Do NOT schedule a retry or bump the retry counter here: heartbeats are
-    // periodic, so the next tick will resend at the rewound index. Counting
-    // heartbeat rejections against max_retry_attempts would exhaust the
-    // budget during a multi-step catch-up and stall replication.
+    // Resend promptly WITHOUT consuming the retry budget: heartbeat ticks
+    // are suppressed in quiesced mode, and a multi-step catch-up walk would
+    // otherwise exhaust max_retry_attempts and stall replication.
+    infra_->timer_->SetTimeout(std::chrono::milliseconds(0),
+                               [weak_self = weak_from_this(), this, from]() {
+                                 auto keep_alive = weak_self.lock();
+                                 if (!keep_alive) {
+                                   return;
+                                 }
+                                 std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
+                                 std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+                                 if (group_->role_ == RaftNodeRole::LEADER) {
+                                   SendAppendEntriesToPeerLocked(from);
+                                 }
+                               });
     return;
   }
 

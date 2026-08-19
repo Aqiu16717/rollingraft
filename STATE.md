@@ -18,9 +18,7 @@ Last run: 2026-08-19 (interactive: delta review #13/#14 fixes — snapshot safet
 
 ## High Priority (loop is acting or waiting on human)
 
-- **Delta review #13/#14 fixes — committed locally, awaiting push approval (08-19)**.
-  The 08-07→08-18 delta review (8 parallel angles, all findings verified) found a Raft safety violation in the two-phase snapshot refactor (`bed8ccb`): unlocked creation + `SetStartIndex` wipe → committed-entry loss + index reuse. Fixed via approach B (staleness guards on apply/persist, single-flight creation token incl. peer-prep, per-peer pending flag, restore-window transfer guard, commit guard, `snapshot_io_mtx_` stream serialization, dead wrappers deleted) + deterministic regression test. Also fixed: heartbeat rewind liveness (`3c3d08a` — bounds, snapshot branch for ahead-followers, contact refresh, quiescence-safe prompt resend) and store admin surface (`0e00e60` — remote crash guard, `?group_id=` parse, readyz 404 bug, GetGroupShared UAF fix). Verified: `make test` 375/375, `make test-tsan` 375/375.
-  Awaiting: human approval to push. Follow-ups logged in Watch.
+- ~~Delta review #13/#14 fixes~~ → pushed 08-19, **CI fully green** (run 32246368423, all 12 jobs — one prior run hung on runner apt install and was retriggered). Closed out.
 
 - ~~TSan RPC-timer race~~ → fixed (`ca8c39a`), pushed 08-17, **Linux CI TSan green** (run 32041263920, all 12 jobs). Closed out.
 - ~~docker-test segfault on main~~ → pushed 08-17, CI green (run 32039682301). Closed out.

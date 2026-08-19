@@ -576,6 +576,14 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
 
     // Handle snapshot chunk — write to temp file to avoid OOM on large
     // snapshots (P0 Phase 2 streaming fix).
+    if (req.offset_ == 0 && group_->snapshot_restore_in_progress_) {
+      // The previous transfer's done chunk is still being restored from the
+      // temp file; a retransmitted offset-0 chunk would truncate that same
+      // path mid-read. Drop without responding — the leader's resume logic
+      // resends after the restore finishes.
+      LOG_WARN("Node {} dropping snapshot chunk: restore in progress", group_->server_id_);
+      return;
+    }
     if (req.offset_ == 0) {
       // New snapshot transfer: (re)start receive state and a fresh temp file.
       // The path includes group_id so concurrent receives in different
@@ -655,12 +663,18 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
       group_->snapshot_temp_path_.clear();
       done_index = req.last_included_index_;
       done_term = req.last_included_term_;
+      group_->snapshot_restore_in_progress_ = true;
       received_done = true;
     }
   }
 
   // Phase 2b (no locks): restore the state machine and persist the snapshot.
   if (received_done) {
+    struct RestoreGuard {
+      bool& flag;
+      ~RestoreGuard() { flag = false; }
+    } restore_guard{group_->snapshot_restore_in_progress_};
+
     if (!RestoreFromSnapshotFile(done_temp_path, done_index, done_term)) {
       if (std::remove(done_temp_path.c_str()) != 0) {
         LOG_WARN("Node {} failed to remove temp snapshot file: {}", group_->server_id_,
@@ -668,7 +682,27 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
       }
       return;
     }
-    PersistSnapshotFile(done_temp_path, done_index, done_term);
+
+    // Persist serialized against the leader-side snapshot stream (same
+    // persister chunk keys). A snapshot superseded while we were receiving
+    // must not be written last — that would regress the durable snapshot
+    // behind the already-truncated log.
+    {
+      bool skip_persist = false;
+      std::lock_guard<std::mutex> io_lock(snapshot_io_mtx_);
+      {
+        std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+        std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+        if (done_index <= group_->last_snapshot_index_) {
+          LOG_WARN("Node {} skipping snapshot persist: index {} <= last snapshot {}",
+                   group_->server_id_, done_index, group_->last_snapshot_index_);
+          skip_persist = true;
+        }
+      }
+      if (!skip_persist) {
+        PersistSnapshotFile(done_temp_path, done_index, done_term);
+      }
+    }
 
     // Phase 2c (locked): apply the snapshot to in-memory state. The node may
     // have applied a newer snapshot while we were unlocked — skip if so.
@@ -679,6 +713,12 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
       if (done_index <= group_->last_snapshot_index_) {
         LOG_WARN("Node {} skipping snapshot apply: index {} <= last snapshot {}",
                  group_->server_id_, done_index, group_->last_snapshot_index_);
+      } else if (group_->commit_index_ > done_index) {
+        // Entries were committed during the unlocked restore window.
+        // Rewinding commit/last_applied would double-apply them and drop
+        // their client callbacks — the newer committed state wins.
+        LOG_WARN("Node {} skipping snapshot apply: commit_index {} advanced past {}",
+                 group_->server_id_, group_->commit_index_, done_index);
       } else {
         // Update log: discard all entries covered by snapshot
         uint64_t old_first_index = group_->log_.GetFirstIndex();

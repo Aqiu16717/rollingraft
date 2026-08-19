@@ -41,25 +41,16 @@ void RaftNode::RaftNodeImpl::CheckSnapshotTimeoutLocked() {
   RunAutoSnapshotIfNeeded();
 }
 
-// Core snapshot logic. PRECONDITION: group_->election_mtx_, group_->replication_mtx_,
-// group_->snapshot_mtx_ are held by caller.
-void RaftNode::RaftNodeImpl::DoSnapshotLocked(const std::string& trigger) {
-  // Kept as the locked thin wrapper for the (rare) synchronous call sites;
-  // the tick-driven and manual paths use the two-phase version below.
-  Index snapshot_index = 0;
-  Term snapshot_term = 0;
-  auto status = CreateAndPersistSnapshot(trigger, snapshot_index, snapshot_term);
-  if (!status.ok()) {
-    return;
-  }
-  ApplySnapshotLocked(snapshot_index, snapshot_term, trigger);
-}
-
 // Lock-free: true when log growth since the last snapshot exceeds the
 // configured thresholds. PRECONDITION: election+replication+snapshot locks held.
 bool RaftNode::RaftNodeImpl::ShouldTriggerSnapshotLocked() {
   auto [last_index, last_term] = group_->log_.GetLastLogInfo();
   (void)last_term;
+  if (last_index <= group_->last_snapshot_index_) {
+    // Empty or fully-compacted log: nothing new to snapshot. Guards the
+    // unsigned subtraction below (0 - last_snapshot_index_ would wrap).
+    return false;
+  }
   Index entries_since_snapshot = last_index - group_->last_snapshot_index_;
 
   auto [entry_count, byte_size] = group_->log_.GetLogStats();
@@ -120,8 +111,22 @@ Status RaftNode::RaftNodeImpl::CreateAndPersistSnapshot(const std::string& trigg
     check_offset += bytes_read;
   }
 
-  // Persist snapshot using streaming interface
+  // Persist snapshot using streaming interface. Serialized against the
+  // receive-side persist (same persister, same chunk keys); a snapshot
+  // superseded while we were creating it must not be written last — that
+  // would regress the durable snapshot behind the already-truncated log.
   if (persister_ && total_size > 0) {
+    std::lock_guard<std::mutex> io_lock(snapshot_io_mtx_);
+    {
+      std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+      std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
+      if (snapshot_index <= group_->last_snapshot_index_) {
+        LOG_WARN("Node {} skipping {}-snapshot persist: index {} <= last snapshot {}",
+                 group_->server_id_, trigger, snapshot_index, group_->last_snapshot_index_);
+        return Status::Error("Snapshot superseded while creating");
+      }
+    }
+
     uint64_t stream_offset = 0;
     auto chunk_provider = [&](std::string& chunk) -> bool {
       size_t bytes_read = snapshot->Read(stream_offset, buffer.data(), kReadChunkSize);
@@ -159,6 +164,15 @@ void RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snap
   if (snapshot_index <= group_->last_snapshot_index_) {
     LOG_WARN("Node {} skipping {}-snapshot apply: index {} <= last snapshot {}", group_->server_id_,
              trigger, snapshot_index, group_->last_snapshot_index_);
+    return;
+  }
+  if (group_->log_.GetLastLogInfo().first > snapshot_index) {
+    // The log grew past the snapshot index during the unlocked creation
+    // window. SetStartIndex below clears ALL entries, so applying now would
+    // drop committed entries and reuse their indices. Skip — the next tick
+    // creates a fresh snapshot that covers them.
+    LOG_WARN("Node {} skipping {}-snapshot apply: log advanced past snapshot index {}",
+             group_->server_id_, trigger, snapshot_index);
     return;
   }
 
@@ -250,25 +264,6 @@ Status RaftNode::RaftNodeImpl::RunAutoSnapshotIfNeeded() {
   return Status::OK();
 }
 
-void RaftNode::RaftNodeImpl::MaybeTriggerAutoSnapshotLocked() {
-  // PRECONDITION: caller holds all three locks (legacy call sites). The
-  // tick-driven path uses RunAutoSnapshotIfNeeded instead; keep this as a
-  // thin locked wrapper so remaining callers behave as before.
-  if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
-    return;
-  }
-  if (!ShouldTriggerSnapshotLocked()) {
-    return;
-  }
-  Index snapshot_index = 0;
-  Term snapshot_term = 0;
-  auto status = CreateAndPersistSnapshot("auto", snapshot_index, snapshot_term);
-  if (!status.ok()) {
-    return;
-  }
-  ApplySnapshotLocked(snapshot_index, snapshot_term, "auto");
-}
-
 Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
   // Two-phase manual snapshot: validate under locks, do the I/O without them.
   bool expected = false;
@@ -338,6 +333,17 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
   // No snapshot prepared: create it WITHOUT the manager locks (user state
   // machine can be slow), then relock and send. Weak-guarded timer so a
   // destroyed group is a no-op.
+  //
+  // The pending flag is set BEFORE the timer is armed so concurrent
+  // heartbeat ticks do not queue a second full CreateSnapshot while the
+  // first is still being made, and the shared in-flight token serializes
+  // creation against the auto/manual paths — the StateMachine contract does
+  // not cover concurrent CreateSnapshot calls.
+  bool expected = false;
+  if (!snapshot_in_progress_.compare_exchange_strong(expected, true)) {
+    return;  // Another snapshot creation is mid-flight; the next tick retries
+  }
+  state.in_progress = true;  // Pending: preparation scheduled, not yet sent
   LOG_INFO("Node {}: preparing snapshot for {}", group_->server_id_, peer_id);
   infra_->timer_->SetTimeout(std::chrono::milliseconds(0),
                              [weak_self = weak_from_this(), peer_id]() {
@@ -352,6 +358,11 @@ void RaftNode::RaftNodeImpl::SendInstallSnapshotToPeerLocked(NodeId peer_id) {
 // No locks held: create a snapshot for the given peer and, if it is still
 // needed, install it into the send state and dispatch the first chunk.
 void RaftNode::RaftNodeImpl::PrepareSnapshotForPeer(NodeId peer_id) {
+  struct InFlightGuard {
+    std::atomic<bool>& flag;
+    ~InFlightGuard() { flag.store(false, std::memory_order_release); }
+  } in_flight_guard{snapshot_in_progress_};
+
   auto snapshot = group_->state_machine_->CreateSnapshot();
   if (!snapshot) {
     LOG_ERROR("Node {}: failed to create snapshot for {}", group_->server_id_, peer_id);
@@ -364,21 +375,24 @@ void RaftNode::RaftNodeImpl::PrepareSnapshotForPeer(NodeId peer_id) {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
 
-    // The world may have changed while we were unlocked.
-    if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
-      return;
-    }
     auto it = group_->snapshot_sends_.find(peer_id);
     if (it == group_->snapshot_sends_.end()) {
-      return;  // Peer removed meanwhile
+      return;  // Peer removed meanwhile; its pending flag went with it
     }
     auto& state = it->second;
-    if (state.in_progress || state.snapshot) {
-      return;  // Another preparation won the race
+
+    // The world may have changed while we were unlocked.
+    if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
+      state.in_progress = false;  // Clear the pending flag so a later tick can retry
+      return;
+    }
+    if (state.snapshot) {
+      return;  // A send is already running (defensive; scheduling is serialized)
     }
     // Peer may no longer need a snapshot (caught up meanwhile).
     auto nit = group_->next_index_.find(peer_id);
     if (nit == group_->next_index_.end() || nit->second >= group_->log_.GetFirstIndex()) {
+      state.in_progress = false;  // Nothing to send; allow a fresh prepare if it falls behind again
       return;
     }
 

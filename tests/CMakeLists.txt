@@ -128,6 +128,7 @@ add_executable(deterministic_tests
   deterministic/test_chaos.cpp
   deterministic/test_chaos_scenarios.cpp
   deterministic/test_scenarios.cpp
+  deterministic/test_snapshot_two_phase.cpp
 )
 
 target_include_directories(deterministic_tests

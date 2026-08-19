@@ -210,6 +210,10 @@ class RaftGroup {
   Index snapshot_recv_index_ = 0;
   Term snapshot_recv_term_ = 0;
   uint64_t snapshot_recv_expected_offset_ = 0;
+  // True while a completed transfer's temp file is being restored/persisted
+  // (unlocked window). New offset-0 chunks are dropped during this window —
+  // a retransmission would truncate the very file being read.
+  bool snapshot_restore_in_progress_ = false;
 
   // ========== Pending Proposals ==========
   std::unordered_map<uint64_t, PendingProposal> pending_proposals_;

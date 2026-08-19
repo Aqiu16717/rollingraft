@@ -134,8 +134,6 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   void ExitQuiescedLocked();
 
   // Snapshot related
-  void MaybeTriggerAutoSnapshotLocked();
-  void DoSnapshotLocked(const std::string& trigger);
   // Two-phase snapshot creation: snapshot data is created and persisted
   // WITHOUT holding manager locks (user state machine + disk I/O can be slow),
   // then applied under locks. snapshot_in_progress_ guards against re-entry.
@@ -259,6 +257,10 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // Set while a two-phase snapshot is between the unlocked I/O and the locked
   // apply, so a concurrent tick cannot start a second snapshot.
   std::atomic<bool> snapshot_in_progress_{false};
+  // Serializes all SaveSnapshotStream writes for this group (leader-side
+  // creation and receive-side install). NOT part of the manager lock
+  // hierarchy: acquire it BEFORE the manager locks, never after holding one.
+  std::mutex snapshot_io_mtx_;
 
   // ========== Event Bus ==========
   EventBus event_bus_;

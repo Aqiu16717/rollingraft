@@ -19,7 +19,8 @@ TestCluster::TestCluster(const Options& options)
   state_machines_.resize(options.num_nodes);
   data_dirs_.resize(options.num_nodes);
   for (size_t i = 0; i < options.num_nodes; ++i) {
-    state_machines_[i] = std::make_shared<MockStateMachine>();
+    state_machines_[i] = options.state_machine_factory ? options.state_machine_factory()
+                                                       : std::make_shared<MockStateMachine>();
     data_dirs_[i] =
         options.data_dir_prefix + "_" + std::to_string(options.seed) + "_" + std::to_string(i);
     std::filesystem::remove_all(data_dirs_[i]);

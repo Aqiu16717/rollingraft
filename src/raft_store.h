@@ -83,6 +83,9 @@ class RaftStore {
   Status RemoveGroup(uint64_t group_id);
 
   RaftNode::RaftNodeImpl* GetGroup(uint64_t group_id) const;
+  // Shared-ownership lookup: safe to use after groups_mtx_ is released,
+  // unlike the raw GetGroup pointer (RemoveGroup may destroy the group).
+  std::shared_ptr<RaftNode::RaftNodeImpl> GetGroupShared(uint64_t group_id) const;
   std::vector<uint64_t> ListGroups() const;
 
   SharedNodeInfra* GetInfra() const { return infra_.get(); }

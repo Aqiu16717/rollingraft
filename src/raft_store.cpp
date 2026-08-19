@@ -252,6 +252,15 @@ RaftNode::RaftNodeImpl* RaftStore::GetGroup(uint64_t group_id) const {
   return it != groups_.end() ? it->second.get() : nullptr;
 }
 
+std::shared_ptr<RaftNode::RaftNodeImpl> RaftStore::GetGroupShared(uint64_t group_id) const {
+  std::shared_lock<std::shared_mutex> lock(groups_mtx_);
+  auto it = groups_.find(group_id);
+  if (it == groups_.end()) {
+    return nullptr;
+  }
+  return it->second;
+}
+
 std::vector<uint64_t> RaftStore::ListGroups() const {
   std::shared_lock<std::shared_mutex> lock(groups_mtx_);
   std::vector<uint64_t> result;
@@ -315,6 +324,12 @@ void RaftStore::RegisterStoreProviders() {
       }
     }
 
+    // Top-level role/leader_id mirror the legacy single-node provider so
+    // /readyz sees the fields it checks: a node is ready when it leads a
+    // group or knows a group leader.
+    bool any_leader = false;
+    bool has_top_leader = false;
+    NodeId top_leader_id = -1;
     for (const auto& [gid, group] : group_snapshot) {
       nlohmann::json j;
       j["group_id"] = gid;
@@ -327,7 +342,17 @@ void RaftStore::RegisterStoreProviders() {
       auto cfg = group->GetConfig();
       j["config_version"] = cfg.version;
       groups.push_back(std::move(j));
+
+      if (group->GetRole() == RaftNodeRole::LEADER) {
+        any_leader = true;
+      }
+      if (!has_top_leader && !group->GetLeaderAddr().empty()) {
+        has_top_leader = true;
+        top_leader_id = group->GetLeaderId();
+      }
     }
+    root["role"] = any_leader ? "Leader" : "Follower";
+    root["leader_id"] = has_top_leader ? nlohmann::json(top_leader_id) : nlohmann::json(nullptr);
     root["groups"] = std::move(groups);
     return root.dump();
   });
@@ -342,7 +367,7 @@ void RaftStore::RegisterStoreProviders() {
           j["message"] = "group_id must be > 0";
           return j.dump();
         }
-        auto group = GetGroup(group_id);
+        auto group = GetGroupShared(group_id);
         if (!group) {
           j["error"] = "GROUP_NOT_FOUND";
           j["message"] = "Group " + std::to_string(group_id) + " not found";
@@ -370,7 +395,7 @@ void RaftStore::RegisterStoreProviders() {
           j["message"] = "group_id must be > 0";
           return j.dump();
         }
-        auto group = GetGroup(group_id);
+        auto group = GetGroupShared(group_id);
         if (!group) {
           j["error"] = "GROUP_NOT_FOUND";
           j["message"] = "Group " + std::to_string(group_id) + " not found";
@@ -425,7 +450,7 @@ void RaftStore::RegisterStoreProviders() {
           j["message"] = "group_id must be > 0";
           return j.dump();
         }
-        auto group = GetGroup(group_id);
+        auto group = GetGroupShared(group_id);
         if (!group) {
           j["error"] = "GROUP_NOT_FOUND";
           j["message"] = "Group " + std::to_string(group_id) + " not found";

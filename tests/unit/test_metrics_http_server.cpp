@@ -172,3 +172,72 @@ TEST_F(MetricsHttpServerAuthTest, AllAdminEndpointsProtected) {
         << "Expected 401 for " << ep.method << " " << ep.path << ", got: " << status;
   }
 }
+
+// Regression tests for the store admin surface: the DELETE node_id parse
+// must not crash on non-numeric input, the documented ?group_id=N query form
+// must reach the handler, and store-style status providers must satisfy
+// /readyz.
+
+TEST_F(MetricsHttpServerAuthTest, DeleteMemberNonNumericNodeIdReturns400) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+  bool handler_called = false;
+  server.SetRemoveMemberHandler([&handler_called](int32_t /*node_id*/, uint64_t /*group_id*/) {
+    handler_called = true;
+    return "{}";
+  });
+
+  auto [body, status, ct, sse] = server.TestBuildResponse(MakeRequest("DELETE", "/v1/members/abc"));
+  (void)ct;
+  (void)sse;
+  EXPECT_TRUE(status.find("400 Bad Request") != std::string::npos)
+      << "expected 400, got: " << status;
+  EXPECT_FALSE(handler_called);
+}
+
+TEST_F(MetricsHttpServerAuthTest, DeleteMemberGroupIdQueryReachesHandler) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+  int32_t seen_node = -1;
+  uint64_t seen_group = 0;
+  server.SetRemoveMemberHandler([&seen_node, &seen_group](int32_t node_id, uint64_t group_id) {
+    seen_node = node_id;
+    seen_group = group_id;
+    return "{}";
+  });
+
+  auto [body, status, ct, sse] =
+      server.TestBuildResponse(MakeRequest("DELETE", "/v1/members/3?group_id=2"));
+  (void)body;
+  (void)ct;
+  (void)sse;
+  EXPECT_TRUE(status.find("202 Accepted") != std::string::npos) << "expected 202, got: " << status;
+  EXPECT_EQ(seen_node, 3);
+  EXPECT_EQ(seen_group, 2u);
+}
+
+TEST_F(MetricsHttpServerAuthTest, ReadyzAcceptsStoreStyleStatusProvider) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+  server.SetStatusProvider([]() -> std::string {
+    return "{\"node_id\":1,\"role\":\"Follower\",\"leader_id\":2,"
+           "\"groups\":[{\"group_id\":1,\"role\":\"Follower\",\"leader_id\":2}]}";
+  });
+
+  auto [body, status, ct, sse] = server.TestBuildResponse(MakeRequest("GET", "/readyz"));
+  (void)body;
+  (void)ct;
+  (void)sse;
+  EXPECT_TRUE(status.find("200 OK") != std::string::npos)
+      << "expected 200 for provider with known leader, got: " << status;
+
+  server.SetStatusProvider([]() -> std::string {
+    return "{\"node_id\":1,\"role\":\"Follower\",\"leader_id\":null,\"groups\":[]}";
+  });
+  auto [body2, status2, ct2, sse2] = server.TestBuildResponse(MakeRequest("GET", "/readyz"));
+  (void)body2;
+  (void)ct2;
+  (void)sse2;
+  EXPECT_TRUE(status2.find("503 Service Unavailable") != std::string::npos)
+      << "expected 503 for provider without leader, got: " << status2;
+}

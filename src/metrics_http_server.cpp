@@ -370,6 +370,7 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
         }
         if (ready) {
           response_body = "{\"status\":\"ready\"}\n";
+          status_line = "HTTP/1.1 200 OK\r\n";
         } else {
           response_body = "{\"status\":\"not_ready\"}\n";
           status_line = "HTTP/1.1 503 Service Unavailable\r\n";
@@ -422,20 +423,34 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
     size_t q = path.find('?');
     std::string path_no_query = path;
     if (q != std::string::npos) {
-      try {
-        group_id = std::stoull(path.substr(q + 1));
-      } catch (...) {
-        group_id = 0;
+      std::string query = path.substr(q + 1);
+      constexpr std::string_view kGroupIdPrefix = "group_id=";
+      if (query.rfind(kGroupIdPrefix, 0) == 0) {
+        try {
+          group_id = std::stoull(query.substr(kGroupIdPrefix.size()));
+        } catch (...) {
+          group_id = 0;
+        }
       }
       path_no_query = path.substr(0, q);
     }
     int32_t node_id = -1;
+    bool parse_error = false;
     size_t last_slash = path_no_query.find_last_of('/');
     if (last_slash != std::string::npos && last_slash + 1 < path_no_query.size()) {
-      node_id = std::stoi(path_no_query.substr(last_slash + 1));
+      try {
+        node_id = std::stoi(path_no_query.substr(last_slash + 1));
+      } catch (...) {
+        parse_error = true;  // Malformed node_id must not escape as an exception
+      }
     }
-    response_body = remove_member_handler_(node_id, group_id);
-    status_line = "HTTP/1.1 202 Accepted\r\n";
+    if (parse_error) {
+      response_body = "{\"error\":\"BAD_REQUEST\",\"message\":\"invalid node_id\"}\n";
+      status_line = "HTTP/1.1 400 Bad Request\r\n";
+    } else {
+      response_body = remove_member_handler_(node_id, group_id);
+      status_line = "HTTP/1.1 202 Accepted\r\n";
+    }
   } else if (path == "/v1/snapshot/trigger" && request.starts_with("POST") &&
              trigger_snapshot_handler_) {
     uint64_t group_id = 0;

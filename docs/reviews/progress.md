@@ -166,18 +166,41 @@ closed: the SSE store workstream, the lock-I/O refactor, and WAL perf work.
 Same process per module: read + /code-review (scoped) → findings by severity
 → user decides fix-now vs. follow-up → fix + test + commit.
 
-### 🔶 #13 Multi-raft store + SSE/events delta (in progress 2026-08-18)
+### ✅ #13 Multi-raft store + SSE/events delta (done 2026-08-19)
 - Files: `src/raft_store.cpp/h` (+202), `src/sse_connection.cpp`, `src/event.cpp`,
   `src/metrics_http_server.cpp/h`, store endpoints in `src/rpc_handlers.cpp`
 - Focus: SSE broadcast lifecycle, group event routing, admin endpoint auth
+- Findings (8 parallel review angles, verified):
+  - HIGH: unguarded `stoi` on DELETE node_id → unauthenticated remote crash
+  - HIGH: `?group_id=N` parse always threw → store DELETE permanently dead
+  - HIGH: `/readyz` ready-path returned 404 (status_line never set) → probes never passed
+  - HIGH: admin handlers used raw `GetGroup` pointer after `groups_mtx_` release → UAF vs RemoveGroup
+  - MED: store SSE lambda races Stop() (metrics_server_ UAF); `BroadcastEvent` reads io_ctx_ unsynchronized
+  - MED: `RaftStore::Start` leaves store half-started on MetricsHttpServer::Start throw
+  - MED: SSE strong-refs retain silently-vanished clients indefinitely; `/v1/events` accepts any method
+  - LOW: `/v1/status` unlocked leader-addr read races the leader-change writer
+- Decision: fix now = crash + group_id parse + readyz + UAF (user); rest logged as follow-ups
+- Fix: commit `0e00e60` (guarded parse with 400, documented query form parsed, readyz 200, GetGroupShared shared-ownership lookups) + 3 unit regression tests. Tests 375/375 (incl. TSan).
 
-### ⬜ #14 Lock-I/O refactor delta
+### ✅ #14 Lock-I/O refactor delta (done 2026-08-19)
 - Files: `src/snapshot_manager.cpp` (+295), `src/raft_node_core.cpp` (+210),
   `src/log_replicator.cpp`, `src/election_manager.cpp`
 - Focus: two-phase snapshot creation/receive, peer snapshot prep outside
   manager locks, lock-hierarchy adherence after the refactor
+- Findings (verified):
+  - CRITICAL S1: unlocked creation window + `SetStartIndex` clearing ALL entries → committed entries wiped, index reuse with new term (Raft safety violation). Verified in code + deterministic RED test.
+  - CRITICAL S2: concurrent `CreateSnapshot()` on the user SM (peer-prep path bypassed `snapshot_in_progress_`; contract only covers Apply-vs-reads)
+  - HIGH S3: unbounded peer-snapshot queueing on the shared timer strand (create-before-dedup; multi-group tick stalls → elections churn)
+  - HIGH S4: follower-side unlocked-restore races (same-path truncation mid-restore, stale restore clobber, commit/last_applied rewind double-apply + dropped client callbacks)
+  - HIGH S5: leader-side vs receive-side persister stream ordering → durable snapshot regression behind truncated log (chunk-interleave mechanism refuted; ordering hazard confirmed)
+  - HIGH #9: heartbeat-rejection rewind — no contact-time refresh (live voter auto-removed), no match+1 floor, quiesced-mode stall, unbounded conflict_index_ (0xFFFFFFFF permanent stall), follower-ahead oscillation freezing commits
+  - MED: TriggerSnapshot OK-on-skip + manual metrics missing; idle snapshot loop via uint32 underflow; chained stale snapshot transfers; dead locked wrappers (DoSnapshotLocked/MaybeTriggerAutoSnapshotLocked)
+  - MED: mixed clocks (deadlines on timer_->Now(), lease/quorum/contact on steady_clock) — deterministic tests freeze lease/quorum paths
+- Decision: approach B (finish the two-phase design) + #9 rewind fix now (user); mixed clocks + metric cleanups logged as follow-ups
+- Fix: commits `d2e202e` (staleness guards on apply/persist, single-flight creation token incl. peer-prep, per-peer pending flag at schedule time, restore-window transfer guard, commit guard on receive apply, dead wrappers deleted, snapshot_io_mtx_ stream serialization + deterministic regression test `SnapshotTwoPhaseTest`) and `3c3d08a` (rewind clamped to leader last+1, snapshot branch for ahead-followers, contact refresh, budget-free prompt resend). Tests 375/375 (incl. TSan ×2).
+- Noted: the exact 3-node "follower ahead via snapshot" oscillation scenario from the sweep is not constructible in a 3-node cluster (majority arithmetic); the snapshot branch is defensive but correct by construction.
 
-### ⬜ #15 WAL perf + transport/protocol delta
+### ⬜ #15 WAL perf + transport/protocol delta (pending)
 - Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,
   `src/json_protocol.cpp`
 - Focus: segment fd caching correctness (restart/truncate paths), the timer

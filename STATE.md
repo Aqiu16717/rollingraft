@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-18 (interactive: issue #18 multi-raft 3-node example + README)
+Last run: 2026-08-19 (interactive: delta review #13/#14 fixes — snapshot safety, rewind liveness, store admin)
 
 ## Project context (static, keep updated)
 
@@ -18,6 +18,10 @@ Last run: 2026-08-18 (interactive: issue #18 multi-raft 3-node example + README)
 
 ## High Priority (loop is acting or waiting on human)
 
+- **Delta review #13/#14 fixes — committed locally, awaiting push approval (08-19)**.
+  The 08-07→08-18 delta review (8 parallel angles, all findings verified) found a Raft safety violation in the two-phase snapshot refactor (`bed8ccb`): unlocked creation + `SetStartIndex` wipe → committed-entry loss + index reuse. Fixed via approach B (staleness guards on apply/persist, single-flight creation token incl. peer-prep, per-peer pending flag, restore-window transfer guard, commit guard, `snapshot_io_mtx_` stream serialization, dead wrappers deleted) + deterministic regression test. Also fixed: heartbeat rewind liveness (`3c3d08a` — bounds, snapshot branch for ahead-followers, contact refresh, quiescence-safe prompt resend) and store admin surface (`0e00e60` — remote crash guard, `?group_id=` parse, readyz 404 bug, GetGroupShared UAF fix). Verified: `make test` 375/375, `make test-tsan` 375/375.
+  Awaiting: human approval to push. Follow-ups logged in Watch.
+
 - ~~TSan RPC-timer race~~ → fixed (`ca8c39a`), pushed 08-17, **Linux CI TSan green** (run 32041263920, all 12 jobs). Closed out.
 - ~~docker-test segfault on main~~ → pushed 08-17, CI green (run 32039682301). Closed out.
 
@@ -29,6 +33,8 @@ Last run: 2026-08-18 (interactive: issue #18 multi-raft 3-node example + README)
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
 - Issue #18: implemented 08-18 on `feature/multi-raft-pr-g-example-readme`, merged to main locally (30a1ccb), branch deleted. Spec/plan in `docs/superpowers/{specs,plans}/`. NOT pushed, NOT closed — awaiting human approval for both.
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
+- **Delta review follow-ups (logged 08-19, not fixed)**: store SSE lambda races Stop() (metrics_server_ UAF), `BroadcastEvent` io_ctx_ race, `RaftStore::Start` half-start on metrics bind failure, SSE strong-refs retain vanished clients, `/v1/events` accepts any method, mixed clocks (lease/quorum/contact still steady_clock — deterministic tests freeze those paths), TriggerSnapshot metric gaps, `GetLogStats` O(n) under locks. See `docs/reviews/progress.md` #13/#14.
+- **Delta review #15 (WAL perf fd cache + transport/protocol) — not yet reviewed** (pending).
 
 ## Recent Noise (ignored this run)
 

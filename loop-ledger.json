@@ -25,5 +25,18 @@
         }
       ]
     }
+  ,
+    {
+      "item": "Delta review #13/#14 fixes (snapshot two-phase safety, heartbeat rewind, store admin)",
+      "root_cause": "bed8ccb two-phase refactor opened unlocked I/O windows (committed-entry wipe, concurrent CreateSnapshot, queue storms, restore races, stream ordering) + b928652 rewind lacked bounds/contact/retry; store admin surface had crash/dead-parse/UAF/readyz defects",
+      "attempts": [
+        {
+          "n": 1,
+          "date": "2026-08-19",
+          "change": "d2e202e + 3c3d08a + 0e00e60 (staleness guards, single-flight token, pending flag, io stream mutex, restore-window guard, rewind bounds + snapshot branch + prompt resend, admin hardening) with deterministic + unit regression tests",
+          "result": "verified — make test 375/375, make test-tsan 375/375, deterministic RED->GREEN observed, format clean"
+        }
+      ]
+    }
   ]
 }

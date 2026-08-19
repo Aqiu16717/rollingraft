@@ -214,3 +214,18 @@ Notes: (1) docker segfault fix pushed, CI green (run 32039682301). (2) TSan time
 ```
 
 Notes: issue #18 implemented (single-binary 3-node demo + README multi-raft section + CMake target). Verified: make test 371/371 on merged tree, format-check green, demo 6 runs converged exit 0. werror locally pre-existing-broken (googletest char8_t + benchmark sign-compare, unrelated). Merged to main (30a1ccb), branch deleted. Awaiting: push approval + issue close approval.
+
+```json
+{
+  "run_id": "2026-08-19T07:40:00Z",
+  "pattern": "interactive",
+  "duration_s": 7200,
+  "items_found": 25,
+  "actions_taken": 3,
+  "escalations": 0,
+  "tokens_estimate": 240000,
+  "outcome": "fix-verified"
+}
+```
+
+Notes: delta review #13/#14 (08-07→08-18 changes, 8 parallel code-review angles, findings verified by 6 verification agents). Fixed: snapshot two-phase safety (d2e202e, approach B), heartbeat rewind liveness (3c3d08a), store admin surface (0e00e60). make test 375/375, make test-tsan 375/375. Commits local, awaiting push approval. Follow-ups + #15 review pending — see STATE.md.

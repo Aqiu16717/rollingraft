@@ -199,6 +199,13 @@ Same process per module: read + /code-review (scoped) → findings by severity
 - Decision: approach B (finish the two-phase design) + #9 rewind fix now (user); mixed clocks + metric cleanups logged as follow-ups
 - Fix: commits `d2e202e` (staleness guards on apply/persist, single-flight creation token incl. peer-prep, per-peer pending flag at schedule time, restore-window transfer guard, commit guard on receive apply, dead wrappers deleted, snapshot_io_mtx_ stream serialization + deterministic regression test `SnapshotTwoPhaseTest`) and `3c3d08a` (rewind clamped to leader last+1, snapshot branch for ahead-followers, contact refresh, budget-free prompt resend). Tests 375/375 (incl. TSan ×2).
 - Noted: the exact 3-node "follower ahead via snapshot" oscillation scenario from the sweep is not constructible in a 3-node cluster (majority arithmetic); the snapshot branch is defensive but correct by construction.
+- Follow-up (2026-08-21): lease, quorum-ack, leader-contact, dead-peer-contact,
+  and heartbeat-coalescing timestamps now use `TimerService::Now()`. Added
+  deterministic CheckQuorum step-down and lease-expiry scenarios. Enabling the
+  former exposed and fixed a self-deadlock in the quorum-loss follower
+  transition (replication mutex was already held). Release tests 380/380;
+  TSan reported no races, with two unrelated election-timeout flakes passing
+  isolated reruns and a combined 10-iteration stress run (20/20).
 
 ### ✅ #15 WAL perf + transport/protocol delta (done 2026-08-20)
 - Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,

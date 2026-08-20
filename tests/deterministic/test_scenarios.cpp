@@ -1,3 +1,6 @@
+#include <atomic>
+#include <memory>
+
 #include "simulated_clock.h"
 #include "simulated_network.h"
 #include "test_cluster.h"
@@ -85,6 +88,60 @@ TEST(DeterministicScenario, IsolatedLeaderCannotCommit) {
   cluster.RunUntilLeaderElected();
   cluster.RunFor(500);
   cluster.AssertStateMachineEqual();
+}
+
+TEST(DeterministicScenario, CheckQuorumUsesSimulatedClock) {
+  TestCluster cluster(
+      {.num_nodes = 3, .seed = 19, .election_timeout_ms = 300, .check_quorum_enabled = true});
+  cluster.StartAll();
+  cluster.RunUntilLeaderElected();
+  NodeId isolated_leader = cluster.GetLeaderId();
+  ASSERT_NE(isolated_leader, -1);
+
+  std::vector<NodeId> majority;
+  for (NodeId id = 0; id < 3; ++id) {
+    if (id != isolated_leader) {
+      majority.push_back(id);
+    }
+  }
+  cluster.Partition({isolated_leader}, majority);
+  cluster.RunFor(500);
+
+  EXPECT_NE(cluster.GetRole(isolated_leader), RaftNodeRole::LEADER)
+      << "isolated leader must step down after one simulated election timeout";
+}
+
+TEST(DeterministicScenario, LeaderLeaseExpiresOnSimulatedClock) {
+  TestCluster cluster({.num_nodes = 3, .seed = 23, .election_timeout_ms = 300});
+  cluster.StartAll();
+  cluster.RunUntilLeaderElected();
+  NodeId isolated_leader = cluster.GetLeaderId();
+  ASSERT_NE(isolated_leader, -1);
+
+  // Allow an initial heartbeat response to establish the lease.
+  cluster.RunFor(100);
+  auto lease_read_completed = std::make_shared<std::atomic<bool>>(false);
+  ASSERT_TRUE(cluster.GetNode(isolated_leader)
+                  ->ReadIndex([lease_read_completed] { *lease_read_completed = true; })
+                  .ok());
+  EXPECT_TRUE(lease_read_completed->load());
+
+  std::vector<NodeId> others;
+  for (NodeId id = 0; id < 3; ++id) {
+    if (id != isolated_leader) {
+      others.push_back(id);
+    }
+  }
+  cluster.Partition({isolated_leader}, others);
+  cluster.RunFor(400);
+
+  auto expired_read_completed = std::make_shared<std::atomic<bool>>(false);
+  ASSERT_TRUE(cluster.GetNode(isolated_leader)
+                  ->ReadIndex([expired_read_completed] { *expired_read_completed = true; })
+                  .ok());
+  cluster.RunFor(100);
+  EXPECT_FALSE(expired_read_completed->load())
+      << "expired lease must fall back to quorum heartbeats";
 }
 
 // ========== Scenario: membership change (add then remove) ==========

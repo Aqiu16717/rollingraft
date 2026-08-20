@@ -60,8 +60,8 @@ void TestCluster::StartNode(NodeId id) {
       config.peer_node_ids.push_back(static_cast<NodeId>(i));
     }
   }
-  config.check_quorum_enabled = false;  // Simulated clock incompatible with real-time CheckQuorum
-  config.pre_vote_enabled = false;      // Pre-vote timing sensitive in simulated tests
+  config.check_quorum_enabled = options_.check_quorum_enabled;
+  config.pre_vote_enabled = false;  // Pre-vote timing sensitive in simulated tests
   config.timer_factory = [this]() { return std::make_unique<SimulatedTimerService>(clock_.get()); };
   config.persister_factory = []() { return nullptr; };
   config.network_factory = [this, id]() {

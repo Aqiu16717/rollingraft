@@ -218,7 +218,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
   // Heartbeat coalescing: skip peers that received a heartbeat recently
   // (within heartbeat_interval_ms). Their acks are already in-flight and
   // will be counted by HandleAppendEntriesResponse.
-  auto now = std::chrono::steady_clock::now();
+  auto now = timer_->Now();
   std::vector<NodeId> peers_to_send;
   std::vector<NodeId> peers_to_skip;
   for (const auto& [peer_id, addr] : group_->peer_map_) {

@@ -19,6 +19,7 @@ class TestCluster {
     uint32_t election_timeout_ms = 300;
     uint32_t heartbeat_interval_ms = 50;
     uint32_t rpc_timeout_ms = 500;
+    bool check_quorum_enabled = false;
     std::string data_dir_prefix = "/tmp/rollingraft_test";
     // Optional per-node state machine factory (default: MockStateMachine).
     std::function<std::shared_ptr<MockStateMachine>()> state_machine_factory;

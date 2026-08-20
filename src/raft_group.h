@@ -167,6 +167,7 @@ class RaftGroup {
   // CheckQuorum state
   bool check_quorum_enabled_ = true;  // Enabled by default
   bool pre_vote_enabled_ = true;      // Enabled by default
+  bool has_leader_contact_ = false;
   std::chrono::steady_clock::time_point last_leader_contact_;
   std::unordered_map<NodeId, std::chrono::steady_clock::time_point> quorum_acks_;
 

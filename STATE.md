@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-20 (interactive: delta review #15 + store SSE/lifecycle follow-ups)
+Last run: 2026-08-21 (interactive: unify Raft timing on TimerService clock)
 
 ## Project context (static, keep updated)
 
@@ -35,10 +35,14 @@ Last run: 2026-08-20 (interactive: delta review #15 + store SSE/lifecycle follow
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
 - **Delta review follow-ups (logged 08-19)**: store SSE/Stop ownership race,
   `RaftStore::Start` rollback, and `/v1/events` method validation fixed 08-20.
-  Remaining: SSE strong-refs retain vanished clients, mixed clocks
-  (lease/quorum/contact still steady_clock — deterministic tests freeze those
-  paths), TriggerSnapshot metric gaps, `GetLogStats` O(n) under locks. See
+  Remaining: SSE strong-refs retain vanished clients, TriggerSnapshot metric
+  gaps, `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks were
+  fixed 08-21 with deterministic CheckQuorum and lease-expiry coverage. See
   `docs/reviews/progress.md` #13/#14.
+- **CheckQuorum lock follow-up fixed 08-21**: deterministic coverage exposed
+  self-deadlock when quorum loss called `BecomeFollowerLocked()` while already
+  holding `replication_mtx_`; the transition now uses an explicit
+  replication-lock-held path.
 - **Delta review #15 complete** (08-20): WAL fd cache, transport timer
   serialization, and JSON protocol reviewed; no blocker. Low follow-up: cached
   WAL open failures lose the specific `OpenSegment` status.

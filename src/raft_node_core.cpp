@@ -1195,7 +1195,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
 
     // Check if leader lease is valid (O(1) timestamp check)
     auto cfg = infra_->runtime_config_->Get();
-    auto now = std::chrono::steady_clock::now();
+    auto now = timer_->Now();
     bool lease_valid = cfg.leader_lease_enabled && now < group_->leader_lease_expiry_;
 
     if (lease_valid) {
@@ -1602,7 +1602,7 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
   bool valid = false;
   double remaining_seconds = 0.0;
   if (group_->role_ == RaftNodeRole::LEADER && cfg.leader_lease_enabled) {
-    auto now = std::chrono::steady_clock::now();
+    auto now = timer_->Now();
     valid = now < group_->leader_lease_expiry_;
     auto remaining_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(group_->leader_lease_expiry_ - now)

@@ -97,7 +97,7 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
     return;
   }
 
-  auto now = std::chrono::steady_clock::now();
+  auto now = timer_->Now();
 
   // Collect dead nodes (copy to avoid modifying during iteration)
   std::vector<NodeId> dead_nodes;
@@ -313,7 +313,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
     // filling the pipeline without waiting for the RPC response.
     group_->next_index_[peer_id] = next_idx + req.entries_.size();
   } else {
-    group_->last_heartbeat_sent_[peer_id] = std::chrono::steady_clock::now();
+    group_->last_heartbeat_sent_[peer_id] = timer_->Now();
   }
 
   if (metrics_) {
@@ -481,16 +481,16 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
     group_->retry_state_.erase(from);
 
     // Track last contact time for dead node detection
-    group_->last_contact_time_[from] = std::chrono::steady_clock::now();
+    auto now = timer_->Now();
+    group_->last_contact_time_[from] = now;
 
     // CheckQuorum: track successful AppendEntries acks for quorum detection
     if (group_->check_quorum_enabled_) {
-      group_->quorum_acks_[from] = std::chrono::steady_clock::now();
+      group_->quorum_acks_[from] = now;
     }
 
     // Update leader lease if we have majority voter acks
     {
-      auto now = std::chrono::steady_clock::now();
       auto cfg = infra_->runtime_config_->Get();
       int ack_count = 1;  // Leader counts itself
       std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
@@ -557,7 +557,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
     SetPeerReplicationLagMetricLocked(from);
 
     // Even on failure, the peer is alive — update contact time
-    group_->last_contact_time_[from] = std::chrono::steady_clock::now();
+    group_->last_contact_time_[from] = timer_->Now();
 
     // Use exponential backoff retry for log mismatch too
     ScheduleAppendEntriesRetryLocked(from);
@@ -589,7 +589,7 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
     // rejection may carry a conflict hint. The peer is alive even though it
     // rejected us — refresh its contact time so dead-node detection does not
     // remove a live, catchable-up voter during a multi-step walk.
-    group_->last_contact_time_[from] = std::chrono::steady_clock::now();
+    group_->last_contact_time_[from] = timer_->Now();
 
     Index leader_last = group_->log_.GetLastLogInfo().first;
     if (resp.conflict_index_ > 0) {
@@ -635,14 +635,14 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
   }
 
   // Heartbeat ack: update quorum tracking and leader lease
+  auto now = timer_->Now();
   if (group_->check_quorum_enabled_) {
-    group_->quorum_acks_[from] = std::chrono::steady_clock::now();
+    group_->quorum_acks_[from] = now;
   }
   // Track last contact time for dead node detection
-  group_->last_contact_time_[from] = std::chrono::steady_clock::now();
+  group_->last_contact_time_[from] = now;
 
   {
-    auto now = std::chrono::steady_clock::now();
     auto cfg = infra_->runtime_config_->Get();
     int ack_count = 1;  // Leader counts itself
     std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
@@ -676,7 +676,7 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
   }
 
   auto cfg = infra_->runtime_config_->Get();
-  auto now = std::chrono::steady_clock::now();
+  auto now = timer_->Now();
 
   // Collect VOTERS that have acked within election_timeout. The quorum check
   // must satisfy both configs during joint consensus.
@@ -698,7 +698,7 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
       metrics_->GetCounter("raft_checkquorum_stepdown_total", group_->metrics_node_label_)
           .Increment();
     }
-    BecomeFollowerLocked(group_->current_term_);
+    BecomeFollowerWithReplicationLocked(group_->current_term_);
   }
 }
 

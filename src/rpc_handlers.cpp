@@ -195,8 +195,8 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
   // Leader stickiness (CheckQuorum): if we have heard from a valid leader
   // within the election timeout, do not grant vote to another candidate.
   // This prevents disruptive nodes from triggering unnecessary elections.
-  if (group_->check_quorum_enabled_) {
-    auto now = std::chrono::steady_clock::now();
+  if (group_->check_quorum_enabled_ && group_->has_leader_contact_) {
+    auto now = timer_->Now();
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - group_->last_leader_contact_)
             .count();
@@ -278,8 +278,8 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req, PreVoteRes
 
   // Leader stickiness: if we have heard from a valid leader within election
   // timeout, reject pre-vote (even though req.term > current_term).
-  if (group_->check_quorum_enabled_) {
-    auto now = std::chrono::steady_clock::now();
+  if (group_->check_quorum_enabled_ && group_->has_leader_contact_) {
+    auto now = timer_->Now();
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - group_->last_leader_contact_)
             .count();
@@ -338,7 +338,8 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
     }
 
     // Record leader contact time for CheckQuorum leader stickiness
-    group_->last_leader_contact_ = std::chrono::steady_clock::now();
+    group_->last_leader_contact_ = timer_->Now();
+    group_->has_leader_contact_ = true;
 
     // Reset election timer
     ResetElectionTimerLocked();

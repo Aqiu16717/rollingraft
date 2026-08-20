@@ -4,6 +4,14 @@
 using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
+  BecomeFollowerLockedImpl(term, false);
+}
+
+void RaftNode::RaftNodeImpl::BecomeFollowerWithReplicationLocked(Term term) {
+  BecomeFollowerLockedImpl(term, true);
+}
+
+void RaftNode::RaftNodeImpl::BecomeFollowerLockedImpl(Term term, bool replication_lock_held) {
   RaftNodeRole old_role = group_->role_;
 
   group_->role_ = RaftNodeRole::FOLLOWER;
@@ -22,7 +30,10 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
   group_->leader_addr_.clear();
 
   // Stop leader timers and clear pipeline state
-  {
+  if (replication_lock_held) {
+    StopHeartbeatTimerLocked();
+    group_->inflight_.clear();
+  } else {
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     StopHeartbeatTimerLocked();
     group_->inflight_.clear();
@@ -158,7 +169,7 @@ void RaftNode::RaftNodeImpl::BecomeLeaderLocked() {
 
   // CheckQuorum: initialize quorum acks with grace period so that the
   // leader does not step down before peers have a chance to ack.
-  auto now = std::chrono::steady_clock::now();
+  auto now = timer_->Now();
   group_->quorum_acks_.clear();
   group_->last_contact_time_.clear();
   for (const auto& [peer_id, addr] : group_->peer_map_) {

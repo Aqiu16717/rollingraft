@@ -116,6 +116,8 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
  private:
   // State transitions (must hold group_->election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
+  void BecomeFollowerWithReplicationLocked(Term term);
+  void BecomeFollowerLockedImpl(Term term, bool replication_lock_held);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
 

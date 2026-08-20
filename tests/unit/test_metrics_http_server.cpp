@@ -109,6 +109,17 @@ TEST_F(MetricsHttpServerAuthTest, PublicEndpointsIgnoreToken) {
   EXPECT_TRUE(sse4) << "Expected SSE endpoint to be identified";
 }
 
+TEST_F(MetricsHttpServerAuthTest, EventsRejectsNonGetMethods) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+
+  auto [body, status, content_type, is_sse] =
+      server.TestBuildResponse(MakeRequest("POST", "/v1/events"));
+
+  EXPECT_FALSE(is_sse);
+  EXPECT_NE(status.find("404 Not Found"), std::string::npos);
+}
+
 TEST_F(MetricsHttpServerAuthTest, RateLimitAllowsWithinThreshold) {
   MetricsRegistry registry;
   TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);

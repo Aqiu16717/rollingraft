@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -103,6 +104,7 @@ class RaftStore {
   // Wire store-level /v1/status and admin providers on the shared metrics
   // server. Call after infra_->metrics_server_ exists.
   void RegisterStoreProviders();
+  void RollbackStart();
 
   RaftStoreConfig config_;
   std::shared_ptr<SharedNodeInfra> infra_;
@@ -114,6 +116,11 @@ class RaftStore {
   // group on each interval, allowing group-local timeouts (election, etc.) to
   // be driven from a single timer instead of one timer per group.
   TimerId tick_timer_ = 0;
+
+  // Serializes metrics server access between EventBus callbacks and Stop().
+  // A callback holds this mutex through BroadcastEvent so the server cannot
+  // be destroyed while it is in use.
+  std::mutex metrics_server_mtx_;
 
   std::atomic<bool> initialized_{false};
   std::atomic<bool> running_{false};

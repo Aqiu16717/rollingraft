@@ -486,7 +486,7 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
   } else if (path == "/v1/config" && request.starts_with("PATCH") && config_updater_) {
     response_body = config_updater_(body);
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/events") {
+  } else if (path == "/v1/events" && method == "GET") {
     is_sse = true;
   }
 

@@ -82,13 +82,13 @@ Status RaftStore::Initialize() {
 }
 
 Status RaftStore::Start() {
-  bool expected = false;
-  if (!running_.compare_exchange_strong(expected, true)) {
-    return Status::Error("Already started or stopped");
+  if (!initialized_.load(std::memory_order_acquire)) {
+    return Status::Error("Not initialized");
   }
 
-  if (!initialized_) {
-    return Status::Error("Not initialized");
+  bool expected = false;
+  if (!running_.compare_exchange_strong(expected, true)) {
+    return Status::Error("Already started");
   }
 
   // Register the store's group router as the multi-group handler.
@@ -110,35 +110,71 @@ Status RaftStore::Start() {
     return status;
   }
 
-  infra_->timer_->Start();
+  try {
+    infra_->timer_->Start();
 
-  // Start the shared coarse-grained tick timer.  Each group receives a tick
-  // every kTickIntervalMs, driving group-local timeouts from a single timer.
-  tick_timer_ = infra_->timer_->SetInterval(std::chrono::milliseconds(10), [this]() {
-    std::shared_lock<std::shared_mutex> lock(groups_mtx_);
-    for (const auto& [group_id, group] : groups_) {
-      (void)group_id;
-      group->OnStoreTick();
+    // Start the shared coarse-grained tick timer.  Each group receives a tick
+    // every kTickIntervalMs, driving group-local timeouts from a single timer.
+    tick_timer_ = infra_->timer_->SetInterval(std::chrono::milliseconds(10), [this]() {
+      std::shared_lock<std::shared_mutex> lock(groups_mtx_);
+      for (const auto& [group_id, group] : groups_) {
+        (void)group_id;
+        group->OnStoreTick();
+      }
+    });
+
+    // Create the store-owned metrics HTTP server and wire store-level status /
+    // admin providers. Groups skip creation via the create-once guard in
+    // RaftNodeImpl::Start and never register group-capturing handlers.
+    if (config_.metrics_enabled && !config_.metrics_addr.empty()) {
+      MetricsHttpServer::TlsConfig tls_config;
+      tls_config.enabled = config_.tls_enabled;
+      tls_config.cert_file = config_.tls_cert_file;
+      tls_config.key_file = config_.tls_key_file;
+      tls_config.ca_file = config_.tls_ca_file;
+      {
+        std::lock_guard<std::mutex> lock(metrics_server_mtx_);
+        infra_->metrics_server_ = std::make_unique<MetricsHttpServer>(
+            config_.metrics_addr, infra_->metrics_.get(), tls_config, config_.admin_token);
+      }
+
+      RegisterStoreProviders();
+      {
+        std::lock_guard<std::mutex> lock(metrics_server_mtx_);
+        infra_->metrics_server_->Start();
+      }
     }
-  });
-
-  // Create the store-owned metrics HTTP server and wire store-level status /
-  // admin providers. Groups skip creation via the create-once guard in
-  // RaftNodeImpl::Start and never register group-capturing handlers.
-  if (config_.metrics_enabled && !config_.metrics_addr.empty()) {
-    MetricsHttpServer::TlsConfig tls_config;
-    tls_config.enabled = config_.tls_enabled;
-    tls_config.cert_file = config_.tls_cert_file;
-    tls_config.key_file = config_.tls_key_file;
-    tls_config.ca_file = config_.tls_ca_file;
-    infra_->metrics_server_ = std::make_unique<MetricsHttpServer>(
-        config_.metrics_addr, infra_->metrics_.get(), tls_config, config_.admin_token);
-
-    RegisterStoreProviders();
-    infra_->metrics_server_->Start();
+  } catch (const std::exception& e) {
+    RollbackStart();
+    return Status::Error("Failed to start RaftStore: " + std::string(e.what()));
   }
 
-  return infra_->network_->Start();
+  status = infra_->network_->Start();
+  if (!status.ok()) {
+    RollbackStart();
+  }
+  return status;
+}
+
+void RaftStore::RollbackStart() {
+  {
+    std::lock_guard<std::mutex> lock(metrics_server_mtx_);
+    if (infra_ && infra_->metrics_server_) {
+      infra_->metrics_server_->Stop();
+      infra_->metrics_server_.reset();
+    }
+  }
+  if (tick_timer_ != 0 && infra_ && infra_->timer_) {
+    infra_->timer_->CancelTimer(tick_timer_);
+    tick_timer_ = 0;
+  }
+  if (infra_ && infra_->network_) {
+    infra_->network_->Stop();
+  }
+  if (infra_ && infra_->timer_) {
+    infra_->timer_->Stop();
+  }
+  running_.store(false, std::memory_order_release);
 }
 
 Status RaftStore::Stop() {
@@ -163,9 +199,12 @@ Status RaftStore::Stop() {
   if (infra_) {
     // The shared metrics server is store-owned: groups never stop it (their
     // Stop would kill it out from under the remaining groups).
-    if (infra_->metrics_server_) {
-      infra_->metrics_server_->Stop();
-      infra_->metrics_server_.reset();
+    {
+      std::lock_guard<std::mutex> lock(metrics_server_mtx_);
+      if (infra_->metrics_server_) {
+        infra_->metrics_server_->Stop();
+        infra_->metrics_server_.reset();
+      }
     }
     if (tick_timer_ != 0 && infra_->timer_) {
       infra_->timer_->CancelTimer(tick_timer_);
@@ -225,6 +264,7 @@ Status RaftStore::CreateGroup(uint64_t group_id, const RaftGroupOptions& options
   // the group is removed; the subscription dies with the group's EventBus.
   group->GetEventBus().SubscribeAll(
       [this, node_id = config_.node_id, group_id](const RaftEvent& event) {
+        std::lock_guard<std::mutex> lock(metrics_server_mtx_);
         if (infra_ && infra_->metrics_server_) {
           infra_->metrics_server_->BroadcastEvent(
               RaftNode::RaftNodeImpl::FormatSseEvent(event, node_id, group_id));

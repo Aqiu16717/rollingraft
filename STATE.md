@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-19 (interactive: delta review #13/#14 fixes — snapshot safety, rewind liveness, store admin)
+Last run: 2026-08-20 (interactive: delta review #15 + store SSE/lifecycle follow-ups)
 
 ## Project context (static, keep updated)
 
@@ -29,10 +29,19 @@ Last run: 2026-08-19 (interactive: delta review #13/#14 fixes — snapshot safet
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
-- Issue #18: implemented 08-18 on `feature/multi-raft-pr-g-example-readme`, merged to main locally (30a1ccb), branch deleted. Spec/plan in `docs/superpowers/{specs,plans}/`. NOT pushed, NOT closed — awaiting human approval for both.
+- Issue #18: implemented 08-18 and merged as `30a1ccb`; the merge is now on
+  `origin/main`. Issue closure is not verified. Spec/plan in
+  `docs/superpowers/{specs,plans}/`.
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
-- **Delta review follow-ups (logged 08-19, not fixed)**: store SSE lambda races Stop() (metrics_server_ UAF), `BroadcastEvent` io_ctx_ race, `RaftStore::Start` half-start on metrics bind failure, SSE strong-refs retain vanished clients, `/v1/events` accepts any method, mixed clocks (lease/quorum/contact still steady_clock — deterministic tests freeze those paths), TriggerSnapshot metric gaps, `GetLogStats` O(n) under locks. See `docs/reviews/progress.md` #13/#14.
-- **Delta review #15 (WAL perf fd cache + transport/protocol) — not yet reviewed** (pending).
+- **Delta review follow-ups (logged 08-19)**: store SSE/Stop ownership race,
+  `RaftStore::Start` rollback, and `/v1/events` method validation fixed 08-20.
+  Remaining: SSE strong-refs retain vanished clients, mixed clocks
+  (lease/quorum/contact still steady_clock — deterministic tests freeze those
+  paths), TriggerSnapshot metric gaps, `GetLogStats` O(n) under locks. See
+  `docs/reviews/progress.md` #13/#14.
+- **Delta review #15 complete** (08-20): WAL fd cache, transport timer
+  serialization, and JSON protocol reviewed; no blocker. Low follow-up: cached
+  WAL open failures lose the specific `OpenSegment` status.
 
 ## Recent Noise (ignored this run)
 

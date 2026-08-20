@@ -200,9 +200,22 @@ Same process per module: read + /code-review (scoped) → findings by severity
 - Fix: commits `d2e202e` (staleness guards on apply/persist, single-flight creation token incl. peer-prep, per-peer pending flag at schedule time, restore-window transfer guard, commit guard on receive apply, dead wrappers deleted, snapshot_io_mtx_ stream serialization + deterministic regression test `SnapshotTwoPhaseTest`) and `3c3d08a` (rewind clamped to leader last+1, snapshot branch for ahead-followers, contact refresh, budget-free prompt resend). Tests 375/375 (incl. TSan ×2).
 - Noted: the exact 3-node "follower ahead via snapshot" oscillation scenario from the sweep is not constructible in a 3-node cluster (majority arithmetic); the snapshot branch is defensive but correct by construction.
 
-### ⬜ #15 WAL perf + transport/protocol delta (pending)
+### ✅ #15 WAL perf + transport/protocol delta (done 2026-08-20)
 - Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,
   `src/json_protocol.cpp`
+- Focus: cached-fd lifetime and serialization, RPC timer arm/cancel ordering,
+  protocol parse/serialization compatibility
+- Findings (verified):
+  - Confirmed safe: WAL cached fd and file offsets are serialized by `mtx_`;
+    cache invalidation precedes segment deletion and runs on close
+  - Confirmed safe: RPC timer mutation is serialized on the connection strand;
+    callbacks remain exactly-once through the pending-callback map
+  - Confirmed safe: JSON protocol changes preserve legacy `group_id == 0` and
+    reject unknown message types without dispatch
+  - LOW (recorded): WAL cached-open failure is collapsed to a generic error,
+    losing the more specific `OpenSegment` status
+- Decision: no #15 blocker; retain the low-severity diagnostic issue as a follow-up.
+  Tests 378/378, including TSan.
 - Focus: segment fd caching correctness (restart/truncate paths), the timer
   strand fix (fresh, already TSan-verified), protocol changes
 

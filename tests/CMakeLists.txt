@@ -42,6 +42,7 @@ add_executable(unit_tests
   unit/test_read_index.cpp
   unit/test_membership_change.cpp
   unit/test_snapshot_transfer.cpp
+  unit/test_sse_connection.cpp
   unit/test_network_partition.cpp
   unit/test_leader_stepdown.cpp
   unit/test_membership_edge_cases.cpp

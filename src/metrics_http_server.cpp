@@ -573,8 +573,15 @@ void MetricsHttpServer::HandleConnection(SocketVariant socket) {
           auto [response_body, status_line, content_type, is_sse] = BuildResponse(request);
 
           if (is_sse) {
-            auto conn = std::make_shared<SseConnection>(std::move(*socket_ptr),
-                                                        asio::io_context::strand(*io_ctx_));
+            auto conn = std::make_shared<SseConnection>(
+                std::move(*socket_ptr), asio::io_context::strand(*io_ctx_),
+                [this](SseConnection* closed) {
+                  std::lock_guard<std::mutex> lock(sse_mutex_);
+                  sse_connections_.erase(
+                      std::remove_if(sse_connections_.begin(), sse_connections_.end(),
+                                     [closed](const auto& conn) { return conn.get() == closed; }),
+                      sse_connections_.end());
+                });
             {
               std::lock_guard<std::mutex> lock(sse_mutex_);
               RemoveDeadSseConnections();

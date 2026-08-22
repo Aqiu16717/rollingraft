@@ -4,8 +4,11 @@
 
 namespace rollingraft {
 
-SseConnection::SseConnection(SocketVariant socket, asio::io_context::strand strand)
-    : socket_(std::move(socket)), strand_(std::move(strand)) {}
+SseConnection::SseConnection(SocketVariant socket, asio::io_context::strand strand,
+                             CloseCallback close_callback)
+    : socket_(std::move(socket)),
+      strand_(std::move(strand)),
+      close_callback_(std::move(close_callback)) {}
 
 void SseConnection::EnqueueEvent(const std::string& event_data) {
   if (!open_.load()) {
@@ -43,12 +46,12 @@ void SseConnection::Start() {
                             if (!ec) {
                               self->DoWrite();
                             } else {
-                              self->open_.store(false);
-                              self->writing_.store(false);
+                              self->MarkClosed();
                             }
                           }));
       },
       socket_);
+  WatchForDisconnect();
 }
 
 bool SseConnection::IsOpen() const { return open_.load(); }
@@ -101,11 +104,37 @@ void SseConnection::DoWrite() {
 
 void SseConnection::OnWrite(std::error_code ec, std::size_t /*bytes*/) {
   if (ec) {
-    open_.store(false);
-    writing_.store(false);
+    MarkClosed();
     return;
   }
   DoWrite();
+}
+
+void SseConnection::WatchForDisconnect() {
+  std::visit(
+      [this](auto& socket) {
+        socket.async_read_some(
+            asio::buffer(disconnect_buffer_),
+            asio::bind_executor(
+                strand_, [self = shared_from_this()](std::error_code ec, std::size_t /*bytes*/) {
+                  if (ec) {
+                    self->MarkClosed();
+                    return;
+                  }
+                  self->WatchForDisconnect();
+                }));
+      },
+      socket_);
+}
+
+void SseConnection::MarkClosed() {
+  if (!open_.exchange(false)) {
+    return;
+  }
+  writing_.store(false);
+  if (close_callback_) {
+    close_callback_(this);
+  }
 }
 
 }  // namespace rollingraft

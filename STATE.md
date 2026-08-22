@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-21 (interactive: unify Raft timing on TimerService clock)
+Last run: 2026-08-22 (interactive: release disconnected SSE clients)
 
 ## Project context (static, keep updated)
 
@@ -35,9 +35,10 @@ Last run: 2026-08-21 (interactive: unify Raft timing on TimerService clock)
 - Multi-raft under active development; expect churn in `src/raft_store.*`, `src/raft_group.*`, `src/shared_node_infra.*`.
 - **Delta review follow-ups (logged 08-19)**: store SSE/Stop ownership race,
   `RaftStore::Start` rollback, and `/v1/events` method validation fixed 08-20.
-  Remaining: SSE strong-refs retain vanished clients, TriggerSnapshot metric
-  gaps, `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks were
-  fixed 08-21 with deterministic CheckQuorum and lease-expiry coverage. See
+  SSE strong-ref retention was fixed 08-22 with passive disconnect detection
+  and immediate removal. Remaining: TriggerSnapshot metric gaps and
+  `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks were fixed
+  08-21 with deterministic CheckQuorum and lease-expiry coverage. See
   `docs/reviews/progress.md` #13/#14.
 - **CheckQuorum lock follow-up fixed 08-21**: deterministic coverage exposed
   self-deadlock when quorum loss called `BecomeFollowerLocked()` while already

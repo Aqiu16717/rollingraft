@@ -181,6 +181,10 @@ Same process per module: read + /code-review (scoped) → findings by severity
   - LOW: `/v1/status` unlocked leader-addr read races the leader-change writer
 - Decision: fix now = crash + group_id parse + readyz + UAF (user); rest logged as follow-ups
 - Fix: commit `0e00e60` (guarded parse with 400, documented query form parsed, readyz 200, GetGroupShared shared-ownership lookups) + 3 unit regression tests. Tests 375/375 (incl. TSan).
+- Follow-up (2026-08-22): `SseConnection` now watches for passive peer
+  disconnects and notifies `MetricsHttpServer`, which immediately releases its
+  strong reference. Added a loopback regression test for disconnect detection
+  and single close notification. Release and TSan tests 381/381.
 
 ### ✅ #14 Lock-I/O refactor delta (done 2026-08-19)
 - Files: `src/snapshot_manager.cpp` (+295), `src/raft_node_core.cpp` (+210),

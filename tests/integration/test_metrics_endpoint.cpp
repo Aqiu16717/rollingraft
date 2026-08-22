@@ -331,9 +331,24 @@ TEST_F(MetricsEndpointTest, TriggerSnapshotOnLeader) {
   }
   ASSERT_GE(leader_idx, 0);
 
+  std::atomic<bool> applied{false};
+  auto propose_status = leader->Propose(
+      "snapshot_metric_cmd", [&applied](const ApplyResult& result) { applied = result.success; });
+  ASSERT_TRUE(propose_status.ok()) << propose_status.ToString();
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!applied && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  ASSERT_TRUE(applied) << "snapshot seed command was not applied";
+
   std::string output = PostUrl(metrics_addrs_[leader_idx], "/v1/snapshot/trigger");
-  EXPECT_NE(output.find("\"status\""), std::string::npos)
+  EXPECT_NE(output.find("\"status\":\"triggered\""), std::string::npos)
       << "Trigger snapshot response: " << output;
+
+  std::string metrics = FetchMetrics(metrics_addrs_[leader_idx]);
+  EXPECT_TRUE(std::regex_search(
+      metrics, std::regex("raft_snapshots_created_total\\{[^}]*trigger=\\\"manual\\\"[^}]*\\} 1")))
+      << "Manual snapshot metric missing: " << metrics;
 }
 
 TEST_F(MetricsEndpointTest, TriggerSnapshotOnFollowerFails) {

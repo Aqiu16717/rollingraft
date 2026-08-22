@@ -373,7 +373,7 @@ Status RaftNode::RaftNodeImpl::Start() {
                 j["status"] = "triggered";
                 j["message"] = "Snapshot creation initiated";
               } else {
-                j["error"] = "NOT_LEADER";
+                j["error"] = status.IsNotLeader() ? "NOT_LEADER" : "ERROR";
                 j["message"] = status.GetMessage();
               }
               return j.dump();

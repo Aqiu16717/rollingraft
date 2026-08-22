@@ -86,10 +86,11 @@ TEST(SnapshotTwoPhaseTest, CommittedEntriesSurviveSlowSnapshotCreation) {
   // Start a manual snapshot. CreateSnapshot captures at index 5, then blocks
   // inside the gate — the two-phase window is now open with a stale snapshot.
   BlockingSnapshotMachine::CloseGate();
-  std::thread trigger_thread([&cluster]() {
+  Status trigger_status;
+  std::thread trigger_thread([&cluster, &trigger_status]() {
     NodeId leader = cluster.GetLeaderId();
     if (leader >= 0) {
-      (void)cluster.GetNode(leader)->TriggerSnapshot();
+      trigger_status = cluster.GetNode(leader)->TriggerSnapshot();
     }
   });
 
@@ -111,6 +112,8 @@ TEST(SnapshotTwoPhaseTest, CommittedEntriesSurviveSlowSnapshotCreation) {
   // applying it would wipe entries 6-10 and reuse their indices.
   BlockingSnapshotMachine::OpenGate();
   trigger_thread.join();
+  EXPECT_FALSE(trigger_status.ok());
+  EXPECT_NE(trigger_status.GetMessage().find("Log advanced"), std::string::npos);
   cluster.RunUntilIdle();
 
   cluster.AssertAllApplied(10);

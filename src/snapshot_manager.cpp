@@ -148,23 +148,30 @@ Status RaftNode::RaftNodeImpl::CreateAndPersistSnapshot(const std::string& trigg
 
   out_index = snapshot_index;
   out_term = snapshot_term;
+  if (metrics_) {
+    auto labels = group_->metrics_node_label_;
+    labels["trigger"] = trigger;
+    metrics_->GetCounter("raft_snapshots_created_total", labels).Increment();
+  }
   return Status::OK();
 }
 
 // Apply a persisted snapshot to in-memory state. PRECONDITION:
-// election+replication+snapshot locks held. No-ops if the node stepped down or
-// the snapshot is older than the one already applied (I/O happened without
-// locks, so both are possible).
-void RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snapshot_term,
-                                                 const std::string& trigger) {
+// election+replication+snapshot locks held. Returns an error if the node
+// stepped down or the snapshot became stale while I/O ran without locks.
+Status RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snapshot_term,
+                                                   const std::string& trigger) {
   if (!IsRunning() || group_->role_ != RaftNodeRole::LEADER) {
     LOG_WARN("Node {} skipping {}-snapshot apply: no longer leader", group_->server_id_, trigger);
-    return;
+    if (!IsRunning()) {
+      return Status::Error("Node stopped while creating snapshot");
+    }
+    return Status::NotLeader(group_->leader_id_, group_->leader_addr_);
   }
   if (snapshot_index <= group_->last_snapshot_index_) {
     LOG_WARN("Node {} skipping {}-snapshot apply: index {} <= last snapshot {}", group_->server_id_,
              trigger, snapshot_index, group_->last_snapshot_index_);
-    return;
+    return Status::Error("Snapshot superseded while creating");
   }
   if (group_->log_.GetLastLogInfo().first > snapshot_index) {
     // The log grew past the snapshot index during the unlocked creation
@@ -173,7 +180,7 @@ void RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snap
     // creates a fresh snapshot that covers them.
     LOG_WARN("Node {} skipping {}-snapshot apply: log advanced past snapshot index {}",
              group_->server_id_, trigger, snapshot_index);
-    return;
+    return Status::Error("Log advanced while creating snapshot");
   }
 
   Index entries_since_snapshot = snapshot_index - group_->last_snapshot_index_;
@@ -210,6 +217,7 @@ void RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term snap
 
   LOG_INFO("Node {} {}-snapshot applied at index {} term {}", group_->server_id_, trigger,
            snapshot_index, snapshot_term);
+  return Status::OK();
 }
 
 // Two-phase auto-snapshot entry: no locks held on entry. Checks thresholds
@@ -240,11 +248,6 @@ Status RaftNode::RaftNodeImpl::RunAutoSnapshotIfNeeded() {
   }
 
   LOG_INFO("Node {} triggering auto-snapshot", group_->server_id_);
-  if (metrics_) {
-    auto labels = group_->metrics_node_label_;
-    labels["trigger"] = "auto";
-    metrics_->GetCounter("raft_snapshots_created_total", labels).Increment();
-  }
 
   // Phase 2 (no locks): user state machine + disk I/O.
   Index snapshot_index = 0;
@@ -259,9 +262,8 @@ Status RaftNode::RaftNodeImpl::RunAutoSnapshotIfNeeded() {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
-    ApplySnapshotLocked(snapshot_index, snapshot_term, "auto");
+    return ApplySnapshotLocked(snapshot_index, snapshot_term, "auto");
   }
-  return Status::OK();
 }
 
 Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
@@ -298,9 +300,8 @@ Status RaftNode::RaftNodeImpl::TriggerSnapshot() {
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
     std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
     std::lock_guard<std::mutex> lock_s(group_->snapshot_mtx_);
-    ApplySnapshotLocked(snapshot_index, snapshot_term, "manual");
+    return ApplySnapshotLocked(snapshot_index, snapshot_term, "manual");
   }
-  return Status::OK();
 }
 
 // ========== Election Handling ==========

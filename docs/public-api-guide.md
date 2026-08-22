@@ -759,6 +759,7 @@ Authorization: Bearer <admin_token>
 | `raft_snapshot_chunks_sent_total` | Counter | Snapshot chunks sent |
 | `raft_snapshot_sends_completed_total` | Counter | Successful snapshot transfers |
 | `raft_snapshots_received_total` | Counter | Snapshots received |
+| `raft_snapshots_created_total` | Counter | Snapshots created, labeled by `trigger` (`auto` or `manual`) |
 | `raft_log_compactions_total` | Counter | Log compaction events |
 | `raft_log_entries_compacted_total` | Counter | Log entries removed by compaction |
 

@@ -141,7 +141,7 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // then applied under locks. snapshot_in_progress_ guards against re-entry.
   bool ShouldTriggerSnapshotLocked();
   Status CreateAndPersistSnapshot(const std::string& trigger, Index& out_index, Term& out_term);
-  void ApplySnapshotLocked(Index snapshot_index, Term snapshot_term, const std::string& trigger);
+  Status ApplySnapshotLocked(Index snapshot_index, Term snapshot_term, const std::string& trigger);
   Status RunAutoSnapshotIfNeeded();
 
   // Election related

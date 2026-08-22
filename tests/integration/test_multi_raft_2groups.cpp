@@ -423,6 +423,22 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
   }
   EXPECT_TRUE(saw_leader) << "at least one group should report a leader";
 
+  // Seed group 1 so the manual snapshot has applied state to capture. An
+  // empty snapshot is correctly rejected as superseded by index 0.
+  auto* group_1_leader = GetLeader(1);
+  ASSERT_NE(group_1_leader, nullptr);
+  std::atomic<bool> snapshot_seed_applied{false};
+  auto propose_status =
+      group_1_leader->Propose("snapshot_seed", [&snapshot_seed_applied](const ApplyResult& result) {
+        snapshot_seed_applied = result.success;
+      });
+  ASSERT_TRUE(propose_status.ok()) << propose_status.ToString();
+  auto seed_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!snapshot_seed_applied && std::chrono::steady_clock::now() < seed_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  ASSERT_TRUE(snapshot_seed_applied) << "snapshot seed command was not applied";
+
   // Admin endpoint routes by group_id: trigger snapshot on group 1's leader.
   // Only the leader accepts; try each node until one returns "triggered".
   bool triggered = false;

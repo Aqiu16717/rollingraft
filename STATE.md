@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-22 (interactive: release disconnected SSE clients)
+Last run: 2026-08-22 (interactive: make manual snapshot results and metrics accurate)
 
 ## Project context (static, keep updated)
 
@@ -26,6 +26,9 @@ Last run: 2026-08-22 (interactive: release disconnected SSE clients)
 ## Watch List
 
 - ~~Intermittent TSan race~~ → in High Priority (escalated 08-13).
+- TSan `MembershipChangeSurvivesRestart` reported one `PeerConnection`
+  `StartConnecting`/`Close` race on 08-22; five isolated reruns passed. This is
+  outside the snapshot change and needs a focused transport follow-up.
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
@@ -36,10 +39,10 @@ Last run: 2026-08-22 (interactive: release disconnected SSE clients)
 - **Delta review follow-ups (logged 08-19)**: store SSE/Stop ownership race,
   `RaftStore::Start` rollback, and `/v1/events` method validation fixed 08-20.
   SSE strong-ref retention was fixed 08-22 with passive disconnect detection
-  and immediate removal. Remaining: TriggerSnapshot metric gaps and
-  `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks were fixed
-  08-21 with deterministic CheckQuorum and lease-expiry coverage. See
-  `docs/reviews/progress.md` #13/#14.
+  and immediate removal. TriggerSnapshot result/metric gaps were fixed 08-22.
+  Remaining: `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks
+  were fixed 08-21 with deterministic CheckQuorum and lease-expiry coverage.
+  See `docs/reviews/progress.md` #13/#14.
 - **CheckQuorum lock follow-up fixed 08-21**: deterministic coverage exposed
   self-deadlock when quorum loss called `BecomeFollowerLocked()` while already
   holding `replication_mtx_`; the transition now uses an explicit

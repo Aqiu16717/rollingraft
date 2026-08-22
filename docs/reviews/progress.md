@@ -210,6 +210,14 @@ Same process per module: read + /code-review (scoped) → findings by severity
   transition (replication mutex was already held). Release tests 380/380;
   TSan reported no races, with two unrelated election-timeout flakes passing
   isolated reruns and a combined 10-iteration stress run (20/20).
+- Follow-up (2026-08-22): manual and automatic snapshot creation now increment
+  `raft_snapshots_created_total` only after successful creation/persistence,
+  labeled by trigger. A snapshot skipped during the two-phase apply window now
+  returns its real error instead of `Status::OK()`, and the single-group admin
+  endpoint preserves generic-vs-not-leader error classification. Release tests
+  381/381; the snapshot TSan coverage passed, while an unrelated one-off
+  `PeerConnection` reconnect/close race was logged for transport follow-up
+  after five isolated reruns passed.
 
 ### ✅ #15 WAL perf + transport/protocol delta (done 2026-08-20)
 - Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,

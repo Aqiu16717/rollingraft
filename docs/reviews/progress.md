@@ -237,6 +237,13 @@ Same process per module: read + /code-review (scoped) → findings by severity
   Tests 378/378, including TSan.
 - Focus: segment fd caching correctness (restart/truncate paths), the timer
   strand fix (fresh, already TSan-verified), protocol changes
+- Follow-up (2026-08-22): the initial `PeerConnection::StartConnecting()` call
+  now posts to the connection strand when invoked from an arbitrary
+  `io_context` worker, serializing `conn_` and timer access with reconnect and
+  `Close()`. The triggering membership-restart test passed 20/20 under TSan and
+  the full TSan suite passed 381/381. Two unrelated Release timing flakes
+  (`MetricsShowHeartbeatCoalescing` and `RecoversAfterLeaderCrash`) each passed
+  10/10 in isolated reruns.
 
 ---
 

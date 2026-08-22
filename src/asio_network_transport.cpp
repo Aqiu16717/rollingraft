@@ -561,6 +561,15 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
 
   // Initiate async connect (idempotent; CAS-guarded)
   void StartConnecting() {
+    // GetOrCreatePeerConnection can call this from any io_context worker,
+    // while reconnect and Close handlers run on this connection's strand.
+    // Serialize the initial call too so conn_ and both timers are never
+    // accessed concurrently with Close().
+    if (!strand_.running_in_this_thread()) {
+      asio::post(strand_, [self = shared_from_this()] { self->StartConnecting(); });
+      return;
+    }
+
     State expected = State::kDisconnected;
     if (!state_.compare_exchange_strong(expected, State::kConnecting, std::memory_order_acq_rel)) {
       expected = State::kFailed;

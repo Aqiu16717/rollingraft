@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-22 (interactive: make manual snapshot results and metrics accurate)
+Last run: 2026-08-22 (interactive: serialize peer connection startup)
 
 ## Project context (static, keep updated)
 
@@ -26,9 +26,9 @@ Last run: 2026-08-22 (interactive: make manual snapshot results and metrics accu
 ## Watch List
 
 - ~~Intermittent TSan race~~ → in High Priority (escalated 08-13).
-- TSan `MembershipChangeSurvivesRestart` reported one `PeerConnection`
-  `StartConnecting`/`Close` race on 08-22; five isolated reruns passed. This is
-  outside the snapshot change and needs a focused transport follow-up.
+- ~~TSan `PeerConnection` startup/close race~~ → fixed 08-22 by dispatching the
+  initial `StartConnecting()` call through the connection strand. The triggering
+  test passed 20/20 under TSan and the full TSan suite passed 381/381.
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.

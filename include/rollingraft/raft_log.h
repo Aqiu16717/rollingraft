@@ -153,6 +153,7 @@ class RaftLog {
  private:
   std::deque<RaftLogEntry> entries_;  // Log entries storage
   Index start_index_ = 1;             // First valid index (may be > 1 after snapshot)
+  size_t estimated_bytes_ = 0;        // Cached metadata + payload bytes
 };
 
 }  // namespace rollingraft

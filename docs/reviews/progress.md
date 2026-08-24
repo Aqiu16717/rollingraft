@@ -218,6 +218,11 @@ Same process per module: read + /code-review (scoped) → findings by severity
   381/381; the snapshot TSan coverage passed, while an unrelated one-off
   `PeerConnection` reconnect/close race was logged for transport follow-up
   after five isolated reruns passed.
+- Follow-up (2026-08-24): `RaftLog::GetLogStats()` now returns cached byte
+  accounting instead of scanning the full in-memory log while snapshot locks
+  are held. Append, recovery append, suffix truncation, no-op truncation, and
+  snapshot reset paths maintain the cache, with four focused unit tests.
+  Release and TSan tests passed 385/385.
 
 ### ✅ #15 WAL perf + transport/protocol delta (done 2026-08-20)
 - Files: `src/wal_persister.cpp/h` (+164 fd cache), `src/asio_network_transport.cpp`,

@@ -9,6 +9,13 @@
 #include <cstring>
 
 namespace rollingraft {
+namespace {
+
+size_t EstimateEntryBytes(const RaftLogEntry& entry) {
+  return sizeof(entry.index_) + sizeof(entry.term_) + entry.data_.size();
+}
+
+}  // namespace
 
 std::pair<Index, Status> RaftLog::Append(Term term, std::string data) {
   auto [last_index, _] = GetLastLogInfo();
@@ -19,12 +26,14 @@ std::pair<Index, Status> RaftLog::Append(Term term, std::string data) {
   entry.term_ = term;
   entry.data_ = std::move(data);
   entries_.push_back(std::move(entry));
+  estimated_bytes_ += EstimateEntryBytes(entries_.back());
 
   return {new_index, Status::OK()};
 }
 
 Status RaftLog::AppendLogEntry(const RaftLogEntry& entry) {
   entries_.push_back(entry);
+  estimated_bytes_ += EstimateEntryBytes(entries_.back());
   return Status::OK();
 }
 
@@ -88,10 +97,12 @@ Status RaftLog::TruncateSuffix(Index from_index) {
 
   if (from_index <= start_index_) {
     entries_.clear();
+    estimated_bytes_ = 0;
   } else {
     size_t new_size = ToPhysicalIndex(from_index);
-    if (new_size < entries_.size()) {
-      entries_.resize(new_size);
+    while (entries_.size() > new_size) {
+      estimated_bytes_ -= EstimateEntryBytes(entries_.back());
+      entries_.pop_back();
     }
   }
 
@@ -109,20 +120,12 @@ bool RaftLog::IsInRange(Index index) const {
 void RaftLog::SetStartIndex(Index index) {
   // Clear all existing entries - they are now covered by snapshot
   entries_.clear();
+  estimated_bytes_ = 0;
   start_index_ = index;
 }
 
 std::pair<size_t, size_t> RaftLog::GetLogStats() const {
-  size_t entry_count = entries_.size();
-  size_t estimated_bytes = 0;
-
-  // Estimate total bytes (entry metadata + data)
-  for (const auto& entry : entries_) {
-    estimated_bytes += sizeof(entry.index_) + sizeof(entry.term_);
-    estimated_bytes += entry.data_.size();
-  }
-
-  return {entry_count, estimated_bytes};
+  return {entries_.size(), estimated_bytes_};
 }
 
 }  // namespace rollingraft

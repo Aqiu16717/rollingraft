@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-22 (interactive: serialize peer connection startup)
+Last run: 2026-08-24 (interactive: cache Raft log byte statistics)
 
 ## Project context (static, keep updated)
 
@@ -40,9 +40,10 @@ Last run: 2026-08-22 (interactive: serialize peer connection startup)
   `RaftStore::Start` rollback, and `/v1/events` method validation fixed 08-20.
   SSE strong-ref retention was fixed 08-22 with passive disconnect detection
   and immediate removal. TriggerSnapshot result/metric gaps were fixed 08-22.
-  Remaining: `GetLogStats` O(n) under locks. Mixed lease/quorum/contact clocks
-  were fixed 08-21 with deterministic CheckQuorum and lease-expiry coverage.
-  See `docs/reviews/progress.md` #13/#14.
+  `GetLogStats` was made O(1) on 08-24 by maintaining byte accounting at log
+  mutation time. Mixed lease/quorum/contact clocks were fixed 08-21 with
+  deterministic CheckQuorum and lease-expiry coverage. All recorded #13/#14
+  follow-ups are complete; see `docs/reviews/progress.md`.
 - **CheckQuorum lock follow-up fixed 08-21**: deterministic coverage exposed
   self-deadlock when quorum loss called `BecomeFollowerLocked()` while already
   holding `replication_mtx_`; the transition now uses an explicit

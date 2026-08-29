@@ -263,7 +263,7 @@ class WALPersister {
   // Get an fd for a segment, caching it across reads so GetEntry/GetEntries
   // don't pay open()+header-validate+close() per call. The cache is
   // invalidated on GarbageCollect (segment deleted) and Close.
-  int GetCachedSegmentFd(uint64_t segment_id);
+  Status GetCachedSegmentFd(uint64_t segment_id, int* fd);
   void InvalidateSegmentFdCache();
   Status OpenSegment(uint64_t segment_id, int* fd);
   Status CreateSegment(uint64_t segment_id);

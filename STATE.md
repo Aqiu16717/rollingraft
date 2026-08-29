@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-24 (interactive: cache Raft log byte statistics)
+Last run: 2026-08-29 (interactive: preserve WAL cached-open errors)
 
 ## Project context (static, keep updated)
 
@@ -29,6 +29,10 @@ Last run: 2026-08-24 (interactive: cache Raft log byte statistics)
 - ~~TSan `PeerConnection` startup/close race~~ → fixed 08-22 by dispatching the
   initial `StartConnecting()` call through the connection strand. The triggering
   test passed 20/20 under TSan and the full TSan suite passed 381/381.
+- TSan full-suite ordering intermittently prevents one group from electing in
+  `MultiRaft2GroupsTest.MetricsEnabledWithTwoGroupsSharesOneServer`: reproduced
+  twice on 08-29 with no race report, while 10 isolated reruns passed. Track as
+  a multi-raft test-isolation/timing follow-up.
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.
@@ -49,8 +53,8 @@ Last run: 2026-08-24 (interactive: cache Raft log byte statistics)
   holding `replication_mtx_`; the transition now uses an explicit
   replication-lock-held path.
 - **Delta review #15 complete** (08-20): WAL fd cache, transport timer
-  serialization, and JSON protocol reviewed; no blocker. Low follow-up: cached
-  WAL open failures lose the specific `OpenSegment` status.
+  serialization, and JSON protocol reviewed; no blocker. The cached WAL-open
+  diagnostic follow-up was fixed 08-29 by preserving `OpenSegment` statuses.
 
 ## Recent Noise (ignored this run)
 

@@ -835,9 +835,10 @@ static Status ParseProtobufPayload(const std::string& payload, RaftLogEntry& ent
 
 Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
                                     RaftLogEntry& entry) {
-  int fd = GetCachedSegmentFd(segment_id);
-  if (fd < 0) {
-    return Status::Error("Failed to open segment for read: " + std::to_string(segment_id));
+  int fd = -1;
+  auto status = GetCachedSegmentFd(segment_id, &fd);
+  if (!status.ok()) {
+    return status;
   }
 
   lseek(fd, file_offset, SEEK_SET);
@@ -905,23 +906,24 @@ Status WALPersister::ReadLogEntryAt(uint64_t segment_id, uint64_t file_offset,
   return ParseJsonPayload(payload, entry, computed_crc);
 }
 
-int WALPersister::GetCachedSegmentFd(uint64_t segment_id) {
+Status WALPersister::GetCachedSegmentFd(uint64_t segment_id, int* fd) {
   if (cached_segment_id_ == segment_id && cached_fd_ >= 0) {
-    return cached_fd_;
+    *fd = cached_fd_;
+    return Status::OK();
   }
   if (cached_fd_ >= 0) {
     close(cached_fd_);
     cached_fd_ = -1;
     cached_segment_id_ = 0;
   }
-  int fd = -1;
-  auto status = OpenSegment(segment_id, &fd);
+  *fd = -1;
+  auto status = OpenSegment(segment_id, fd);
   if (!status.ok()) {
-    return -1;
+    return status;
   }
-  cached_fd_ = fd;
+  cached_fd_ = *fd;
   cached_segment_id_ = segment_id;
-  return fd;
+  return Status::OK();
 }
 
 void WALPersister::InvalidateSegmentFdCache() {
@@ -1096,16 +1098,17 @@ Status WALPersister::ReadTrailer(int fd, uint64_t* end_offset) {
 Status WALPersister::ScanSegment(uint64_t segment_id,
                                  const std::function<bool(const WALRecord&)>& callback,
                                  uint64_t* out_truncate_offset) {
-  int fd = GetCachedSegmentFd(segment_id);
-  if (fd < 0) {
-    return Status::Error("Failed to open segment for scan: " + std::to_string(segment_id));
+  int fd = -1;
+  auto status = GetCachedSegmentFd(segment_id, &fd);
+  if (!status.ok()) {
+    return status;
   }
 
   // Get end offset from trailer. If the trailer is missing or invalid (crash
   // before it was written), fall back to the physical file size and let the
   // record scan below find the corruption point.
   uint64_t end_offset = 0;
-  auto status = ReadTrailer(fd, &end_offset);
+  status = ReadTrailer(fd, &end_offset);
   if (!status.ok()) {
     off_t file_size = lseek(fd, 0, SEEK_END);
     if (file_size <= static_cast<off_t>(kHeaderSize)) {

@@ -349,6 +349,46 @@ TEST_F(WALPersisterTest, CorruptionDetection) {
   }
 }
 
+TEST_F(WALPersisterTest, GetEntryPropagatesMissingSegmentOpenError) {
+  WALPersister wal;
+  ASSERT_TRUE(wal.Open(test_dir_).ok());
+  ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(1, 1, "data")).ok());
+  ASSERT_TRUE(wal.Sync().ok());
+
+  const std::filesystem::path segment_path = std::filesystem::path(test_dir_) / "1.wal";
+  ASSERT_TRUE(std::filesystem::remove(segment_path));
+
+  RaftLogEntry entry;
+  auto status = wal.GetEntry(1, entry);
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_FALSE(status.IsCorruption());
+  EXPECT_NE(status.GetMessage().find("Failed to open segment: " + segment_path.string()),
+            std::string::npos);
+  wal.Close();
+}
+
+TEST_F(WALPersisterTest, ReplayPropagatesCorruptSegmentHeader) {
+  WALPersister wal;
+  ASSERT_TRUE(wal.Open(test_dir_).ok());
+  ASSERT_TRUE(wal.AppendLogEntry(MakeEntry(1, 1, "data")).ok());
+  ASSERT_TRUE(wal.Sync().ok());
+
+  const std::filesystem::path segment_path = std::filesystem::path(test_dir_) / "1.wal";
+  std::fstream segment(segment_path, std::ios::in | std::ios::out | std::ios::binary);
+  ASSERT_TRUE(segment.is_open());
+  const uint32_t invalid_magic = 0;
+  segment.write(reinterpret_cast<const char*>(&invalid_magic), sizeof(invalid_magic));
+  segment.close();
+
+  auto status = wal.Replay([](const WALRecord&) { return true; });
+
+  EXPECT_TRUE(status.IsCorruption());
+  EXPECT_NE(status.GetMessage().find("Invalid magic in segment: " + segment_path.string()),
+            std::string::npos);
+  wal.Close();
+}
+
 // ---------------------------------------------------------------------------
 // Test 9: Concurrent Append
 // ---------------------------------------------------------------------------

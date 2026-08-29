@@ -249,6 +249,12 @@ Same process per module: read + /code-review (scoped) → findings by severity
   the full TSan suite passed 381/381. Two unrelated Release timing flakes
   (`MetricsShowHeartbeatCoalescing` and `RecoversAfterLeaderCrash`) each passed
   10/10 in isolated reruns.
+- Follow-up (2026-08-29): cached segment acquisition now returns `Status` plus
+  an fd, so `GetEntry`, `GetEntries`, and `Replay` preserve the exact
+  `OpenSegment` failure message and corruption code. Missing-file and invalid
+  header regressions are covered. Release passed 387/387 and all 16 WAL tests
+  passed under TSan. The full TSan suite had no race reports but twice hit an
+  unrelated multi-raft election timeout that passed 10/10 in isolation.
 
 ---
 

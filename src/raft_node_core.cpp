@@ -43,8 +43,10 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
     infra_->metrics_ = std::make_unique<MetricsRegistry>();
   }
 
-  // Initialize runtime config with defaults from RaftNodeConfig
-  {
+  // Runtime configuration belongs to the shared node infrastructure. A
+  // RaftStore initializes it before creating groups, and subsequent groups
+  // must not replace it while already-running groups are reading it.
+  if (!infra_->runtime_config_) {
     RuntimeConfig::Values defaults;
     defaults.election_timeout_ms = config.election_timeout_ms;
     defaults.heartbeat_interval_ms = config.heartbeat_interval_ms;

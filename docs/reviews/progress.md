@@ -255,6 +255,13 @@ Same process per module: read + /code-review (scoped) → findings by severity
   header regressions are covered. Release passed 387/387 and all 16 WAL tests
   passed under TSan. The full TSan suite had no race reports but twice hit an
   unrelated multi-raft election timeout that passed 10/10 in isolation.
+- Follow-up (2026-08-29): multi-raft group construction no longer replaces the
+  store-owned `RuntimeConfig`. Replacing it reset hot-reloaded settings, left
+  earlier groups with a stale cached pointer, and allowed running groups to
+  observe concurrent shared-config replacement. A store lifecycle regression
+  test verifies two group creations preserve both object identity and an
+  updated election timeout. The flaky metrics-enabled election test elected
+  both groups in 70/70 focused TSan reruns; Release and TSan passed 388/388.
 
 ---
 

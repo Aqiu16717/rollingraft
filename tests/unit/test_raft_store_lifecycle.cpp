@@ -1,6 +1,8 @@
+#include <filesystem>
 #include <memory>
 
 #include "mock/mock_network.h"
+#include "mock/mock_state_machine.h"
 #include "mock/mock_timer.h"
 #include "raft_store.h"
 #include "test_port.h"
@@ -44,6 +46,35 @@ TEST(RaftStoreLifecycleTest, MetricsStartFailureRollsBackAndAllowsRetryAttempt) 
   EXPECT_FALSE(retry_status.ok());
   EXPECT_EQ(retry_status.GetMessage().find("Already started"), std::string::npos);
   EXPECT_EQ(store.GetInfra()->metrics_server_, nullptr);
+}
+
+TEST(RaftStoreLifecycleTest, CreatingGroupsPreservesSharedRuntimeConfig) {
+  auto config = MakeStoreConfig(GetUniqueTestPort());
+  config.metrics_enabled = false;
+  config.data_dir = "/tmp/raft_store_runtime_config_" + std::to_string(getpid());
+  std::filesystem::remove_all(config.data_dir);
+  struct TempDirCleanup {
+    std::string path;
+    ~TempDirCleanup() { std::filesystem::remove_all(path); }
+  } cleanup{config.data_dir};
+  RaftStore store(config);
+  ASSERT_TRUE(store.Initialize().ok());
+  ASSERT_TRUE(store.Start().ok());
+
+  auto* runtime_config = store.GetInfra()->runtime_config_.get();
+  ASSERT_NE(runtime_config, nullptr);
+  ASSERT_TRUE(runtime_config->UpdateFromJson(R"({"election_timeout_ms":450})").ok());
+
+  for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
+    RaftGroupOptions options;
+    options.group_id = group_id;
+    auto status = store.CreateGroup(group_id, options, std::make_shared<MockStateMachine>());
+    ASSERT_TRUE(status.ok()) << status.ToString();
+    EXPECT_EQ(store.GetInfra()->runtime_config_.get(), runtime_config);
+    EXPECT_EQ(runtime_config->Get().election_timeout_ms, 450u);
+  }
+
+  EXPECT_TRUE(store.Stop().ok());
 }
 
 }  // namespace

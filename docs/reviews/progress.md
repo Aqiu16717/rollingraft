@@ -262,6 +262,13 @@ Same process per module: read + /code-review (scoped) → findings by severity
   test verifies two group creations preserve both object identity and an
   updated election timeout. The flaky metrics-enabled election test elected
   both groups in 70/70 focused TSan reruns; Release and TSan passed 388/388.
+- Follow-up (2026-08-30): completed the configuration-scope split exposed by
+  the shared-lifetime fix. Each `RaftGroup` now owns its `RuntimeConfig`, and
+  all consensus consumers read the group-local instance. Multi-raft config
+  GET/PATCH requests require `group_id`; transport batching remains store-wide
+  and is synchronized across groups. Differential 300ms/900ms group defaults
+  and a targeted 650ms hot update are covered through the real HTTP endpoint.
+  Release and TSan passed 389/389.
 
 ---
 

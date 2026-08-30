@@ -200,7 +200,7 @@ void RaftNode::RaftNodeImpl::HandleRequestVote(const RequestVoteRequest& req,
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - group_->last_leader_contact_)
             .count();
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       LOG_INFO("Node {} reject vote: leader contact {}ms ago (< {}ms)", group_->server_id_, elapsed,
                cfg.election_timeout_ms);
@@ -283,7 +283,7 @@ void RaftNode::RaftNodeImpl::HandlePreVote(const PreVoteRequest& req, PreVoteRes
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - group_->last_leader_contact_)
             .count();
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < cfg.election_timeout_ms) {
       LOG_INFO("Node {} reject PreVote: leader contact {}ms ago (< {}ms)", group_->server_id_,
                elapsed, cfg.election_timeout_ms);
@@ -836,7 +836,7 @@ void RaftNode::RaftNodeImpl::HandleClientRequest(const ClientRequest& req, Clien
 
     // Wait for ReadIndex with timeout (use rpc_timeout_ms)
     auto wait_status =
-        future.wait_for(std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms));
+        future.wait_for(std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
 
     lock_e.lock();
     lock_r.lock();

@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-29 (interactive: preserve shared runtime config)
+Last run: 2026-08-30 (interactive: make runtime config group-local)
 
 ## Project context (static, keep updated)
 
@@ -34,6 +34,11 @@ Last run: 2026-08-29 (interactive: preserve shared runtime config)
   replaced the shared object while running groups could read it, and also reset
   hot-reloaded values. The target elected both groups in 70/70 focused reruns;
   full Release and TSan suites passed 388/388.
+- ~~Multi-raft group options ignored~~ → fixed 08-30 by moving consensus
+  `RuntimeConfig` ownership into `RaftGroup`. Election, replication, snapshot,
+  retry, lease, and apply paths now read group-local values; `/v1/config`
+  routes GET/PATCH by `group_id`. Transport batching remains node-level and is
+  synchronized across hosted groups. Release and TSan passed 389/389.
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.

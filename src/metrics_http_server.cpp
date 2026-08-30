@@ -49,6 +49,31 @@ std::string ExtractPath(const std::string& request) {
   return request.substr(start, end - start);
 }
 
+std::string_view PathWithoutQuery(std::string_view path) {
+  size_t query = path.find('?');
+  return path.substr(0, query);
+}
+
+uint64_t ExtractGroupIdFromQuery(std::string_view path) {
+  size_t query = path.find('?');
+  if (query == std::string_view::npos) {
+    return 0;
+  }
+  std::string_view params = path.substr(query + 1);
+  constexpr std::string_view kGroupIdPrefix = "group_id=";
+  size_t start = params.find(kGroupIdPrefix);
+  if (start == std::string_view::npos) {
+    return 0;
+  }
+  start += kGroupIdPrefix.size();
+  size_t end = params.find('&', start);
+  try {
+    return std::stoull(std::string(params.substr(start, end - start)));
+  } catch (...) {
+    return 0;
+  }
+}
+
 std::string ExtractBody(const std::string& request) {
   size_t pos = request.find("\r\n\r\n");
   if (pos == std::string::npos) {
@@ -97,7 +122,7 @@ bool IsAdminEndpoint(const std::string& path, const std::string& method) {
   if (path == "/v1/leadership/transfer" && method == "POST") {
     return true;
   }
-  if (path == "/v1/config") {
+  if (PathWithoutQuery(path) == "/v1/config") {
     return true;  // GET and PATCH
   }
   return false;
@@ -330,6 +355,7 @@ std::string ExtractMethod(const std::string& request) {
 std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::BuildResponse(
     const std::string& request) {
   std::string path = ExtractPath(request);
+  std::string_view path_no_query = PathWithoutQuery(path);
   std::string body = ExtractBody(request);
   std::string method = ExtractMethod(request);
 
@@ -339,7 +365,7 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
   bool is_sse = false;
 
   // Admin endpoint authentication check
-  if (!admin_token_.empty() && IsAdminEndpoint(path, method)) {
+  if (!admin_token_.empty() && IsAdminEndpoint(std::string(path_no_query), method)) {
     std::string token = ExtractAuthToken(request);
     if (!TimingSafeEqual(token, admin_token_)) {
       response_body =
@@ -480,11 +506,17 @@ std::tuple<std::string, std::string, std::string, bool> MetricsHttpServer::Build
       response_body = transfer_leadership_handler_(target_id, group_id);
       status_line = "HTTP/1.1 202 Accepted\r\n";
     }
-  } else if (path == "/v1/config" && request.starts_with("GET") && config_provider_) {
-    response_body = config_provider_();
+  } else if (path_no_query == "/v1/config" && request.starts_with("GET") && config_provider_) {
+    response_body = config_provider_(ExtractGroupIdFromQuery(path));
     status_line = "HTTP/1.1 200 OK\r\n";
-  } else if (path == "/v1/config" && request.starts_with("PATCH") && config_updater_) {
-    response_body = config_updater_(body);
+  } else if (path_no_query == "/v1/config" && request.starts_with("PATCH") && config_updater_) {
+    uint64_t group_id = 0;
+    try {
+      group_id = nlohmann::json::parse(body).value("group_id", 0);
+    } catch (...) {
+      group_id = 0;
+    }
+    response_body = config_updater_(body, group_id);
     status_line = "HTTP/1.1 200 OK\r\n";
   } else if (path == "/v1/events" && method == "GET") {
     is_sse = true;

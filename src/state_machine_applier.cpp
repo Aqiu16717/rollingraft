@@ -227,7 +227,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
     if (it != group_->last_heartbeat_sent_.end()) {
       auto elapsed =
           std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
-      auto rc = infra_->runtime_config_->Get();
+      auto rc = runtime_config_->Get();
       if (elapsed >= 0 && static_cast<uint32_t>(elapsed) < rc.heartbeat_interval_ms) {
         peers_to_skip.push_back(peer_id);
         continue;
@@ -281,7 +281,7 @@ void RaftNode::RaftNodeImpl::BroadcastReadIndexHeartbeatsLocked(uint64_t read_id
 
     infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
-        std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
+        std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
         [weak_self = weak_from_this(), this, peer_id, read_id](
             const std::string& resp, bool success, const std::string& error) {
           auto keep_alive = weak_self.lock();

@@ -7,7 +7,7 @@ void RaftNode::RaftNodeImpl::StartHeartbeatTimerLocked(uint32_t interval_ms) {
   // If interval_ms == 0, use the runtime-configured heartbeat interval.
   uint32_t interval = interval_ms;
   if (interval == 0) {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     interval = cfg.heartbeat_interval_ms;
   }
   group_->heartbeat_deadline_ = timer_->Now() + std::chrono::milliseconds(interval);
@@ -29,7 +29,7 @@ void RaftNode::RaftNodeImpl::CheckHeartbeatTimeoutLocked() {
 
   // Re-schedule before running the handler so that a long handler does not
   // delay the next tick.  Use quiesced interval when in quiesced mode.
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   uint32_t interval = cfg.heartbeat_interval_ms;
   if (group_->quiesced_.load(std::memory_order_acquire)) {
     interval = group_->config_.quiesced_heartbeat_interval_ms;
@@ -134,7 +134,7 @@ void RaftNode::RaftNodeImpl::MaybeRemoveDeadNodesLocked() {
         auto elapsed =
             std::chrono::duration_cast<std::chrono::milliseconds>(now - ack_time).count();
         if (elapsed >= 0 &&
-            static_cast<uint32_t>(elapsed) < infra_->runtime_config_->Get().election_timeout_ms &&
+            static_cast<uint32_t>(elapsed) < runtime_config_->Get().election_timeout_ms &&
             group_->cluster_config_.IsVoter(peer_id) && peer_id != dead_id) {
           ++active_voters;
         }
@@ -268,7 +268,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   auto [last_index, _] = group_->log_.GetLastLogInfo();
   Index effective_last = last_index;
   if (next_idx <= effective_last) {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     Index end = std::min(next_idx + cfg.max_entries_per_append, effective_last + 1);
     req.entries_ = group_->log_.GetEntries(next_idx, end);
   }
@@ -277,7 +277,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
 
   // Heartbeats bypass pipeline window to ensure liveness.
   if (!is_heartbeat) {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     size_t window = cfg.max_pipeline_window;
     size_t inflight_count = 0;
     auto it_inflight = group_->inflight_.find(peer_id);
@@ -323,7 +323,7 @@ void RaftNode::RaftNodeImpl::SendAppendEntriesToPeerLocked(NodeId peer_id) {
   }
 
   {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     infra_->network_->SendRpc(
         peer_id, it_addr->second, data, req.correlation_id_,
         std::chrono::milliseconds(cfg.rpc_timeout_ms),
@@ -384,7 +384,7 @@ void RaftNode::RaftNodeImpl::ScheduleAppendEntriesRetryLocked(NodeId peer_id) {
   auto& retry = group_->retry_state_[peer_id];
   retry.attempts++;
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
 
   if (retry.attempts > static_cast<int>(cfg.max_retry_attempts)) {
     LOG_WARN("Node {}: max retry attempts ({}) reached for peer {}", group_->server_id_,
@@ -491,7 +491,7 @@ void RaftNode::RaftNodeImpl::HandleAppendEntriesResponse(NodeId from,
 
     // Update leader lease if we have majority voter acks
     {
-      auto cfg = infra_->runtime_config_->Get();
+      auto cfg = runtime_config_->Get();
       int ack_count = 1;  // Leader counts itself
       std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
       for (const auto& [peer_id, ack_time] : group_->quorum_acks_) {
@@ -643,7 +643,7 @@ void RaftNode::RaftNodeImpl::HandleHeartbeatResponse(NodeId from,
   group_->last_contact_time_[from] = now;
 
   {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     int ack_count = 1;  // Leader counts itself
     std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
     for (const auto& [peer_id, ack_time] : group_->quorum_acks_) {
@@ -675,7 +675,7 @@ void RaftNode::RaftNodeImpl::CheckQuorumLocked() {
     return;
   }
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   auto now = timer_->Now();
 
   // Collect VOTERS that have acked within election_timeout. The quorum check

@@ -10,7 +10,7 @@ void RaftNode::RaftNodeImpl::StartSnapshotCheckTimerLocked() {
     return;  // Already running
   }
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   group_->snapshot_check_deadline_ =
       timer_->Now() + std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
   group_->snapshot_check_timer_enabled_ = true;
@@ -32,7 +32,7 @@ void RaftNode::RaftNodeImpl::CheckSnapshotTimeoutLocked() {
       return;
     }
 
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     group_->snapshot_check_deadline_ += std::chrono::milliseconds(cfg.snapshot_check_interval_ms);
   }
 
@@ -56,7 +56,7 @@ bool RaftNode::RaftNodeImpl::ShouldTriggerSnapshotLocked() {
   auto [entry_count, byte_size] = group_->log_.GetLogStats();
   (void)entry_count;
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   if (entries_since_snapshot >= cfg.snapshot_threshold_entries) {
     return true;
   }
@@ -87,7 +87,7 @@ Status RaftNode::RaftNodeImpl::CreateAndPersistSnapshot(const std::string& trigg
   constexpr size_t kReadChunkSize = 64 * 1024;  // 64KB chunks
   std::vector<uint8_t> buffer(kReadChunkSize);
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   const size_t kMaxSnapshotSize = cfg.max_snapshot_size_bytes > 0
                                       ? cfg.max_snapshot_size_bytes
                                       : 100 * 1024 * 1024;  // 100MB default
@@ -194,7 +194,7 @@ Status RaftNode::RaftNodeImpl::ApplySnapshotLocked(Index snapshot_index, Term sn
   // TruncatePrefix I/O can be slow; performing it asynchronously prevents
   // blocking the Raft event loop while holding manager locks.
   if (log_persister_) {
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     uint64_t compact_before = 1;
     if (snapshot_index + 1 > cfg.log_retention_entries) {
       compact_before = snapshot_index + 1 - cfg.log_retention_entries;
@@ -479,7 +479,7 @@ void RaftNode::RaftNodeImpl::SendNextSnapshotChunkLocked(NodeId peer_id) {
   // Send
   infra_->network_->SendRpc(
       peer_id, it_addr->second, data, req.correlation_id_,
-      std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms),
+      std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms),
       [weak_self = weak_from_this(), this, peer_id](const std::string& resp, bool success,
                                                     const std::string& error) {
         auto keep_alive = weak_self.lock();

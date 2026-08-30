@@ -369,9 +369,9 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
 
     auto store = std::make_unique<RaftStore>(store_config);
     auto status = store->Initialize();
-    ASSERT_TRUE(status.ok());
+    ASSERT_TRUE(status.ok()) << status.ToString();
     status = store->Start();
-    ASSERT_TRUE(status.ok());
+    ASSERT_TRUE(status.ok()) << status.ToString();
     stores_.push_back(std::move(store));
   }
 
@@ -379,8 +379,8 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
     for (int i = 0; i < 3; ++i) {
       RaftGroupOptions options;
       options.group_id = group_id;
-      options.election_timeout_ms = 300;
-      options.heartbeat_interval_ms = 50;
+      options.election_timeout_ms = group_id == 1 ? 300 : 900;
+      options.heartbeat_interval_ms = group_id == 1 ? 50 : 120;
       auto sm = std::make_shared<MockStateMachine>();
       state_machines_[group_id].push_back(sm);
       auto status = stores_[i]->CreateGroup(group_id, options, sm);
@@ -406,6 +406,21 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
     pclose(pipe);
     return result;
   };
+
+  // Runtime tuning is routed to one group. Distinct creation-time overrides
+  // must survive, and patching group 1 must not alter group 2.
+  const std::string config_base =
+      "http://127.0.0.1:" + std::to_string(base_port + 5) + "/v1/config";
+  auto group_1_config = nlohmann::json::parse(fetch(config_base + "?group_id=1"));
+  auto group_2_config = nlohmann::json::parse(fetch(config_base + "?group_id=2"));
+  EXPECT_EQ(group_1_config["election_timeout_ms"], 300);
+  EXPECT_EQ(group_2_config["election_timeout_ms"], 900);
+
+  auto update_result = nlohmann::json::parse(
+      fetch(config_base + " -X PATCH -d '{\"group_id\":1,\"election_timeout_ms\":650}'"));
+  EXPECT_EQ(update_result["status"], "updated");
+  EXPECT_EQ(stores_[0]->GetGroup(1)->GetRuntimeConfigValues().election_timeout_ms, 650u);
+  EXPECT_EQ(stores_[0]->GetGroup(2)->GetRuntimeConfigValues().election_timeout_ms, 900u);
 
   std::string status_body;
   for (int i = 0; i < 3 && status_body.empty(); ++i) {
@@ -512,6 +527,21 @@ TEST_F(MultiRaft2GroupsTest, StoreEndpointsWork) {
       << "SSE events should carry group_id: " << all_sse.substr(0, 500);
   EXPECT_NE(all_sse.find("\"event\""), std::string::npos)
       << "SSE stream should carry events: " << all_sse.substr(0, 500);
+
+  // Transport batching belongs to the shared node transport. Updating it
+  // through one group synchronizes every hosted group, and later groups
+  // inherit the current node-level value.
+  auto batching_result = nlohmann::json::parse(
+      fetch(config_base + " -X PATCH -d '{\"group_id\":1,\"transport_batching_enabled\":false}'"));
+  EXPECT_EQ(batching_result["status"], "updated");
+  EXPECT_FALSE(stores_[0]->GetGroup(1)->GetRuntimeConfigValues().transport_batching_enabled);
+  EXPECT_FALSE(stores_[0]->GetGroup(2)->GetRuntimeConfigValues().transport_batching_enabled);
+
+  RaftGroupOptions later_options;
+  later_options.group_id = 3;
+  auto later_state_machine = std::make_shared<MockStateMachine>();
+  ASSERT_TRUE(stores_[0]->CreateGroup(3, later_options, later_state_machine).ok());
+  EXPECT_FALSE(stores_[0]->GetGroup(3)->GetRuntimeConfigValues().transport_batching_enabled);
 }
 
 TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {

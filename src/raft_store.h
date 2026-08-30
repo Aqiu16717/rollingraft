@@ -40,6 +40,9 @@ struct RaftStoreConfig {
   std::string tls_key_file;
   std::string tls_ca_file;
 
+  // Node-level transport write coalescing shared by every hosted group.
+  bool transport_batching_enabled = true;
+
   // Optional factories for dependency injection (testing).
   std::function<std::unique_ptr<NetworkTransport>()> network_factory = nullptr;
   std::function<std::unique_ptr<TimerService>()> timer_factory = nullptr;
@@ -124,6 +127,7 @@ class RaftStore {
 
   std::atomic<bool> initialized_{false};
   std::atomic<bool> running_{false};
+  std::atomic<bool> transport_batching_enabled_{true};
 };
 
 }  // namespace rollingraft

@@ -13,6 +13,26 @@ namespace rollingraft {
 
 namespace {
 
+RuntimeConfig::Values MakeRuntimeConfigValues(const RaftNodeConfig& config) {
+  RuntimeConfig::Values values;
+  values.election_timeout_ms = config.election_timeout_ms;
+  values.heartbeat_interval_ms = config.heartbeat_interval_ms;
+  values.max_entries_per_append = config.max_entries_per_append;
+  values.rpc_timeout_ms = config.rpc_timeout_ms;
+  values.snapshot_threshold_entries = config.snapshot_threshold_entries;
+  values.snapshot_threshold_bytes = config.snapshot_threshold_bytes;
+  values.snapshot_check_interval_ms = config.snapshot_check_interval_ms;
+  values.max_retry_attempts = config.max_retry_attempts;
+  values.base_retry_delay_ms = config.base_retry_delay_ms;
+  values.max_retry_delay_ms = config.max_retry_delay_ms;
+  values.log_retention_entries = config.log_retention_entries;
+  values.propose_timeout_ms = config.propose_timeout_ms;
+  values.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
+  values.leader_lease_enabled = config.leader_lease_enabled;
+  values.transport_batching_enabled = config.transport_batching_enabled;
+  return values;
+}
+
 // Extract node id from address string in "host:port" format.
 // Returns -1 if the port cannot be parsed as a non-negative integer.
 NodeId ExtractNodeIdFromAddr(const NodeAddr& addr) {
@@ -39,6 +59,7 @@ RaftGroup::RaftGroup(uint64_t group_id, const RaftNodeConfig& config,
                      std::shared_ptr<StateMachine> state_machine)
     : group_id_(group_id),
       config_(config),
+      runtime_config_(std::make_unique<RuntimeConfig>(MakeRuntimeConfigValues(config))),
       state_machine_(std::move(state_machine)),
       server_id_(config.node_id),
       peer_addrs_(config.peers) {

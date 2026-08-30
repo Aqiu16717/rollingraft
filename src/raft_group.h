@@ -19,6 +19,7 @@
 #include "rollingraft/event.h"
 #include "rollingraft/raft_log.h"
 #include "rollingraft/raft_node.h"
+#include "rollingraft/runtime_config.h"
 #include "rollingraft/state_machine.h"
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
@@ -115,6 +116,7 @@ class RaftGroup {
 
   // ========== Per-Group Configuration & StateMachine ==========
   RaftNodeConfig config_;
+  std::unique_ptr<RuntimeConfig> runtime_config_;
   std::shared_ptr<StateMachine> state_machine_;
 
   // ========== Node Identity ==========

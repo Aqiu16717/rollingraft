@@ -528,11 +528,24 @@ RollingRaft supports hot-reloading of tuning parameters via the `RuntimeConfig` 
 # Get current runtime config
 curl http://localhost:9001/v1/config
 
+# Multi-Raft: select one group
+curl 'http://localhost:9001/v1/config?group_id=42'
+
 # Update parameters (requires admin token if configured)
 curl -X PATCH http://localhost:9001/v1/config \
   -H "Authorization: Bearer <token>" \
   -d '{"heartbeat_interval_ms": 100, "transport_batching_enabled": false}'
+
+# Multi-Raft: group_id is required in the PATCH body
+curl -X PATCH http://localhost:9001/v1/config \
+  -H "Authorization: Bearer <token>" \
+  -d '{"group_id":42,"heartbeat_interval_ms":100}'
 ```
+
+Consensus tuning is group-local in a `RaftStore`; updating one group does not
+change another group's election, replication, snapshot, or retry settings.
+`transport_batching_enabled` is node-level because all groups share one
+transport, so changing it through any group updates every hosted group.
 
 ### Programmatic Access
 
@@ -545,14 +558,14 @@ curl -X PATCH http://localhost:9001/v1/config \
 
 | Parameter | Min | Max | Description |
 |-----------|-----|-----|-------------|
-| `election_timeout_ms` | 50 | 10000 | Election timeout |
-| `heartbeat_interval_ms` | 10 | 5000 | Heartbeat interval |
+| `election_timeout_ms` | 50 | 5000 | Election timeout |
+| `heartbeat_interval_ms` | 10 | 1000 | Heartbeat interval |
 | `max_entries_per_append` | 1 | 10000 | Entries per AppendEntries |
-| `rpc_timeout_ms` | 100 | 30000 | RPC timeout |
+| `rpc_timeout_ms` | 100 | 10000 | RPC timeout |
 | `snapshot_threshold_entries` | 100 | 1000000 | Snapshot trigger (entries) |
 | `snapshot_threshold_bytes` | 1MB | 1GB | Snapshot trigger (bytes) |
-| `max_retry_attempts` | 0 | 100 | Max retries |
-| `max_pipeline_window` | 1 | 1024 | Pipeline window size |
+| `max_retry_attempts` | 1 | 100 | Max retries |
+| `max_pipeline_window` | 1 | 10000 | Pipeline window size |
 | `leader_lease_enabled` | — | — | Enable leader lease |
 | `transport_batching_enabled` | — | — | Enable write batching |
 
@@ -700,8 +713,8 @@ RollingRaft exposes Prometheus-compatible metrics via an HTTP server. Enable it 
 | `/v1/members/:id` | DELETE | Admin | Remove a cluster member |
 | `/v1/snapshot/trigger` | POST | Admin | Trigger manual snapshot |
 | `/v1/leadership/transfer` | POST | Admin | Transfer leadership |
-| `/v1/config` | GET | Admin | Get runtime config as JSON |
-| `/v1/config` | PATCH | Admin | Update runtime config |
+| `/v1/config` | GET | Admin | Get runtime config (`?group_id=N` for multi-raft) |
+| `/v1/config` | PATCH | Admin | Update runtime config (`group_id` in multi-raft body) |
 
 **Admin Authentication:** If `admin_token` is configured, admin endpoints require:
 ```

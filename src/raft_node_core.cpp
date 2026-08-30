@@ -43,29 +43,6 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
     infra_->metrics_ = std::make_unique<MetricsRegistry>();
   }
 
-  // Runtime configuration belongs to the shared node infrastructure. A
-  // RaftStore initializes it before creating groups, and subsequent groups
-  // must not replace it while already-running groups are reading it.
-  if (!infra_->runtime_config_) {
-    RuntimeConfig::Values defaults;
-    defaults.election_timeout_ms = config.election_timeout_ms;
-    defaults.heartbeat_interval_ms = config.heartbeat_interval_ms;
-    defaults.max_entries_per_append = config.max_entries_per_append;
-    defaults.rpc_timeout_ms = config.rpc_timeout_ms;
-    defaults.snapshot_threshold_entries = config.snapshot_threshold_entries;
-    defaults.snapshot_threshold_bytes = config.snapshot_threshold_bytes;
-    defaults.snapshot_check_interval_ms = config.snapshot_check_interval_ms;
-    defaults.max_retry_attempts = config.max_retry_attempts;
-    defaults.base_retry_delay_ms = config.base_retry_delay_ms;
-    defaults.max_retry_delay_ms = config.max_retry_delay_ms;
-    defaults.log_retention_entries = config.log_retention_entries;
-    defaults.propose_timeout_ms = config.propose_timeout_ms;
-    defaults.max_snapshot_size_bytes = config.max_snapshot_size_bytes;
-    defaults.leader_lease_enabled = config.leader_lease_enabled;
-    defaults.transport_batching_enabled = config.transport_batching_enabled;
-    infra_->runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
-  }
-
   // Cache raw pointers into infra_ so the rest of the implementation can
   // keep using network_->, timer_->, metrics_->, etc.
   network_ = infra_->network_.get();
@@ -73,7 +50,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
   protocol_ = infra_->protocol_.get();
   metrics_ = infra_->metrics_.get();
   metrics_server_ = infra_->metrics_server_.get();
-  runtime_config_ = infra_->runtime_config_.get();
+  runtime_config_ = group_->runtime_config_.get();
 
   // Configure JSON logging if enabled
   if (config.json_logging) {
@@ -153,7 +130,7 @@ Status RaftNode::RaftNodeImpl::Start() {
     // Initialize and start LogPersister
     LogPersistenceConfig log_config;
     log_config.batch_size = group_->config_.max_entries_per_append;
-    auto rc = infra_->runtime_config_->Get();
+    auto rc = runtime_config_->Get();
     log_config.batch_interval_ms = rc.heartbeat_interval_ms / 2;
     log_config.data_dir = group_->config_.data_dir;
 
@@ -218,7 +195,7 @@ Status RaftNode::RaftNodeImpl::Start() {
       return status;
     }
 
-    infra_->network_->SetBatchingEnabled(infra_->runtime_config_->Get().transport_batching_enabled);
+    infra_->network_->SetBatchingEnabled(runtime_config_->Get().transport_batching_enabled);
 
     status = infra_->network_->Start();
     if (!status.ok()) {
@@ -403,19 +380,20 @@ Status RaftNode::RaftNodeImpl::Start() {
               return j.dump();
             });
 
-        infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
-          return runtime_config_ ? infra_->runtime_config_->ToJson()
+        infra_->metrics_server_->SetConfigProvider([this](uint64_t /*group_id*/) -> std::string {
+          return runtime_config_ ? runtime_config_->ToJson()
                                  : "{\"error\":\"runtime_config_not_initialized\"}";
         });
 
-        infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
+        infra_->metrics_server_->SetConfigUpdater([this](const std::string& json,
+                                                         uint64_t /*group_id*/) -> std::string {
           if (!runtime_config_) {
             return "{\"error\":\"runtime_config_not_initialized\"}";
           }
-          auto old_cfg = infra_->runtime_config_->Get();
-          auto status = infra_->runtime_config_->UpdateFromJson(json);
+          auto old_cfg = runtime_config_->Get();
+          auto status = runtime_config_->UpdateFromJson(json);
           if (status.ok()) {
-            auto new_cfg = infra_->runtime_config_->Get();
+            auto new_cfg = runtime_config_->Get();
             if (new_cfg.transport_batching_enabled != old_cfg.transport_batching_enabled) {
               infra_->network_->SetBatchingEnabled(new_cfg.transport_batching_enabled);
             }
@@ -1078,7 +1056,7 @@ ApplyResult RaftNode::RaftNodeImpl::ProposeAndWaitLocked(const std::string& comm
   lock_r.unlock();
 
   // Wait for commit and apply with timeout
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   auto wait_status = future.wait_for(std::chrono::milliseconds(cfg.propose_timeout_ms));
 
   lock_r.lock();
@@ -1139,7 +1117,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     ReadIndexRequest req;
     ReadIndexResponse resp;
     auto status = RpcCall(leader_addr, req, resp,
-                          std::chrono::milliseconds(infra_->runtime_config_->Get().rpc_timeout_ms));
+                          std::chrono::milliseconds(runtime_config_->Get().rpc_timeout_ms));
     if (!status.ok()) {
       return Status::Error("READINDEX_FORWARD",
                            "Failed to forward ReadIndex to leader: " + status.ToString());
@@ -1196,7 +1174,7 @@ Status RaftNode::RaftNodeImpl::ReadIndex(std::function<void()> callback) {
     read_req.start_time = std::chrono::steady_clock::now();
 
     // Check if leader lease is valid (O(1) timestamp check)
-    auto cfg = infra_->runtime_config_->Get();
+    auto cfg = runtime_config_->Get();
     auto now = timer_->Now();
     bool lease_valid = cfg.leader_lease_enabled && now < group_->leader_lease_expiry_;
 
@@ -1600,7 +1578,7 @@ void RaftNode::RaftNodeImpl::UpdateLeaderLeaseMetricLocked() {
   if (!metrics_) {
     return;
   }
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   bool valid = false;
   double remaining_seconds = 0.0;
   if (group_->role_ == RaftNodeRole::LEADER && cfg.leader_lease_enabled) {

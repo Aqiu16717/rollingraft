@@ -63,6 +63,11 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   std::string GetLeaderAddr() const;
   NodeId GetLeaderId() const;
   Index GetCommitIndex() const;
+  RuntimeConfig::Values GetRuntimeConfigValues() const { return runtime_config_->Get(); }
+  std::string GetRuntimeConfigJson() const { return runtime_config_->ToJson(); }
+  Status UpdateRuntimeConfig(const std::string& json) {
+    return runtime_config_->UpdateFromJson(json);
+  }
 
   EventBus& GetEventBus() { return event_bus_; }
 

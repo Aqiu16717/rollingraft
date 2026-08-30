@@ -48,7 +48,7 @@ TEST(RaftStoreLifecycleTest, MetricsStartFailureRollsBackAndAllowsRetryAttempt) 
   EXPECT_EQ(store.GetInfra()->metrics_server_, nullptr);
 }
 
-TEST(RaftStoreLifecycleTest, CreatingGroupsPreservesSharedRuntimeConfig) {
+TEST(RaftStoreLifecycleTest, CreatingGroupsKeepsRuntimeConfigScopesIndependent) {
   auto config = MakeStoreConfig(GetUniqueTestPort());
   config.metrics_enabled = false;
   config.data_dir = "/tmp/raft_store_runtime_config_" + std::to_string(getpid());
@@ -61,17 +61,17 @@ TEST(RaftStoreLifecycleTest, CreatingGroupsPreservesSharedRuntimeConfig) {
   ASSERT_TRUE(store.Initialize().ok());
   ASSERT_TRUE(store.Start().ok());
 
-  auto* runtime_config = store.GetInfra()->runtime_config_.get();
-  ASSERT_NE(runtime_config, nullptr);
-  ASSERT_TRUE(runtime_config->UpdateFromJson(R"({"election_timeout_ms":450})").ok());
-
   for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
     RaftGroupOptions options;
     options.group_id = group_id;
+    options.election_timeout_ms = group_id == 1 ? 300 : 900;
+    options.heartbeat_interval_ms = group_id == 1 ? 50 : 120;
     auto status = store.CreateGroup(group_id, options, std::make_shared<MockStateMachine>());
     ASSERT_TRUE(status.ok()) << status.ToString();
-    EXPECT_EQ(store.GetInfra()->runtime_config_.get(), runtime_config);
-    EXPECT_EQ(runtime_config->Get().election_timeout_ms, 450u);
+    auto* group = store.GetGroup(group_id);
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(group->GetRuntimeConfigValues().election_timeout_ms, options.election_timeout_ms);
+    EXPECT_EQ(group->GetRuntimeConfigValues().heartbeat_interval_ms, options.heartbeat_interval_ms);
   }
 
   EXPECT_TRUE(store.Stop().ok());

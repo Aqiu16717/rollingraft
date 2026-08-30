@@ -23,7 +23,8 @@ namespace rollingraft {
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
 std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(const TlsConfig& tls_config);
 
-RaftStore::RaftStore(const RaftStoreConfig& config) : config_(config) {
+RaftStore::RaftStore(const RaftStoreConfig& config)
+    : config_(config), transport_batching_enabled_(config.transport_batching_enabled) {
   if (config.node_id < 0) {
     throw std::invalid_argument("RaftStoreConfig node_id must be non-negative");
   }
@@ -74,9 +75,6 @@ Status RaftStore::Initialize() {
   if (config_.metrics_enabled) {
     infra_->metrics_ = std::make_unique<MetricsRegistry>();
   }
-
-  RuntimeConfig::Values defaults;
-  infra_->runtime_config_ = std::make_unique<RuntimeConfig>(defaults);
 
   return Status::OK();
 }
@@ -149,6 +147,7 @@ Status RaftStore::Start() {
     return Status::Error("Failed to start RaftStore: " + std::string(e.what()));
   }
 
+  infra_->network_->SetBatchingEnabled(transport_batching_enabled_.load(std::memory_order_acquire));
   status = infra_->network_->Start();
   if (!status.ok()) {
     RollbackStart();
@@ -252,6 +251,10 @@ Status RaftStore::CreateGroup(uint64_t group_id, const RaftGroupOptions& options
 
   {
     std::lock_guard<std::shared_mutex> lock(groups_mtx_);
+    auto transport_update =
+        nlohmann::json{{"transport_batching_enabled",
+                        transport_batching_enabled_.load(std::memory_order_acquire)}};
+    (void)group->UpdateRuntimeConfig(transport_update.dump());
     auto it = groups_.find(group_id);
     if (it != groups_.end()) {
       it->second->Stop();
@@ -510,17 +513,50 @@ void RaftStore::RegisterStoreProviders() {
         return j.dump();
       });
 
-  // Runtime config is store-shared; GET/PATCH apply to all groups.
-  infra_->metrics_server_->SetConfigProvider([this]() -> std::string {
-    return infra_->runtime_config_ ? infra_->runtime_config_->ToJson()
-                                   : "{\"error\":\"runtime_config_not_initialized\"}";
-  });
-  infra_->metrics_server_->SetConfigUpdater([this](const std::string& json) -> std::string {
-    if (!infra_->runtime_config_) {
-      return "{\"error\":\"runtime_config_not_initialized\"}";
+  // Consensus tuning is group-local. Store admin requests must identify the
+  // target group so one group's timing changes cannot affect another group.
+  infra_->metrics_server_->SetConfigProvider([this](uint64_t group_id) -> std::string {
+    if (group_id == 0) {
+      return "{\"error\":\"BAD_REQUEST\",\"message\":\"group_id must be > 0\"}";
     }
-    auto status = infra_->runtime_config_->UpdateFromJson(json);
+    auto group = GetGroupShared(group_id);
+    if (!group) {
+      return nlohmann::json{{"error", "GROUP_NOT_FOUND"},
+                            {"message", "Group " + std::to_string(group_id) + " not found"}}
+          .dump();
+    }
+    return group->GetRuntimeConfigJson();
+  });
+  infra_->metrics_server_->SetConfigUpdater([this](const std::string& json,
+                                                   uint64_t group_id) -> std::string {
+    if (group_id == 0) {
+      return "{\"error\":\"BAD_REQUEST\",\"message\":\"group_id must be > 0\"}";
+    }
+    auto group = GetGroupShared(group_id);
+    if (!group) {
+      return nlohmann::json{{"error", "GROUP_NOT_FOUND"},
+                            {"message", "Group " + std::to_string(group_id) + " not found"}}
+          .dump();
+    }
+    auto old_config = group->GetRuntimeConfigValues();
+    auto status = group->UpdateRuntimeConfig(json);
     if (status.ok()) {
+      auto new_config = group->GetRuntimeConfigValues();
+      if (new_config.transport_batching_enabled != old_config.transport_batching_enabled) {
+        transport_batching_enabled_.store(new_config.transport_batching_enabled,
+                                          std::memory_order_release);
+        std::string transport_update =
+            nlohmann::json{{"transport_batching_enabled", new_config.transport_batching_enabled}}
+                .dump();
+        {
+          std::lock_guard<std::shared_mutex> lock(groups_mtx_);
+          for (const auto& [id, hosted_group] : groups_) {
+            (void)id;
+            (void)hosted_group->UpdateRuntimeConfig(transport_update);
+          }
+        }
+        infra_->network_->SetBatchingEnabled(new_config.transport_batching_enabled);
+      }
       return "{\"status\":\"updated\",\"message\":\"Configuration updated successfully\"}";
     }
     nlohmann::json j;
@@ -557,6 +593,7 @@ RaftNodeConfig RaftStore::MakeGroupConfig(uint64_t group_id,
   config.tls_cert_file = config_.tls_cert_file;
   config.tls_key_file = config_.tls_key_file;
   config.tls_ca_file = config_.tls_ca_file;
+  config.transport_batching_enabled = transport_batching_enabled_.load(std::memory_order_acquire);
 
   return config;
 }

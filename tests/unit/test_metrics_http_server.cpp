@@ -174,6 +174,7 @@ TEST_F(MetricsHttpServerAuthTest, AllAdminEndpointsProtected) {
       {"POST", "/v1/snapshot/trigger"},
       {"POST", "/v1/leadership/transfer"},
       {"GET", "/v1/config"},
+      {"GET", "/v1/config?group_id=1"},
       {"PATCH", "/v1/config"},
   };
 
@@ -225,6 +226,42 @@ TEST_F(MetricsHttpServerAuthTest, DeleteMemberGroupIdQueryReachesHandler) {
   EXPECT_TRUE(status.find("202 Accepted") != std::string::npos) << "expected 202, got: " << status;
   EXPECT_EQ(seen_node, 3);
   EXPECT_EQ(seen_group, 2u);
+}
+
+TEST_F(MetricsHttpServerAuthTest, ConfigGroupIdRoutesToProviderAndUpdater) {
+  MetricsRegistry registry;
+  TestableMetricsHttpServer server("127.0.0.1:" + std::to_string(GetUniqueTestPort()), &registry);
+  uint64_t provided_group = 0;
+  uint64_t updated_group = 0;
+  std::string update_body;
+  server.SetConfigProvider([&provided_group](uint64_t group_id) {
+    provided_group = group_id;
+    return "{\"status\":\"provided\"}";
+  });
+  server.SetConfigUpdater(
+      [&updated_group, &update_body](const std::string& json, uint64_t group_id) {
+        updated_group = group_id;
+        update_body = json;
+        return "{\"status\":\"updated\"}";
+      });
+
+  auto [get_body, get_status, get_content_type, get_sse] =
+      server.TestBuildResponse(MakeRequest("GET", "/v1/config?group_id=7"));
+  (void)get_content_type;
+  (void)get_sse;
+  EXPECT_NE(get_status.find("200 OK"), std::string::npos);
+  EXPECT_NE(get_body.find("provided"), std::string::npos);
+  EXPECT_EQ(provided_group, 7u);
+
+  const std::string body = R"({"group_id":9,"election_timeout_ms":600})";
+  auto [patch_body, patch_status, patch_content_type, patch_sse] =
+      server.TestBuildResponse(MakeRequest("PATCH", "/v1/config", body));
+  (void)patch_content_type;
+  (void)patch_sse;
+  EXPECT_NE(patch_status.find("200 OK"), std::string::npos);
+  EXPECT_NE(patch_body.find("updated"), std::string::npos);
+  EXPECT_EQ(updated_group, 9u);
+  EXPECT_EQ(update_body, body);
 }
 
 TEST_F(MetricsHttpServerAuthTest, ReadyzAcceptsStoreStyleStatusProvider) {

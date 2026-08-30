@@ -39,8 +39,8 @@ class MetricsHttpServer {
   using TriggerSnapshotHandler = std::function<std::string(uint64_t group_id)>;
   using TransferLeadershipHandler =
       std::function<std::string(int32_t target_node_id, uint64_t group_id)>;
-  using ConfigProvider = std::function<std::string()>;
-  using ConfigUpdater = std::function<std::string(const std::string& json)>;
+  using ConfigProvider = std::function<std::string(uint64_t group_id)>;
+  using ConfigUpdater = std::function<std::string(const std::string& json, uint64_t group_id)>;
   using TlsConfig = MetricsHttpServerTlsConfig;
 
   MetricsHttpServer(const std::string& bind_addr, MetricsRegistry* registry,

@@ -5,7 +5,6 @@
 #include "rollingraft/metrics.h"
 #include "rollingraft/network_transport.h"
 #include "rollingraft/protocol.h"
-#include "rollingraft/runtime_config.h"
 #include "rollingraft/timer_service.h"
 
 #include "metrics_http_server.h"
@@ -28,7 +27,6 @@ struct SharedNodeInfra {
   std::unique_ptr<Protocol> protocol_;
   std::unique_ptr<MetricsRegistry> metrics_;
   std::unique_ptr<MetricsHttpServer> metrics_server_;
-  std::unique_ptr<RuntimeConfig> runtime_config_;
 };
 
 }  // namespace rollingraft

@@ -298,7 +298,7 @@ void RaftNode::RaftNodeImpl::ResetElectionTimerLocked() {
   CancelElectionTimerLocked();
 
   // Read dynamic config snapshot (thread-safe via RuntimeConfig)
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
 
   uint32_t base_timeout = cfg.election_timeout_ms;
   // Quiesced mode: extend election timeout to reduce false elections
@@ -414,7 +414,7 @@ void RaftNode::RaftNodeImpl::OnElectionTimeoutLocked() {
 
   // Schedule a pre-vote timeout. If we don't get majority by then,
   // reset and wait for the next election timeout.
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
   uint32_t pre_vote_timeout = cfg.election_timeout_ms / 2;
   if (pre_vote_timeout < 10) {
     pre_vote_timeout = 10;
@@ -473,7 +473,7 @@ void RaftNode::RaftNodeImpl::SendRequestVoteToPeerLocked(NodeId peer_id, const N
 
   Term original_term = group_->current_term_;  // Save current term for comparison
 
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
 
   infra_->network_->SendRpc(
       peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),
@@ -585,7 +585,7 @@ void RaftNode::RaftNodeImpl::SendPreVoteToPeerLocked(NodeId peer_id, const NodeA
   }
 
   Term original_pre_vote_term = group_->pre_vote_term_;
-  auto cfg = infra_->runtime_config_->Get();
+  auto cfg = runtime_config_->Get();
 
   infra_->network_->SendRpc(
       peer_id, addr, data, req.correlation_id_, std::chrono::milliseconds(cfg.rpc_timeout_ms),

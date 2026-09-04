@@ -21,7 +21,7 @@ Release/TSan 验证并安全发布节点 mTLS 提交。
 - [x] Release 396/396
 - [x] TSan 396/396
 - [x] 将节点测试证书改为构建时生成，避免发布私钥夹具历史
-- [ ] 创建功能分支并提交 PR，不触碰 `third_party/leveldb` 和 `.codex/`
+- [x] 创建功能分支并提交 PR，不触碰 `third_party/leveldb` 和 `.codex/`
 
 ## Errors Encountered
 

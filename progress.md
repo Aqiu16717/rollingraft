@@ -21,6 +21,8 @@
 - 审查修正后最终验证：Release 396/396，TSan 396/396，目标心跳用例包含在两轮中。
 - 发布分支：创建 `codex/node-mtls-auth` 并从 `origin/main` 重组最终工作树；
   本地 `main` 仍保留 `d925046` 恢复点。
+- 发布：安全重组提交 `6d8d46b` 已推送到
+  `codex/node-mtls-auth`，PR: https://github.com/Aqiu16717/rollingraft/pull/19。
 
 ## Session 2026-08-09
 - 创建任务计划（9 个 flaky 测试）

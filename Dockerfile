@@ -64,6 +64,9 @@ COPY --from=builder /build/tests/certs/ /build/tests/certs/
 # Copy test certificates used by integration tests
 COPY --from=builder /build/tests/certs /build/tests/certs
 
+# Preserve the configure-time path compiled into the node identity tests.
+COPY --from=builder /build/build/generated-node-certs /build/build/generated-node-certs
+
 # Create data directory
 RUN mkdir -p /app/data
 

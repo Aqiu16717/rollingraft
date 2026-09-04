@@ -1,5 +1,15 @@
 # Findings
 
+## Docker mTLS 夹具路径（2026-09-04）
+
+- PR #19 首轮 Docker 作业中，普通 TLS 和其余 38 个集成测试通过，4 个节点
+  mTLS 测试均在 transport/node 初始化阶段失败。
+- CMake 将 `NODE_TEST_CERTS_DIR` 编译为绝对路径
+  `/build/build/generated-node-certs/`；builder 确实在该处生成夹具，但 runtime
+  stage 仅复制 `/build/tests/certs`，没有复制生成目录。
+- 因此这是 Docker 多阶段镜像遗漏构建产物，不是 mTLS 握手或身份校验逻辑失败。
+  runtime 镜像需把生成夹具复制到已编译的原路径。
+
 ## MetricsShowHeartbeatCoalescing 时序波动（2026-09-04）
 
 - Release 全量失败时，唯一断言是指标输出中未出现

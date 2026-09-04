@@ -23,6 +23,11 @@
   本地 `main` 仍保留 `d925046` 恢复点。
 - 发布：安全重组提交 `6d8d46b` 已推送到
   `codex/node-mtls-auth`，PR: https://github.com/Aqiu16717/rollingraft/pull/19。
+- CI 首轮：11/12 项通过，仅 Docker 失败。Docker 日志确认
+  4 个 mTLS 用例找不到编译期绝对路径 `/build/build/generated-node-certs`；
+  Dockerfile 已补复制 builder 生成目录。
+- Docker 完整复验：镜像无缓存构建成功，三节点集群健康，mTLS 4/4 及全部
+  集成测试 42/42 通过，测试后容器、网络和数据卷清理完成。
 
 ## Session 2026-08-09
 - 创建任务计划（9 个 flaky 测试）

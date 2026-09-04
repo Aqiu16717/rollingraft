@@ -22,12 +22,14 @@ Release/TSan 验证并安全发布节点 mTLS 提交。
 - [x] TSan 396/396
 - [x] 将节点测试证书改为构建时生成，避免发布私钥夹具历史
 - [x] 创建功能分支并提交 PR，不触碰 `third_party/leveldb` 和 `.codex/`
+- [x] 修复 Docker runtime 生成证书路径并通过完整 Docker 集成套件 42/42
 
 ## Errors Encountered
 
 | Error | Attempt | Resolution |
 |---|---:|---|
 | Release 中 `MetricsShowHeartbeatCoalescing` 失败 | 1 | 定向重复确认为心跳相位依赖，进入确定性等待修复 |
+| PR #19 Docker CI 失败 | 1 | 日志确认 runtime 镜像缺少 `/build/build/generated-node-certs`；复制 builder 生成目录并验证 |
 
 ---
 

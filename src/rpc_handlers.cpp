@@ -6,7 +6,21 @@
 
 using namespace rollingraft;
 
-void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::string& data,
+namespace {
+
+bool SenderIdentityMatches(NodeId authenticated_node_id, NodeId claimed_node_id,
+                           std::string_view rpc_name) {
+  if (authenticated_node_id < 0 || authenticated_node_id == claimed_node_id) {
+    return true;
+  }
+  LOG_WARN("Rejecting {}: authenticated node {} claimed node {}", rpc_name, authenticated_node_id,
+           claimed_node_id);
+  return false;
+}
+
+}  // namespace
+
+void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from, const std::string& data,
                                                std::string& response) {
   // First, peek at the message type to dispatch to the correct handler
   // We need to deserialize based on the type field in the JSON
@@ -29,6 +43,9 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
           LOG_ERROR("Failed to deserialize RequestVoteRequest: {}", status.ToString());
           return;
         }
+        if (!SenderIdentityMatches(from, req.candidate_id_, "RequestVote")) {
+          return;
+        }
         RequestVoteResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         resp.group_id = req.group_id;
@@ -48,6 +65,9 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
           LOG_ERROR("Failed to deserialize AppendEntriesRequest: {}", status.ToString());
           return;
         }
+        if (!SenderIdentityMatches(from, req.leader_id_, "AppendEntries")) {
+          return;
+        }
         AppendEntriesResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         resp.group_id = req.group_id;
@@ -65,6 +85,9 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize InstallSnapshotRequest: {}", status.ToString());
+          return;
+        }
+        if (!SenderIdentityMatches(from, req.leader_id_, "InstallSnapshot")) {
           return;
         }
         InstallSnapshotResponse resp;
@@ -103,6 +126,9 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId /*from*/, const std::strin
         auto status = infra_->protocol_->DeserializeRequest(data, req);
         if (!status.ok()) {
           LOG_ERROR("Failed to deserialize PreVoteRequest: {}", status.ToString());
+          return;
+        }
+        if (!SenderIdentityMatches(from, req.candidate_id_, "PreVote")) {
           return;
         }
         PreVoteResponse resp;
@@ -313,6 +339,15 @@ void RaftNode::RaftNodeImpl::HandleAppendEntries(const AppendEntriesRequest& req
     resp.success_ = false;
     resp.conflict_index_ = 0;
     resp.entries_count_ = 0;
+
+    {
+      std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+      if (!group_->cluster_config_.IsVoter(req.leader_id_)) {
+        LOG_WARN("Node {} reject AppendEntries: leader {} is not a voter", group_->server_id_,
+                 req.leader_id_);
+        return;
+      }
+    }
 
     // If leader term is higher, revert to Follower
     if (req.term_ > group_->current_term_) {
@@ -527,6 +562,15 @@ void RaftNode::RaftNodeImpl::HandleInstallSnapshot(const InstallSnapshotRequest&
     std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
 
     resp.term_ = group_->current_term_;
+
+    {
+      std::shared_lock<std::shared_mutex> lock_m(group_->membership_mtx_);
+      if (!group_->cluster_config_.IsVoter(req.leader_id_)) {
+        LOG_WARN("Node {} reject InstallSnapshot: leader {} is not a voter", group_->server_id_,
+                 req.leader_id_);
+        return;
+      }
+    }
 
     // Term check: reject stale leader
     if (req.term_ < group_->current_term_) {

@@ -16,6 +16,8 @@ using namespace rollingraft;
 class MetricsEndpointTest : public ::testing::Test {
  protected:
   bool leader_lease_enabled_ = true;
+  uint32_t election_timeout_ms_ = 300;
+  uint32_t heartbeat_interval_ms_ = 50;
 
   void SetUp() override {
     data_dirs_ = {"/tmp/raft_metrics_node_1", "/tmp/raft_metrics_node_2",
@@ -67,8 +69,8 @@ class MetricsEndpointTest : public ::testing::Test {
     config.node_id = id;
     config.listen_addr = addr;
     config.data_dir = data_dirs_[id - 1];
-    config.election_timeout_ms = 300;
-    config.heartbeat_interval_ms = 50;
+    config.election_timeout_ms = election_timeout_ms_;
+    config.heartbeat_interval_ms = heartbeat_interval_ms_;
     config.rpc_timeout_ms = 200;
     config.base_retry_delay_ms = 5;
     config.max_retry_delay_ms = 100;
@@ -468,26 +470,32 @@ TEST_F(MetricsEndpointTest, MetricsShowHeartbeatCoalescing) {
   // Disable leader lease so ReadIndex broadcasts heartbeats and triggers
   // the coalescing counter. With lease read enabled, heartbeats are skipped.
   leader_lease_enabled_ = false;
+  // Widen the coalescing window and keep issuing reads until one follows a
+  // periodic heartbeat. A fixed sleep makes this test depend on timer phase.
+  election_timeout_ms_ = 1000;
+  heartbeat_interval_ms_ = 250;
   StartCluster();
   WaitForLeader();
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   auto* leader = GetLeader();
   ASSERT_NE(leader, nullptr);
 
-  // Issue multiple ReadIndex requests rapidly to trigger coalescing
-  for (int i = 0; i < 5; ++i) {
-    leader->ReadIndex([]() {});
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  std::string output;
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < deadline) {
+    ASSERT_TRUE(leader->ReadIndex([]() {}).ok());
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-  int leader_idx = 0;
-  for (int i = 0; i < 3; ++i) {
-    if (nodes_[i]->IsLeader()) {
-      leader_idx = i;
+    for (int i = 0; i < 3; ++i) {
+      if (nodes_[i]->IsLeader()) {
+        output = FetchMetrics(metrics_addrs_[i]);
+        break;
+      }
+    }
+    if (output.find("raft_heartbeat_coalesced_total") != std::string::npos) {
+      break;
     }
   }
-  std::string output = FetchMetrics(metrics_addrs_[leader_idx]);
 
   EXPECT_NE(output.find("raft_heartbeat_coalesced_total"), std::string::npos)
       << "Missing heartbeat coalesced counter";

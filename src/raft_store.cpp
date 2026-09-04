@@ -52,12 +52,15 @@ Status RaftStore::Initialize() {
   infra_->network_ =
       config_.network_factory
           ? config_.network_factory()
-          : (config_.tls_enabled
-                 ? CreateAsioNetworkTransport(TlsConfig{.enabled = true,
-                                                        .cert_file = config_.tls_cert_file,
-                                                        .key_file = config_.tls_key_file,
-                                                        .ca_file = config_.tls_ca_file})
-                 : CreateDefaultNetworkTransport());
+          : (config_.tls_enabled ? CreateAsioNetworkTransport(TlsConfig{
+                                       .enabled = true,
+                                       .cert_file = config_.tls_cert_file,
+                                       .key_file = config_.tls_key_file,
+                                       .ca_file = config_.tls_ca_file,
+                                       .mutual_auth = config_.tls_mutual_auth,
+                                       .node_id = config_.node_id,
+                                       .allowed_cns = config_.tls_allowed_peer_identities})
+                                 : CreateDefaultNetworkTransport());
   infra_->timer_ = config_.timer_factory ? config_.timer_factory() : TimerService::CreateDefault();
   infra_->protocol_ =
       config_.protocol_factory ? config_.protocol_factory() : std::make_unique<JsonProtocol>();
@@ -593,6 +596,8 @@ RaftNodeConfig RaftStore::MakeGroupConfig(uint64_t group_id,
   config.tls_cert_file = config_.tls_cert_file;
   config.tls_key_file = config_.tls_key_file;
   config.tls_ca_file = config_.tls_ca_file;
+  config.tls_mutual_auth = config_.tls_mutual_auth;
+  config.tls_allowed_peer_identities = config_.tls_allowed_peer_identities;
   config.transport_batching_enabled = transport_batching_enabled_.load(std::memory_order_acquire);
 
   return config;

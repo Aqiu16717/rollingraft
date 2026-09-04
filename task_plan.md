@@ -1,4 +1,37 @@
-# Task Plan: Store 级 endpoints（已完成）
+# Task Plan: 稳定心跳合并指标测试
+
+## Goal
+
+消除 `MetricsShowHeartbeatCoalescing` 对周期心跳相位的偶然依赖，完成
+Release/TSan 验证并安全发布节点 mTLS 提交。
+
+## Phases
+
+### Phase 1: 根因与 RED
+- [x] 获取完整断言：未出现 `raft_heartbeat_coalesced_total`
+- [x] 定向重复 20 次，第 19 次失败，确认时序波动
+- [x] 确认 `d925046` 未修改失败测试的生产路径
+
+### Phase 2: 确定性测试修复
+- [x] 让测试在有界时间内持续发起 ReadIndex，直到观测到合并计数器
+- [x] 定向压力验证（30/30）
+
+### Phase 3: 全量验证与发布
+- [x] `make format-check` 和 `git diff --check`
+- [x] Release 396/396
+- [x] TSan 396/396
+- [x] 将节点测试证书改为构建时生成，避免发布私钥夹具历史
+- [ ] 创建功能分支并提交 PR，不触碰 `third_party/leveldb` 和 `.codex/`
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| Release 中 `MetricsShowHeartbeatCoalescing` 失败 | 1 | 定向重复确认为心跳相位依赖，进入确定性等待修复 |
+
+---
+
+# 历史：Store 级 endpoints（已完成）
 
 ## Goal
 

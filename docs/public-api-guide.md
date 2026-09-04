@@ -378,7 +378,38 @@ class CounterMachine : public rollingraft::StateMachine {
 | `tls_cert_file` | "" | Server certificate path |
 | `tls_key_file` | "" | Private key path |
 | `tls_ca_file` | "" | CA certificate path |
+| `tls_mutual_auth` | false | Require CA-verified peer certificates with a node URI SAN |
+| `tls_allowed_peer_identities` | empty | Optional exact URI SAN allowlist |
 | `admin_token` | "" | Bearer token for admin API endpoints |
+
+With `tls_mutual_auth = true`, every node certificate must contain exactly one
+URI SAN in the form `rollingraft-node:<node_id>`. The local certificate is
+checked against `RaftNodeConfig::node_id` during startup. After each handshake,
+the authenticated identity is also checked against the expected outbound peer
+and the sender ID claimed by RequestVote, PreVote, AppendEntries, and
+InstallSnapshot RPCs.
+
+The current high-level `Client` does not present a node certificate. A strict
+mTLS Raft endpoint therefore accepts authenticated node traffic only; expose a
+separate application gateway or keep client access disabled until client
+credentials and authorization are configured by a future release.
+
+```cpp
+config.tls_enabled = true;
+config.tls_mutual_auth = true;
+config.tls_cert_file = "/run/secrets/node-1.crt";
+config.tls_key_file = "/run/secrets/node-1.key";
+config.tls_ca_file = "/run/secrets/cluster-ca.crt";
+config.tls_allowed_peer_identities = {
+    "rollingraft-node:2",
+    "rollingraft-node:3",
+};
+```
+
+The allowlist is static configuration. Update it alongside planned membership
+changes. Leaving it empty accepts any correctly formed node identity signed by
+the configured CA; Raft membership checks still prevent unknown identities
+from participating in election and replication.
 
 ### Factory Functions (for testing/customization)
 
@@ -409,6 +440,7 @@ config.leader_lease_enabled = true;
 config.check_quorum_enabled = true;
 config.pre_vote_enabled = true;
 config.tls_enabled = true;
+config.tls_mutual_auth = true;
 config.admin_token = "your-secure-token";
 ```
 

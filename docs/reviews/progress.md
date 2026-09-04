@@ -9,6 +9,18 @@ Legend: ⬜ pending · 🔶 in progress · ✅ done
 
 ---
 
+## 2026-09-01 — node identity authentication
+
+- Added strict opt-in node mTLS using URI SAN `rollingraft-node:<node_id>`.
+- Bound inbound and outbound connections to the verified certificate identity;
+  rejected wrong-CA peers, local certificate/config mismatches, and spoofed
+  Raft sender IDs.
+- Kept ordinary TLS backward compatible and documented client authentication as
+  the remaining security blocker.
+- Release and TSan passed 396/396.
+
+---
+
 ## Phase 1 — Consensus core
 
 ### ✅ #1 Core state & locks (done 2026-07-30)

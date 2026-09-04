@@ -1,5 +1,27 @@
 # Progress Log
 
+## Session 2026-09-04 — mTLS 发布前稳定性修复
+- 刷新状态：`main` 比 `origin/main` 超前 `d925046`；保护
+  `third_party/leveldb` 和未跟踪 `.codex/`。
+- Release 刷新运行：395/396，仅
+  `MetricsShowHeartbeatCoalescing` 失败。
+- 定向重复：前 18 次通过，第 19 次同断言失败；根因定位为测试依赖
+  周期心跳相位。
+- 修复：该用例将心跳窗口调整为 250ms，并在 3s 有界时间内发起
+  ReadIndex 并轮询真实 `/metrics`，不再依赖固定 sleep 时相。
+- GREEN：`MetricsShowHeartbeatCoalescing` 定向重复 30/30 通过。
+- 全量 Release：396/396 通过；`make format-check` 和 `git diff --check` 通过。
+- 全量 TSan：396/396 通过。
+- 发布约束：`d925046` 历史含测试私钥，需在新功能分支上重组为
+  构建时生成证书，避免将私钥推送到远端历史。
+- 证书安全修复：CMake 调用 `generate_node_test_certs.sh` 在每个构建目录中
+  生成 CA/节点/错误 CA 夹具；证书有效期覆盖长期缓存构建，私钥仅留在
+  构建目录。相对 `origin/main` 不再新增任何
+  `tests/certs/*.key`。生成后 TLS 单元测试 7/7、mTLS 集成测试 4/4 通过。
+- 审查修正后最终验证：Release 396/396，TSan 396/396，目标心跳用例包含在两轮中。
+- 发布分支：创建 `codex/node-mtls-auth` 并从 `origin/main` 重组最终工作树；
+  本地 `main` 仍保留 `d925046` 恢复点。
+
 ## Session 2026-08-09
 - 创建任务计划（9 个 flaky 测试）
 - Phase 1：确认当前名单 = 6 个 chaos 必挂 + 3 个间歇性

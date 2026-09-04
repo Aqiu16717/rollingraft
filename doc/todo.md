@@ -32,12 +32,17 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
   - CRC32 mismatch logs error and returns false, preventing corrupted data application
   - Format: index (4) + term (4) + data_len (4) + data + checksum (4)
 
-- [ ] **Node and Client Identity Authentication**
-  - TLS transport and certificate loading are implemented
-  - Admin HTTP endpoints support bearer-token authentication
-  - Raft RPCs and client proposals still do not bind certificates or requests
-    to an authorized node/client identity
-  - Fix: enforce peer certificate identity and authenticated client sessions
+- [x] **Node Identity Authentication**
+  - mTLS certificates use URI SAN `rollingraft-node:<node_id>`
+  - Startup rejects a local certificate that does not match configured `node_id`
+  - Handshakes bind inbound/outbound connections to the certificate NodeId
+  - Raft RPC sender claims must match the authenticated certificate identity
+  - Election and replication still require Raft membership
+
+- [ ] **Client Identity Authentication and Authorization**
+  - `client_id` remains a caller-supplied deduplication key, not an identity
+  - Define authenticated client credentials and read/write authorization policy
+  - Keep client credentials distinct from node certificates
 
 ### 🟠 Critical (performance/availability degradation under load)
 
@@ -92,7 +97,7 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
 
 Priority order based on gap analysis above:
 
-1. **Node + Client Identity Authentication** — close the remaining security blocker
+1. **Client Identity Authentication and Authorization** — close the remaining security blocker
 2. **Disk-Failure and Slow-Disk Injection** — validate persistence failure behavior
 3. **24h Multi-Raft Soak Harness** — expose lifecycle and election churn defects
 4. **Production Operations Hardening** — backup/restore drills and upgrade testing
@@ -124,7 +129,7 @@ Priority order based on gap analysis above:
   - `benchmark_client` (throughput), `benchmark_latency_curve`, `benchmark_failover`
 
 - [x] **Testing Infrastructure**
-  - 389 unit, integration, and deterministic CTest cases
+  - 396 unit, integration, and deterministic CTest cases
   - GitHub Actions CI + Docker multi-node setup
 
 - [x] **Documentation**
@@ -132,6 +137,6 @@ Priority order based on gap analysis above:
 
 ---
 
-**Last Updated:** 2026-08-30
+**Last Updated:** 2026-09-01
 **Current Version:** v0.1.0
-**Test Status:** Release and TSan suites passing 389/389
+**Test Status:** Release and TSan suites passing 396/396

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "rollingraft/types.h"
+
 namespace rollingraft {
 
 /**
@@ -21,7 +23,12 @@ struct TlsConfig {
   // Enable mutual TLS — require and verify client certificates
   bool mutual_auth = false;
 
-  // Whitelist of allowed peer certificate CNs/SANs (empty = allow any valid cert)
+  // Local Raft node identity. With mutual_auth enabled, the certificate must
+  // contain URI SAN "rollingraft-node:<node_id>".
+  NodeId node_id = -1;
+
+  // Whitelist of exact URI SAN identities such as "rollingraft-node:2".
+  // Empty = allow any valid rollingraft-node identity signed by the CA.
   std::vector<std::string> allowed_cns;
 
   // TLS handshake timeout

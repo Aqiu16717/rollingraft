@@ -1,5 +1,17 @@
 # Findings
 
+## MetricsShowHeartbeatCoalescing 时序波动（2026-09-04）
+
+- Release 全量失败时，唯一断言是指标输出中未出现
+  `raft_heartbeat_coalesced_total`。
+- 定向重复在前 18 次通过、第 19 次失败，证明用例依赖偶然时序。
+- 合并条件依赖 ReadIndex 处理时距上次周期心跳小于
+  `heartbeat_interval_ms`。现有用例在选主后固定 sleep 200ms，再快速调用
+  5 次 ReadIndex；这 5 次并不更新 `last_heartbeat_sent_`，因此若它们恰好落在
+  周期心跳窗口之外，计数器不会被注册。
+- `d925046` 未修改 `state_machine_applier.cpp`、`log_replicator.cpp` 或该测试；
+  节点 mTLS 用例在失败运行中均通过。
+
 ## 落后 follower 补全振荡（2026-08-16 已关闭）
 
 **结论：模拟环境时序限制，非真实 bug。** 真实网络集成测试 `FollowerCatchesUpAfterRestart`（停 follower → leader 提交 → 重启 → 验证补全）3/3 通过，1.7 秒内完成补全——真实网络延迟/重试交错打破模拟环境里 pipeline 推进 vs 回退的对称振荡。

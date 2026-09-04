@@ -26,6 +26,7 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
   - ReadIndex for linearizable reads
   - Fine-grained locking per manager (election / log / snapshot / membership / applier)
 - **Observability**: Built-in Prometheus-style metrics with HTTP `/metrics` endpoint
+- **Transport Security**: TLS encryption and optional node-identity mTLS using URI SANs
 
 ## Current Status
 
@@ -42,9 +43,8 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 | Metrics | ✅ Implemented | Prometheus HTTP `/metrics` endpoint |
 
 **Known Limitations:**
-- No TLS encryption for node-to-node communication
-- No runtime configuration hot-reload
-- Async `TruncatePrefix` pending implementation
+- Client requests are not yet bound to an authenticated application identity
+- Disk-failure/slow-disk chaos injection and long-running soak coverage are incomplete
 - Not battle-tested in production environments
 
 **Use Cases:**

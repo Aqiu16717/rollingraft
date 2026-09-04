@@ -2,6 +2,8 @@
 
 #include "rollingraft/logger.h"
 
+#include "tls_identity.h"
+
 namespace rollingraft {
 
 AsioSslContextFactory::AsioSslContextFactory(const TlsConfig& config) : config_(config) {}
@@ -21,6 +23,10 @@ Status AsioSslContextFactory::CreateServerContext(asio::ssl::context& out_ctx) c
   }
 
   if (config_.mutual_auth) {
+    status = ValidateCertificateNodeId(config_.cert_file, config_.node_id);
+    if (!status.ok()) {
+      return status;
+    }
     out_ctx.set_verify_mode(asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert);
     status = LoadCaBundle(out_ctx);
     if (!status.ok()) {
@@ -38,6 +44,10 @@ Status AsioSslContextFactory::CreateClientContext(asio::ssl::context& out_ctx) c
   ConfigureVersion(out_ctx);
 
   if (config_.mutual_auth) {
+    auto identity_status = ValidateCertificateNodeId(config_.cert_file, config_.node_id);
+    if (!identity_status.ok()) {
+      return identity_status;
+    }
     out_ctx.set_verify_mode(asio::ssl::verify_peer);
     auto status = LoadCertificateChain(out_ctx);
     if (!status.ok()) {

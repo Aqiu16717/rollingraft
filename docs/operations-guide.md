@@ -37,6 +37,10 @@
 - [ ] `metrics_enabled = true` and `metrics_addr` is set for observability.
 - [ ] `admin_token` is set for production clusters (use a cryptographically random token).
 - [ ] TLS is enabled for node-to-node traffic in untrusted networks (`tls_enabled = true`).
+- [ ] Node mTLS is enabled (`tls_mutual_auth = true`) and each certificate has
+      URI SAN `rollingraft-node:<node_id>`.
+- [ ] `tls_allowed_peer_identities` is empty only when the cluster CA is
+      restricted to issuing RollingRaft node certificates.
 
 ### 1.3 At Startup
 
@@ -300,7 +304,10 @@ Only certain parameters can be updated at runtime. See [public-api-guide.md Sect
 ### 5.1 Network
 
 - Enable TLS for node-to-node traffic (`tls_enabled = true`).
-- Use mTLS if nodes are in different security zones (`tls_ca_file` set).
+- Enable node authentication with `tls_mutual_auth = true` and a trusted
+  `tls_ca_file`; setting a CA file alone does not enable mTLS.
+- Issue each node a unique URI SAN `rollingraft-node:<node_id>` and rotate the
+  optional identity allowlist together with membership changes.
 - Restrict metrics port access to monitoring infrastructure (not public internet).
 - Do not expose Raft port outside the cluster network.
 

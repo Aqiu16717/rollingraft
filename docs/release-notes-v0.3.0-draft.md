@@ -25,7 +25,9 @@ Pre-vote prevents partitioned nodes from triggering disruptive elections. CheckQ
 Safe configuration changes without availability gaps. RollingRaft now supports adding/removing nodes without requiring a snapshot or manual intervention. The implementation follows Diego Ongaro's PhD thesis §4.3.
 
 ### TLS/mTLS Encryption
-Full node-to-node RPC encryption with X.509 certificate authentication. Supports both one-way TLS and mutual TLS (mTLS). Includes 3-node TLS cluster integration tests.
+Full node-to-node RPC encryption with X.509 certificate authentication.
+Strict mTLS binds URI SAN `rollingraft-node:<node_id>` to the configured node,
+the expected outbound peer, and the sender ID claimed by consensus RPCs.
 
 ### Streaming Snapshots
 Chunked, incremental snapshot transfer replaces monolithic blob copying. Features:

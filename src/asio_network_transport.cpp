@@ -3,12 +3,14 @@
  * @brief Asio-based TCP network transport implementation
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <thread>
@@ -25,6 +27,7 @@
 #include "rollingraft/types.h"
 
 #include "nlohmann/json.hpp"
+#include "tls_identity.h"
 #include <asio/ssl.hpp>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -61,12 +64,13 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         connected_(false) {}
 
   TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx, NodeId peer_id,
-                const NodeAddr& addr)
+                const NodeAddr& addr, const TlsConfig& tls_config)
       : socket_(asio::ssl::stream<asio::ip::tcp::socket>(io_ctx, ssl_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(peer_id),
         addr_(addr),
-        connected_(false) {}
+        connected_(false),
+        tls_config_(tls_config) {}
 
   explicit TcpConnection(asio::io_context& io_ctx)
       : socket_(asio::ip::tcp::socket(io_ctx)),
@@ -75,12 +79,13 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
         addr_(""),
         connected_(false) {}
 
-  explicit TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx)
+  TcpConnection(asio::io_context& io_ctx, asio::ssl::context& ssl_ctx, const TlsConfig& tls_config)
       : socket_(asio::ssl::stream<asio::ip::tcp::socket>(io_ctx, ssl_ctx)),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(-1),
         addr_(""),
-        connected_(false) {}
+        connected_(false),
+        tls_config_(tls_config) {}
 
   asio::ip::tcp::socket& TcpSocket() {
     if (IsSsl()) {
@@ -93,6 +98,38 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 
   bool IsSsl() const {
     return std::holds_alternative<asio::ssl::stream<asio::ip::tcp::socket>>(socket_);
+  }
+
+  Status AuthenticateTlsPeer() {
+    if (!tls_config_ || !tls_config_->mutual_auth) {
+      return Status::OK();
+    }
+    X509* certificate = SSL_get1_peer_certificate(SslSocket().native_handle());
+    if (certificate == nullptr) {
+      return Status::Error("TLS_IDENTITY_MISSING", "Peer did not present a certificate");
+    }
+    std::unique_ptr<X509, decltype(&X509_free)> certificate_guard(certificate, X509_free);
+    NodeId authenticated_id = -1;
+    auto status = ExtractCertificateNodeId(certificate, authenticated_id);
+    if (!status.ok()) {
+      return status;
+    }
+
+    if (peer_id_ >= 0 && authenticated_id != peer_id_) {
+      return Status::Error("TLS_IDENTITY_MISMATCH",
+                           "Peer certificate identity " + std::to_string(authenticated_id) +
+                               " does not match expected node " + std::to_string(peer_id_));
+    }
+    if (!tls_config_->allowed_cns.empty()) {
+      std::string identity = std::string(kRaftNodeSanPrefix) + std::to_string(authenticated_id);
+      if (std::find(tls_config_->allowed_cns.begin(), tls_config_->allowed_cns.end(), identity) ==
+          tls_config_->allowed_cns.end()) {
+        return Status::Error("TLS_IDENTITY_UNAUTHORIZED",
+                             "Peer identity is not in the configured allowlist: " + identity);
+      }
+    }
+    peer_id_ = authenticated_id;
+    return Status::OK();
   }
 
   void Start() {
@@ -486,6 +523,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   std::deque<WriteEntry> write_queue_;
   bool write_in_progress_ = false;
   bool batching_enabled_ = true;
+  std::optional<TlsConfig> tls_config_;
 
   RpcResponseCallback ExtractCallbackLocked(const std::string& response_data) {
     // Lightweight JSON parse to extract correlation_id
@@ -538,12 +576,14 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   static constexpr size_t kMaxPendingSends = 1000;
 
   PeerConnection(asio::io_context& io_ctx, NodeId peer_id, NodeAddr addr,
-                 asio::ssl::context* ssl_ctx = nullptr, AsioNetworkTransport* transport = nullptr)
+                 asio::ssl::context* ssl_ctx = nullptr, const TlsConfig* tls_config = nullptr,
+                 AsioNetworkTransport* transport = nullptr)
       : io_ctx_(io_ctx),
         strand_(asio::make_strand(io_ctx)),
         peer_id_(peer_id),
         addr_(std::move(addr)),
         ssl_ctx_(ssl_ctx),
+        tls_config_(tls_config),
         transport_(transport),
         reconnect_timer_(io_ctx),
         connect_timer_(io_ctx) {
@@ -582,7 +622,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
 
     std::shared_ptr<TcpConnection> conn;
     if (ssl_ctx_) {
-      conn = std::make_shared<TcpConnection>(io_ctx_, *ssl_ctx_, peer_id_, addr_);
+      conn = std::make_shared<TcpConnection>(io_ctx_, *ssl_ctx_, peer_id_, addr_, *tls_config_);
     } else {
       conn = std::make_shared<TcpConnection>(io_ctx_, peer_id_, addr_);
     }
@@ -709,6 +749,15 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
           asio::ssl::stream_base::client,
           asio::bind_executor(
               strand_, [self = shared_from_this(), expected_conn](std::error_code handshake_ec) {
+                if (!handshake_ec) {
+                  auto identity_status = expected_conn->AuthenticateTlsPeer();
+                  if (!identity_status.ok()) {
+                    LOG_WARN("TLS peer identity check failed for node {}: {}", self->peer_id_,
+                             identity_status.ToString());
+                    expected_conn->Close();
+                    handshake_ec = asio::error::access_denied;
+                  }
+                }
                 self->OnConnect(handshake_ec, expected_conn);
               }));
     } else {
@@ -827,6 +876,7 @@ class PeerConnection : public std::enable_shared_from_this<PeerConnection> {
   std::atomic<State> state_{State::kDisconnected};
 
   asio::ssl::context* ssl_ctx_ = nullptr;
+  const TlsConfig* tls_config_ = nullptr;
   AsioNetworkTransport* transport_ = nullptr;
   std::shared_ptr<TcpConnection> conn_;
   std::deque<PendingSend> pending_sends_;  // accessed only on strand_
@@ -1068,7 +1118,7 @@ class AsioNetworkTransport : public NetworkTransport {
   void DoAccept() {
     std::shared_ptr<TcpConnection> new_conn;
     if (tls_config_.enabled) {
-      new_conn = std::make_shared<TcpConnection>(io_context_, server_ssl_context_);
+      new_conn = std::make_shared<TcpConnection>(io_context_, server_ssl_context_, tls_config_);
     } else {
       new_conn = std::make_shared<TcpConnection>(io_context_);
     }
@@ -1080,10 +1130,16 @@ class AsioNetworkTransport : public NetworkTransport {
           ssl_socket.async_handshake(
               asio::ssl::stream_base::server, [this, new_conn](std::error_code handshake_ec) {
                 if (!handshake_ec) {
-                  new_conn->SetRequestHandler(request_handler_);
-                  new_conn->SetGroupRequestHandler(group_request_handler_);
-                  new_conn->Start();
-                  LOG_INFO("Accepted inbound TLS connection");
+                  auto identity_status = new_conn->AuthenticateTlsPeer();
+                  if (identity_status.ok()) {
+                    new_conn->SetRequestHandler(request_handler_);
+                    new_conn->SetGroupRequestHandler(group_request_handler_);
+                    new_conn->Start();
+                    LOG_INFO("Accepted inbound TLS connection from node {}", new_conn->GetPeerId());
+                  } else {
+                    LOG_WARN("Rejected inbound TLS peer: {}", identity_status.ToString());
+                    new_conn->Close();
+                  }
                 } else {
                   LOG_ERROR("TLS handshake failed: {}", handshake_ec.message());
                   new_conn->Close();
@@ -1131,7 +1187,9 @@ class AsioNetworkTransport : public NetworkTransport {
       }
 
       asio::ssl::context* ssl_ctx = tls_config_.enabled ? &client_ssl_context_ : nullptr;
-      peer = std::make_shared<PeerConnection>(io_context_, peer_id, addr, ssl_ctx, this);
+      const TlsConfig* tls_config = tls_config_.enabled ? &tls_config_ : nullptr;
+      peer =
+          std::make_shared<PeerConnection>(io_context_, peer_id, addr, ssl_ctx, tls_config, this);
       peers_[peer_id] = peer;
     }
     peer->StartConnecting();

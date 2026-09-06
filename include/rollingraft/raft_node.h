@@ -195,11 +195,18 @@ struct RaftNodeConfig {
   // Metrics configuration
   bool metrics_enabled = false;
   std::string metrics_addr;  // e.g., "0.0.0.0:9001", empty = disabled
-  // TLS configuration for control plane (metrics HTTP server)
+  // TLS configuration for node transport and the metrics HTTP server.
   bool tls_enabled = false;
   std::string tls_cert_file;
   std::string tls_key_file;
   std::string tls_ca_file;
+  // Require peer certificates signed by tls_ca_file and bind each connection
+  // to URI SAN "rollingraft-node:<node_id>".
+  bool tls_mutual_auth = false;
+  // Optional allowlist of exact URI SAN identities, for example
+  // "rollingraft-node:2". Empty accepts any identity signed by the CA; Raft
+  // membership checks still control participation in consensus.
+  std::vector<std::string> tls_allowed_peer_identities;
 
   // Admin API authentication token. If non-empty, admin endpoints
   // (/v1/members, /v1/snapshot/*, /v1/leadership/*, /v1/config PATCH)

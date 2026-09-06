@@ -103,6 +103,12 @@ Status RaftNodeConfig::Validate() const {
     if (tls_key_file.empty()) {
       return Status::Error("CONFIG_INVALID", "tls_key_file cannot be empty when tls_enabled=true");
     }
+    if (tls_mutual_auth && tls_ca_file.empty()) {
+      return Status::Error("CONFIG_INVALID",
+                           "tls_ca_file cannot be empty when tls_mutual_auth=true");
+    }
+  } else if (tls_mutual_auth) {
+    return Status::Error("CONFIG_INVALID", "tls_mutual_auth requires tls_enabled=true");
   }
 
   // Positive values
@@ -143,12 +149,15 @@ RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> s
   infra->network_ =
       config.network_factory
           ? config.network_factory()
-          : (config.tls_enabled
-                 ? CreateAsioNetworkTransport(TlsConfig{.enabled = true,
-                                                        .cert_file = config.tls_cert_file,
-                                                        .key_file = config.tls_key_file,
-                                                        .ca_file = config.tls_ca_file})
-                 : CreateDefaultNetworkTransport());
+          : (config.tls_enabled ? CreateAsioNetworkTransport(
+                                      TlsConfig{.enabled = true,
+                                                .cert_file = config.tls_cert_file,
+                                                .key_file = config.tls_key_file,
+                                                .ca_file = config.tls_ca_file,
+                                                .mutual_auth = config.tls_mutual_auth,
+                                                .node_id = config.node_id,
+                                                .allowed_cns = config.tls_allowed_peer_identities})
+                                : CreateDefaultNetworkTransport());
   infra->timer_ = config.timer_factory ? config.timer_factory() : TimerService::CreateDefault();
   infra->protocol_ =
       config.protocol_factory ? config.protocol_factory() : std::make_unique<JsonProtocol>();

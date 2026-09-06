@@ -1,5 +1,27 @@
 # Findings
 
+## Docker mTLS 夹具路径（2026-09-04）
+
+- PR #19 首轮 Docker 作业中，普通 TLS 和其余 38 个集成测试通过，4 个节点
+  mTLS 测试均在 transport/node 初始化阶段失败。
+- CMake 将 `NODE_TEST_CERTS_DIR` 编译为绝对路径
+  `/build/build/generated-node-certs/`；builder 确实在该处生成夹具，但 runtime
+  stage 仅复制 `/build/tests/certs`，没有复制生成目录。
+- 因此这是 Docker 多阶段镜像遗漏构建产物，不是 mTLS 握手或身份校验逻辑失败。
+  runtime 镜像需把生成夹具复制到已编译的原路径。
+
+## MetricsShowHeartbeatCoalescing 时序波动（2026-09-04）
+
+- Release 全量失败时，唯一断言是指标输出中未出现
+  `raft_heartbeat_coalesced_total`。
+- 定向重复在前 18 次通过、第 19 次失败，证明用例依赖偶然时序。
+- 合并条件依赖 ReadIndex 处理时距上次周期心跳小于
+  `heartbeat_interval_ms`。现有用例在选主后固定 sleep 200ms，再快速调用
+  5 次 ReadIndex；这 5 次并不更新 `last_heartbeat_sent_`，因此若它们恰好落在
+  周期心跳窗口之外，计数器不会被注册。
+- `d925046` 未修改 `state_machine_applier.cpp`、`log_replicator.cpp` 或该测试；
+  节点 mTLS 用例在失败运行中均通过。
+
 ## 落后 follower 补全振荡（2026-08-16 已关闭）
 
 **结论：模拟环境时序限制，非真实 bug。** 真实网络集成测试 `FollowerCatchesUpAfterRestart`（停 follower → leader 提交 → 重启 → 验证补全）3/3 通过，1.7 秒内完成补全——真实网络延迟/重试交错打破模拟环境里 pipeline 推进 vs 回退的对称振荡。

@@ -164,6 +164,20 @@ TEST_F(RaftNodeConfigValidateTest, TlsEnabledWithCertAndKey) {
   EXPECT_TRUE(config.Validate().ok());
 }
 
+TEST_F(RaftNodeConfigValidateTest, MutualTlsRequiresTlsAndCa) {
+  auto config = MakeValidConfig();
+  config.tls_mutual_auth = true;
+  EXPECT_FALSE(config.Validate().ok());
+
+  config.tls_enabled = true;
+  config.tls_cert_file = "/tmp/cert.pem";
+  config.tls_key_file = "/tmp/key.pem";
+  EXPECT_FALSE(config.Validate().ok());
+
+  config.tls_ca_file = "/tmp/ca.pem";
+  EXPECT_TRUE(config.Validate().ok());
+}
+
 TEST_F(RaftNodeConfigValidateTest, TlsDisabledIgnoresCertFields) {
   auto config = MakeValidConfig();
   config.tls_enabled = false;

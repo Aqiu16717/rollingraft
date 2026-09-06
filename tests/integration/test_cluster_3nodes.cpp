@@ -5,14 +5,20 @@
 #include <vector>
 
 #include "rollingraft/logger.h"
+#include "rollingraft/network_transport.h"
 #include "rollingraft/persister.h"
 #include "rollingraft/raft_node.h"
+#include "rollingraft/tls_config.h"
 
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
 #include <gtest/gtest.h>
 
 using namespace rollingraft;
+
+namespace rollingraft {
+std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(const TlsConfig& tls_config);
+}
 
 /**
  * 3-node cluster integration tests.
@@ -114,6 +120,24 @@ class Cluster3NodesTest : public ::testing::Test {
     config.tls_key_file = "../../tests/certs/server.key";
     config.tls_ca_file = "../../tests/certs/ca.crt";
 #endif
+    return config;
+  }
+
+  RaftNodeConfig MakeMutualTlsConfig(NodeId id, const std::string& addr,
+                                     const std::vector<std::string>& all_addrs) {
+    auto config = MakeConfig(id, addr, all_addrs);
+    config.tls_enabled = true;
+    config.tls_mutual_auth = true;
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    config.tls_cert_file = certs_dir + "node" + std::to_string(id) + ".crt";
+    config.tls_key_file = certs_dir + "node" + std::to_string(id) + ".key";
+    config.tls_ca_file = certs_dir + "node_ca.crt";
+    config.tls_allowed_peer_identities = {"rollingraft-node:1", "rollingraft-node:2",
+                                          "rollingraft-node:3"};
     return config;
   }
 
@@ -471,6 +495,144 @@ TEST_F(Cluster3NodesTest, TlsRecoversAfterLeaderCrash) {
 
   ASSERT_NE(new_leader, nullptr) << "No new TLS leader elected after crash";
   EXPECT_TRUE(new_leader->IsLeader());
+}
+
+TEST_F(Cluster3NodesTest, MutualTlsAuthenticatesNodeIdentities) {
+  auto ports = AllocateEphemeralPorts(3);
+  addrs_ = FormatAddrs(ports);
+
+  for (int i = 0; i < 3; ++i) {
+    auto config = MakeMutualTlsConfig(i + 1, addrs_[i], addrs_);
+    auto sm = std::make_shared<MockStateMachine>();
+    state_machines_.push_back(sm);
+    nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+    ASSERT_TRUE(nodes_[i]->Start().ok());
+  }
+
+  WaitForLeader();
+  auto* leader = GetLeader();
+  ASSERT_NE(leader, nullptr);
+  std::atomic<bool> applied{false};
+  ASSERT_TRUE(leader
+                  ->Propose("mutual_tls_command",
+                            [&applied](const ApplyResult& result) { applied = result.success; })
+                  .ok());
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!applied && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_TRUE(applied);
+}
+
+TEST_F(Cluster3NodesTest, MutualTlsRejectsConfiguredNodeIdMismatch) {
+  auto ports = AllocateEphemeralPorts(1);
+  addrs_ = FormatAddrs(ports);
+  auto config = MakeMutualTlsConfig(1, addrs_[0], addrs_);
+#ifdef NODE_TEST_CERTS_DIR
+  config.tls_cert_file = NODE_TEST_CERTS_DIR "node2.crt";
+  config.tls_key_file = NODE_TEST_CERTS_DIR "node2.key";
+#else
+  config.tls_cert_file = "../generated-node-certs/node2.crt";
+  config.tls_key_file = "../generated-node-certs/node2.key";
+#endif
+  auto sm = std::make_shared<MockStateMachine>();
+  nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+  auto status = nodes_[0]->Start();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("TLS_IDENTITY_MISMATCH"), std::string::npos);
+}
+
+TEST_F(Cluster3NodesTest, MutualTlsRejectsPeerSignedByWrongCa) {
+  auto ports = AllocateEphemeralPorts(2);
+  addrs_ = FormatAddrs(ports);
+#ifdef NODE_TEST_CERTS_DIR
+  const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+  const std::string certs_dir = "../generated-node-certs/";
+#endif
+  TlsConfig trusted_config;
+  trusted_config.enabled = true;
+  trusted_config.cert_file = certs_dir + "node1.crt";
+  trusted_config.key_file = certs_dir + "node1.key";
+  trusted_config.ca_file = certs_dir + "node_ca.crt";
+  trusted_config.mutual_auth = true;
+  trusted_config.node_id = 1;
+  TlsConfig rogue_config;
+  rogue_config.enabled = true;
+  rogue_config.cert_file = certs_dir + "rogue_node3.crt";
+  rogue_config.key_file = certs_dir + "rogue_node3.key";
+  rogue_config.ca_file = certs_dir + "rogue_ca.crt";
+  rogue_config.mutual_auth = true;
+  rogue_config.node_id = 3;
+  auto trusted = CreateAsioNetworkTransport(trusted_config);
+  auto rogue = CreateAsioNetworkTransport(rogue_config);
+  auto handler = [](NodeId, const std::string&, std::string& response) { response = "{}"; };
+  ASSERT_TRUE(trusted->Initialize(addrs_[0], handler).ok());
+  ASSERT_TRUE(rogue->Initialize(addrs_[1], handler).ok());
+  ASSERT_TRUE(trusted->Start().ok());
+  ASSERT_TRUE(rogue->Start().ok());
+
+  std::atomic<bool> completed{false};
+  std::atomic<bool> succeeded{true};
+  trusted->SendRpc(3, addrs_[1], "{}", 1, std::chrono::milliseconds(500),
+                   [&completed, &succeeded](const std::string&, bool success, const std::string&) {
+                     succeeded = success;
+                     completed = true;
+                   });
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!completed && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_TRUE(completed);
+  EXPECT_FALSE(succeeded);
+  EXPECT_TRUE(trusted->Stop().ok());
+  EXPECT_TRUE(rogue->Stop().ok());
+}
+
+TEST_F(Cluster3NodesTest, MutualTlsRejectsSpoofedRaftSender) {
+  auto ports = AllocateEphemeralPorts(2);
+  addrs_ = FormatAddrs(ports);
+  auto target_config = MakeMutualTlsConfig(2, addrs_[1], {addrs_[1]});
+  auto sm = std::make_shared<MockStateMachine>();
+  nodes_.push_back(std::make_unique<RaftNode>(target_config, sm));
+  ASSERT_TRUE(nodes_[0]->Start().ok());
+
+#ifdef NODE_TEST_CERTS_DIR
+  const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+  const std::string certs_dir = "../generated-node-certs/";
+#endif
+  TlsConfig attacker_config;
+  attacker_config.enabled = true;
+  attacker_config.cert_file = certs_dir + "node1.crt";
+  attacker_config.key_file = certs_dir + "node1.key";
+  attacker_config.ca_file = certs_dir + "node_ca.crt";
+  attacker_config.mutual_auth = true;
+  attacker_config.node_id = 1;
+  auto attacker = CreateAsioNetworkTransport(attacker_config);
+  auto handler = [](NodeId, const std::string&, std::string& response) { response = "{}"; };
+  ASSERT_TRUE(attacker->Initialize(addrs_[0], handler).ok());
+  ASSERT_TRUE(attacker->Start().ok());
+
+  // The certificate authenticates node 1, while the request claims node 3.
+  // The target must drop it before the Raft handler can process the term.
+  const std::string spoofed_vote =
+      R"({"correlation_id":7,"group_id":0,"type":0,"term":99,"candidate_id":3,"last_log_index":0,"last_log_term":0})";
+  std::atomic<bool> completed{false};
+  std::atomic<bool> succeeded{true};
+  attacker->SendRpc(2, addrs_[1], spoofed_vote, 7, std::chrono::milliseconds(500),
+                    [&completed, &succeeded](const std::string&, bool success, const std::string&) {
+                      succeeded = success;
+                      completed = true;
+                    });
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!completed && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_TRUE(completed);
+  EXPECT_FALSE(succeeded);
+  EXPECT_LT(nodes_[0]->CurrentTerm(), 99);
+  EXPECT_TRUE(attacker->Stop().ok());
 }
 
 TEST_F(Cluster3NodesTest, AutoRemovesDeadNode) {

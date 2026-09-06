@@ -1,5 +1,19 @@
 enable_testing()
 
+find_program(OPENSSL_EXECUTABLE openssl REQUIRED)
+set(NODE_TEST_CERTS_DIR "${CMAKE_BINARY_DIR}/generated-node-certs")
+set(NODE_TEST_CERTS_STAMP "${NODE_TEST_CERTS_DIR}/.stamp")
+add_custom_command(
+  OUTPUT "${NODE_TEST_CERTS_STAMP}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${NODE_TEST_CERTS_DIR}"
+  COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/generate_node_test_certs.sh"
+          "${NODE_TEST_CERTS_DIR}" "${OPENSSL_EXECUTABLE}"
+  COMMAND ${CMAKE_COMMAND} -E touch "${NODE_TEST_CERTS_STAMP}"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generate_node_test_certs.sh"
+  VERBATIM
+)
+add_custom_target(generate_node_test_certs DEPENDS "${NODE_TEST_CERTS_STAMP}")
+
 # Find Google Test
 find_package(GTest QUIET)
 if(NOT GTest_FOUND)
@@ -83,6 +97,7 @@ target_link_libraries(unit_tests
     test_mocks
     ${GTEST_MAIN_LIBRARIES}
 )
+add_dependencies(unit_tests generate_node_test_certs)
 
 # Deterministic test infrastructure
 add_library(deterministic STATIC
@@ -125,6 +140,7 @@ target_link_libraries(integration_tests
     deterministic
     ${GTEST_MAIN_LIBRARIES}
 )
+add_dependencies(integration_tests generate_node_test_certs)
 
 # Deterministic tests
 add_executable(deterministic_tests
@@ -156,7 +172,9 @@ install(TARGETS unit_tests integration_tests deterministic_tests
 # Register tests
 include(GoogleTest)
 target_compile_definitions(unit_tests
-  PRIVATE TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+  PRIVATE
+    TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+    NODE_TEST_CERTS_DIR="${NODE_TEST_CERTS_DIR}/"
 )
 
 gtest_discover_tests(unit_tests
@@ -165,7 +183,9 @@ gtest_discover_tests(unit_tests
 )
 
 target_compile_definitions(integration_tests
-  PRIVATE TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+  PRIVATE
+    TEST_CERTS_DIR="${CMAKE_SOURCE_DIR}/tests/certs/"
+    NODE_TEST_CERTS_DIR="${NODE_TEST_CERTS_DIR}/"
 )
 
 gtest_discover_tests(integration_tests

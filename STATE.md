@@ -1,6 +1,6 @@
 # Loop State — rollingraft
 
-Last run: 2026-08-30 (interactive: make runtime config group-local)
+Last run: 2026-09-01 (interactive: enforce node identity with mTLS)
 
 ## Project context (static, keep updated)
 
@@ -39,6 +39,11 @@ Last run: 2026-08-30 (interactive: make runtime config group-local)
   retry, lease, and apply paths now read group-local values; `/v1/config`
   routes GET/PATCH by `group_id`. Transport batching remains node-level and is
   synchronized across hosted groups. Release and TSan passed 389/389.
+- ~~Node certificates did not authenticate NodeId~~ → fixed 09-01 with URI SAN
+  identities (`rollingraft-node:<id>`), local identity validation, handshake
+  binding, RPC sender/claim matching, and consensus membership enforcement.
+  Client authentication remains a separate production-readiness blocker.
+  Release and TSan passed 396/396.
 - `MetricsEndpointTest.TriggerSnapshotOnLeader` flake (port conflict, 2026-08-02) — 14 days no recurrence; test-stability fixes landed 08-09. Presumed fixed — drop if CI stays green through end of August.
 - `third_party/leveldb` submodule still has uncommitted local modifications — never touch it (see loop-constraints.md). Docker builds vanilla LevelDB (patch fails to apply: `CMakeLists.txt:264`, `env_posix.cc:837`) — pre-existing on green runs too (checked 08-17), so not the segfault cause, but a human decision is eventually needed.
 - macOS TSan: raw binary runs (no TSAN_OPTIONS) report kqueue_reactor races — these are KNOWN and already suppressed in `tsan_suppressions.txt` (`race:asio::detail::kqueue_reactor::run` etc.). Always run TSan via `make test-tsan`; do not re-escalate this as new.

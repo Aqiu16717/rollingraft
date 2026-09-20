@@ -1,8 +1,11 @@
 #include "rollingraft/tls_config.h"
 
+#include <unordered_set>
+
 #include "asio_timer_service.h"
 #include "json_protocol.h"
 #include "raft_node_impl.h"
+#include "tls_identity.h"
 
 // Forward declaration for default network transport
 namespace rollingraft {
@@ -44,6 +47,25 @@ Status ValidateAddr(const std::string& addr, const char* field_name) {
                          std::string(field_name) + " has invalid port: " + port_str);
   }
 
+  return Status::OK();
+}
+
+Status ValidateClientAuthConfig(bool client_auth_enabled, bool tls_enabled, bool tls_mutual_auth,
+                                const std::string& client_ca_file,
+                                const std::vector<ClientAuthorizationRule>& rules) {
+  if (!client_auth_enabled) {
+    return Status::OK();
+  }
+  if (!tls_enabled || !tls_mutual_auth || client_ca_file.empty() || rules.empty()) {
+    return Status::Error("CONFIG_INVALID",
+                         "client authentication requires mTLS, client CA, and rules");
+  }
+  std::unordered_set<std::string> identities;
+  for (const auto& rule : rules) {
+    if (!IsValidClientIdentity(rule.identity) || !identities.insert(rule.identity).second) {
+      return Status::Error("CONFIG_INVALID", "client authorization identities must be unique");
+    }
+  }
   return Status::OK();
 }
 
@@ -111,6 +133,12 @@ Status RaftNodeConfig::Validate() const {
     return Status::Error("CONFIG_INVALID", "tls_mutual_auth requires tls_enabled=true");
   }
 
+  status = ValidateClientAuthConfig(client_auth_enabled, tls_enabled, tls_mutual_auth,
+                                    client_ca_file, client_authorizations);
+  if (!status.ok()) {
+    return status;
+  }
+
   // Positive values
   if (rpc_timeout_ms == 0) {
     return Status::Error("CONFIG_INVALID", "rpc_timeout_ms must be > 0");
@@ -156,7 +184,9 @@ RaftNode::RaftNode(const RaftNodeConfig& config, std::shared_ptr<StateMachine> s
                                                 .ca_file = config.tls_ca_file,
                                                 .mutual_auth = config.tls_mutual_auth,
                                                 .node_id = config.node_id,
-                                                .allowed_cns = config.tls_allowed_peer_identities})
+                                                .allowed_cns = config.tls_allowed_peer_identities,
+                                                .client_auth_enabled = config.client_auth_enabled,
+                                                .client_ca_file = config.client_ca_file})
                                 : CreateDefaultNetworkTransport());
   infra->timer_ = config.timer_factory ? config.timer_factory() : TimerService::CreateDefault();
   infra->protocol_ =

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "rollingraft/state_machine.h"
@@ -146,6 +147,15 @@ struct ClusterConfig {
  * All fields have sensible defaults except node_id, listen_addr,
  * peers, and data_dir which must be explicitly set.
  */
+/** Permission granted to an authenticated application client. */
+enum class ClientPermission { READ_ONLY, READ_WRITE };
+
+/** Static authorization rule for one exact client certificate identity. */
+struct ClientAuthorizationRule {
+  std::string identity;
+  ClientPermission permission = ClientPermission::READ_ONLY;
+};
+
 struct RaftNodeConfig {
   NodeId node_id;                  // Unique node identifier
   std::string listen_addr;         // Address to listen on, e.g., "0.0.0.0:8001"
@@ -207,6 +217,12 @@ struct RaftNodeConfig {
   // "rollingraft-node:2". Empty accepts any identity signed by the CA; Raft
   // membership checks still control participation in consensus.
   std::vector<std::string> tls_allowed_peer_identities;
+
+  // Application client mTLS is opt-in and uses a trust root distinct from
+  // the node-to-node CA configuration above.
+  bool client_auth_enabled = false;
+  std::string client_ca_file;
+  std::vector<ClientAuthorizationRule> client_authorizations;
 
   // Admin API authentication token. If non-empty, admin endpoints
   // (/v1/members, /v1/snapshot/*, /v1/leadership/*, /v1/config PATCH)

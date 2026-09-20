@@ -41,6 +41,9 @@ struct RaftStoreConfig {
   std::string tls_ca_file;
   bool tls_mutual_auth = false;
   std::vector<std::string> tls_allowed_peer_identities;
+  bool client_auth_enabled = false;
+  std::string client_ca_file;
+  std::vector<ClientAuthorizationRule> client_authorizations;
 
   // Node-level transport write coalescing shared by every hosted group.
   bool transport_batching_enabled = true;

@@ -52,7 +52,9 @@ class Status {
     kProtocolError,
     kRaftNodeStartError,
     kGenericError,
-    kNotLeader
+    kNotLeader,
+    kUnauthenticated,
+    kPermissionDenied
   };
 
   /** Return a success status. */
@@ -103,6 +105,16 @@ class Status {
     return Status(Code::kGenericError, msg, msg2);
   }
 
+  /** Return an authentication failure. */
+  static Status Unauthenticated(const std::string& msg, const std::string& msg2 = "") {
+    return Status(Code::kUnauthenticated, msg, msg2);
+  }
+
+  /** Return an authorization failure. */
+  static Status PermissionDenied(const std::string& msg, const std::string& msg2 = "") {
+    return Status(Code::kPermissionDenied, msg, msg2);
+  }
+
   /**
    * Return a NotLeader error status.
    * @param leader_id Current leader node ID (or -1 if unknown)
@@ -142,6 +154,12 @@ class Status {
 
   /** Returns true if the status indicates a NotLeader error. */
   bool IsNotLeader() const { return code() == Code::kNotLeader; }
+
+  /** Returns true if peer authentication failed. */
+  bool IsUnauthenticated() const { return code() == Code::kUnauthenticated; }
+
+  /** Returns true if an authenticated principal lacks permission. */
+  bool IsPermissionDenied() const { return code() == Code::kPermissionDenied; }
 
   /** Returns true if the status indicates a RaftNodeStart error. */
   bool IsRaftNodeStartError() const { return code() == Code::kRaftNodeStartError; }

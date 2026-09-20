@@ -23,6 +23,18 @@ class AsioSslContextFactoryTest : public ::testing::Test {
 #endif
 };
 
+namespace {
+
+std::unique_ptr<X509, decltype(&X509_free)> LoadCertificate(const std::string& path) {
+  std::unique_ptr<FILE, decltype(&std::fclose)> file(std::fopen(path.c_str(), "r"), std::fclose);
+  if (!file) {
+    return {nullptr, X509_free};
+  }
+  return {PEM_read_X509(file.get(), nullptr, nullptr, nullptr), X509_free};
+}
+
+}  // namespace
+
 TEST_F(AsioSslContextFactoryTest, CreateServerContext_Success) {
   TlsConfig config;
   config.enabled = true;
@@ -98,6 +110,33 @@ TEST_F(AsioSslContextFactoryTest, ExtractCertificateNodeId_FromUriSan) {
   auto status = ExtractCertificateNodeId(certificate.get(), node_id);
   EXPECT_TRUE(status.ok()) << status.ToString();
   EXPECT_EQ(node_id, 2);
+}
+
+TEST_F(AsioSslContextFactoryTest, ExtractCertificatePeerIdentity_ClientUriSan) {
+  auto certificate = LoadCertificate(node_certs_dir_ + "writer.crt");
+  ASSERT_NE(certificate, nullptr);
+
+  RpcPeerIdentity identity;
+  auto status = ExtractCertificatePeerIdentity(certificate.get(), identity);
+
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  EXPECT_EQ(identity.kind, RpcPeerKind::CLIENT);
+  EXPECT_EQ(identity.node_id, -1);
+  EXPECT_EQ(identity.client_identity, "writer");
+}
+
+TEST_F(AsioSslContextFactoryTest, ExtractCertificatePeerIdentity_RejectsAmbiguousOrMalformedUriSan) {
+  for (const char* certificate_name : {"mixed.crt", "duplicate_client.crt", "invalid_client.crt"}) {
+    auto certificate = LoadCertificate(node_certs_dir_ + certificate_name);
+    ASSERT_NE(certificate, nullptr) << certificate_name;
+
+    RpcPeerIdentity identity;
+    auto status = ExtractCertificatePeerIdentity(certificate.get(), identity);
+
+    EXPECT_FALSE(status.ok()) << certificate_name;
+    EXPECT_NE(status.ToString().find("TLS_IDENTITY_INVALID"), std::string::npos)
+        << certificate_name;
+  }
 }
 
 TEST_F(AsioSslContextFactoryTest, CreateServerContext_RejectsMismatchedNodeIdentity) {

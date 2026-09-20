@@ -66,6 +66,7 @@ add_executable(unit_tests
   unit/test_retry_policy.cpp
   unit/test_connection_pool.cpp
   unit/test_client.cpp
+  unit/test_client_authorization.cpp
   unit/test_metrics.cpp
   unit/test_log_compaction.cpp
   unit/test_event_bus.cpp

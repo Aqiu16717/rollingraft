@@ -231,6 +231,7 @@ struct ClientResponse : public RaftResponse {
   bool success;              // Whether the command was applied
   std::string response;      // Response data from state machine
   std::string error;         // Error message if failed
+  std::string error_code;    // Stable machine-readable error code if failed
   Index last_applied_index;  // Index at which command was applied
   NodeId leader_id;          // Current leader ID (for redirection)
   std::string leader_addr;   // Current leader address (for redirection)

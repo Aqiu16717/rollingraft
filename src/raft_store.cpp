@@ -135,7 +135,27 @@ Status RaftStore::Start() {
     err["message"] = "Use group_id > 0 for multi-raft routing";
     response = err.dump();
   };
-  auto status = infra_->network_->Initialize(config_.listen_addr, legacy_handler);
+  if (config_.client_auth_enabled && !infra_->network_->SupportsAuthenticatedPeerIdentity()) {
+    running_.store(false, std::memory_order_release);
+    return Status::Error("CONFIG_INVALID",
+                         "client authentication requires authenticated transport support");
+  }
+  Status status;
+  if (config_.client_auth_enabled) {
+    auto authenticated_handler = [this](const RpcRequestContext& context, uint64_t group_id,
+                                        const std::string& data, std::string& response) {
+      OnIncomingRpc(context, group_id, data, response);
+    };
+    infra_->network_->SetAuthenticatedGroupRequestHandler(authenticated_handler);
+    auto authenticated_legacy_handler = [this](const RpcRequestContext& context,
+                                               const std::string& data, std::string& response) {
+      OnIncomingRpc(context, 0, data, response);
+    };
+    status = infra_->network_->InitializeAuthenticated(config_.listen_addr,
+                                                        authenticated_legacy_handler);
+  } else {
+    status = infra_->network_->Initialize(config_.listen_addr, legacy_handler);
+  }
   if (!status.ok()) {
     running_.store(false, std::memory_order_release);
     return status;
@@ -350,6 +370,12 @@ std::vector<uint64_t> RaftStore::ListGroups() const {
 
 void RaftStore::OnIncomingRpc(NodeId from, uint64_t group_id, const std::string& data,
                               std::string& response) {
+  RpcRequestContext context{.peer = {.kind = RpcPeerKind::NODE, .node_id = from}};
+  OnIncomingRpc(context, group_id, data, response);
+}
+
+void RaftStore::OnIncomingRpc(const RpcRequestContext& context, uint64_t group_id,
+                              const std::string& data, std::string& response) {
   if (group_id == 0) {
     nlohmann::json err;
     err["error"] = "GROUP_NOT_FOUND";
@@ -375,7 +401,7 @@ void RaftStore::OnIncomingRpc(NodeId from, uint64_t group_id, const std::string&
     return;
   }
 
-  group->HandleIncomingRpc(from, data, response);
+  group->HandleIncomingRpc(context, data, response);
 }
 
 void RaftStore::RegisterStoreProviders() {

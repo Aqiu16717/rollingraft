@@ -22,6 +22,16 @@ bool SenderIdentityMatches(NodeId authenticated_node_id, NodeId claimed_node_id,
 
 void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from, const std::string& data,
                                                std::string& response) {
+  RpcRequestContext context;
+  if (!group_->config_.client_auth_enabled) {
+    context.peer.kind = RpcPeerKind::NODE;
+    context.peer.node_id = from;
+  }
+  HandleIncomingRpc(context, data, response);
+}
+
+void RaftNode::RaftNodeImpl::HandleIncomingRpc(const RpcRequestContext& context,
+                                               const std::string& data, std::string& response) {
   // First, peek at the message type to dispatch to the correct handler
   // We need to deserialize based on the type field in the JSON
   try {
@@ -34,6 +44,13 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from, const std::string& d
 
     int type_id = j["type"];
     auto message_type = static_cast<RaftMessageType>(type_id);
+    const NodeId from = context.peer.kind == RpcPeerKind::NODE ? context.peer.node_id : -1;
+
+    if (group_->config_.client_auth_enabled && IsRaftProtocolRequest(message_type) &&
+        context.peer.kind != RpcPeerKind::NODE) {
+      LOG_WARN("Rejecting Raft RPC from non-node authenticated peer");
+      return;
+    }
 
     switch (message_type) {
       case RaftMessageType::KRequestVoteRequest: {
@@ -112,6 +129,19 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(NodeId from, const std::string& d
         ClientResponse resp;
         resp.correlation_id_ = req.correlation_id_;
         resp.group_id = req.group_id;
+        if (group_->config_.client_auth_enabled) {
+          status = client_authorization_.AuthorizeClientRequest(context, req.read_only);
+          if (!status.ok()) {
+            resp.success = false;
+            resp.error = status.GetMessage();
+            resp.error_code = status.CodeName();
+            status = infra_->protocol_->SerializeResponse(resp, response);
+            if (!status.ok()) {
+              LOG_ERROR("Failed to serialize authorization denial: {}", status.ToString());
+            }
+            break;
+          }
+        }
         HandleClientRequest(req, resp);
         status = infra_->protocol_->SerializeResponse(resp, response);
         if (!status.ok()) {

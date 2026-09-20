@@ -3,6 +3,7 @@
 
 #include "rollingraft/asio_ssl_context_factory.h"
 
+#include "mock/mock_network.h"
 #include "tls_identity.h"
 #include <gtest/gtest.h>
 #include <openssl/pem.h>
@@ -153,6 +154,49 @@ TEST_F(AsioSslContextFactoryTest, CreateServerContext_RejectsMismatchedNodeIdent
   auto status = factory.CreateServerContext(ctx);
   EXPECT_FALSE(status.ok());
   EXPECT_NE(status.ToString().find("TLS_IDENTITY_MISMATCH"), std::string::npos);
+}
+
+TEST_F(AsioSslContextFactoryTest, CreateServerContext_ClientAuthRequiresClientCa) {
+  TlsConfig config;
+  config.enabled = true;
+  config.mutual_auth = true;
+  config.client_auth_enabled = true;
+  config.cert_file = node_certs_dir_ + "node1.crt";
+  config.key_file = node_certs_dir_ + "node1.key";
+  config.ca_file = node_certs_dir_ + "node_ca.crt";
+  config.node_id = 1;
+
+  AsioSslContextFactory factory(config);
+  asio::ssl::context ctx(asio::ssl::context::tls_server);
+  auto status = factory.CreateServerContext(ctx);
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("TLS_CLIENT_CA_REQUIRED"), std::string::npos);
+}
+
+TEST_F(AsioSslContextFactoryTest, CreateServerContext_ClientAuthLoadsClientCa) {
+  TlsConfig config;
+  config.enabled = true;
+  config.mutual_auth = true;
+  config.client_auth_enabled = true;
+  config.cert_file = node_certs_dir_ + "node1.crt";
+  config.key_file = node_certs_dir_ + "node1.key";
+  config.ca_file = node_certs_dir_ + "node_ca.crt";
+  config.client_ca_file = node_certs_dir_ + "client_ca.crt";
+  config.node_id = 1;
+
+  AsioSslContextFactory factory(config);
+  asio::ssl::context ctx(asio::ssl::context::tls_server);
+  EXPECT_TRUE(factory.CreateServerContext(ctx).ok());
+}
+
+TEST(NetworkTransportAuthTest, DefaultAuthenticatedEntryPointIsUnsupported) {
+  MockNetworkTransport transport;
+
+  EXPECT_FALSE(transport.SupportsAuthenticatedPeerIdentity());
+  auto status = transport.InitializeAuthenticated("127.0.0.1:1", {});
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("UNSUPPORTED"), std::string::npos);
 }
 
 }  // namespace rollingraft

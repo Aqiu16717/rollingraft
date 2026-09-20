@@ -25,6 +25,7 @@ class AsioSslContextFactory {
   Status LoadCertificateChain(asio::ssl::context& ctx) const;
   Status LoadPrivateKey(asio::ssl::context& ctx) const;
   Status LoadCaBundle(asio::ssl::context& ctx) const;
+  Status LoadClientCaBundle(asio::ssl::context& ctx) const;
   void ConfigureVersion(asio::ssl::context& ctx) const;
 };
 

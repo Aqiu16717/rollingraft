@@ -109,11 +109,24 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       return Status::Error("TLS_IDENTITY_MISSING", "Peer did not present a certificate");
     }
     std::unique_ptr<X509, decltype(&X509_free)> certificate_guard(certificate, X509_free);
-    NodeId authenticated_id = -1;
-    auto status = ExtractCertificateNodeId(certificate, authenticated_id);
+    RpcPeerIdentity identity;
+    auto status = ExtractCertificatePeerIdentity(certificate, identity);
     if (!status.ok()) {
       return status;
     }
+
+    if (tls_config_->client_auth_enabled) {
+      peer_context_.peer = std::move(identity);
+      if (peer_context_.peer.kind == RpcPeerKind::NODE) {
+        peer_id_ = peer_context_.peer.node_id;
+      }
+      return Status::OK();
+    }
+
+    if (identity.kind != RpcPeerKind::NODE) {
+      return Status::Error("TLS_IDENTITY_MISSING", "Peer certificate has no rollingraft-node URI SAN");
+    }
+    NodeId authenticated_id = identity.node_id;
 
     if (peer_id_ >= 0 && authenticated_id != peer_id_) {
       return Status::Error("TLS_IDENTITY_MISMATCH",
@@ -129,6 +142,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       }
     }
     peer_id_ = authenticated_id;
+    peer_context_.peer.kind = RpcPeerKind::NODE;
+    peer_context_.peer.node_id = authenticated_id;
     return Status::OK();
   }
 
@@ -339,6 +354,16 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     group_request_handler_ = std::move(handler);
   }
 
+  void SetAuthenticatedRequestHandler(AuthenticatedRpcRequestHandler handler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    authenticated_request_handler_ = std::move(handler);
+  }
+
+  void SetAuthenticatedGroupRequestHandler(AuthenticatedGroupRequestHandler handler) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    authenticated_group_request_handler_ = std::move(handler);
+  }
+
  private:
   void DoReadHeader() {
     auto self = shared_from_this();
@@ -400,25 +425,44 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   }
 
   void HandleMessage() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    RpcRequestHandler request_handler;
+    GroupRequestHandler group_request_handler;
+    AuthenticatedRpcRequestHandler authenticated_request_handler;
+    AuthenticatedGroupRequestHandler authenticated_group_request_handler;
+    RpcRequestContext peer_context;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      request_handler = request_handler_;
+      group_request_handler = group_request_handler_;
+      authenticated_request_handler = authenticated_request_handler_;
+      authenticated_group_request_handler = authenticated_group_request_handler_;
+      peer_context = peer_context_;
+    }
 
     LOG_INFO("HandleMessage: peer_id={}, has_handler={}, pending_callbacks={}", peer_id_,
-             (request_handler_ ? "yes" : "no"), pending_callbacks_.size());
+             (request_handler || authenticated_request_handler ? "yes" : "no"),
+             pending_callbacks_.size());
 
-    if (request_handler_) {
+    if (request_handler || authenticated_request_handler) {
       // This is a server connection, handle request
       uint64_t group_id = ExtractGroupId(body_buffer_);
       std::string response;
 
-      if (group_id == 0) {
+      if (authenticated_request_handler) {
+        if (group_id == 0) {
+          authenticated_request_handler(peer_context, body_buffer_, response);
+        } else if (authenticated_group_request_handler) {
+          authenticated_group_request_handler(peer_context, group_id, body_buffer_, response);
+        }
+      } else if (group_id == 0) {
         // Existing single-group path (backward compatible)
         request_handler_(peer_id_, body_buffer_, response);
       } else {
         // Multi-raft group dispatch stub. In full multi-raft this will
         // route to the appropriate RaftGroup; for now we either call the
         // optional group handler or return a clear error.
-        if (group_request_handler_) {
-          group_request_handler_(peer_id_, group_id, body_buffer_, response);
+        if (group_request_handler) {
+          group_request_handler(peer_id_, group_id, body_buffer_, response);
         } else {
           LOG_WARN(
               "Received message for group_id={} but no group handler "
@@ -510,6 +554,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
   mutable std::mutex mutex_;
   RpcRequestHandler request_handler_;
   GroupRequestHandler group_request_handler_;
+  AuthenticatedRpcRequestHandler authenticated_request_handler_;
+  AuthenticatedGroupRequestHandler authenticated_group_request_handler_;
+  RpcRequestContext peer_context_;
   std::unordered_map<uint64_t, PendingCallback> pending_callbacks_;
 
   char header_buffer_[4] = {};
@@ -948,6 +995,19 @@ class AsioNetworkTransport : public NetworkTransport {
     return Status::OK();
   }
 
+  Status InitializeAuthenticated(const NodeAddr& listen_addr,
+                                 AuthenticatedRpcRequestHandler handler) override {
+    auto status = Initialize(listen_addr, {});
+    if (!status.ok()) {
+      return status;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    authenticated_request_handler_ = std::move(handler);
+    return Status::OK();
+  }
+
+  bool SupportsAuthenticatedPeerIdentity() const override { return true; }
+
   void SetConnectionCallback(ConnectionCallback callback) override {
     std::lock_guard<std::mutex> lock(mutex_);
     connection_callback_ = callback;
@@ -965,6 +1025,11 @@ class AsioNetworkTransport : public NetworkTransport {
   void SetGroupRequestHandler(GroupRequestHandler handler) override {
     std::lock_guard<std::mutex> lock(mutex_);
     group_request_handler_ = std::move(handler);
+  }
+
+  void SetAuthenticatedGroupRequestHandler(AuthenticatedGroupRequestHandler handler) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    authenticated_group_request_handler_ = std::move(handler);
   }
 
   void OnPeerStateChanged(NodeId peer_id, int state) {
@@ -1132,8 +1197,7 @@ class AsioNetworkTransport : public NetworkTransport {
                 if (!handshake_ec) {
                   auto identity_status = new_conn->AuthenticateTlsPeer();
                   if (identity_status.ok()) {
-                    new_conn->SetRequestHandler(request_handler_);
-                    new_conn->SetGroupRequestHandler(group_request_handler_);
+                    ConfigureIncomingConnection(new_conn);
                     new_conn->Start();
                     LOG_INFO("Accepted inbound TLS connection from node {}", new_conn->GetPeerId());
                   } else {
@@ -1151,8 +1215,7 @@ class AsioNetworkTransport : public NetworkTransport {
           // Don't call DoAccept here; it's in the handshake callback
           return;
         } else {
-          new_conn->SetRequestHandler(request_handler_);
-          new_conn->SetGroupRequestHandler(group_request_handler_);
+          ConfigureIncomingConnection(new_conn);
           new_conn->Start();
           LOG_INFO("Accepted inbound connection from {}",
                    new_conn->TcpSocket().remote_endpoint().address().to_string());
@@ -1196,6 +1259,24 @@ class AsioNetworkTransport : public NetworkTransport {
     return peer;
   }
 
+  void ConfigureIncomingConnection(const std::shared_ptr<TcpConnection>& connection) {
+    RpcRequestHandler request_handler;
+    GroupRequestHandler group_request_handler;
+    AuthenticatedRpcRequestHandler authenticated_request_handler;
+    AuthenticatedGroupRequestHandler authenticated_group_request_handler;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      request_handler = request_handler_;
+      group_request_handler = group_request_handler_;
+      authenticated_request_handler = authenticated_request_handler_;
+      authenticated_group_request_handler = authenticated_group_request_handler_;
+    }
+    connection->SetRequestHandler(std::move(request_handler));
+    connection->SetGroupRequestHandler(std::move(group_request_handler));
+    connection->SetAuthenticatedRequestHandler(std::move(authenticated_request_handler));
+    connection->SetAuthenticatedGroupRequestHandler(std::move(authenticated_group_request_handler));
+  }
+
  private:
   mutable std::mutex mutex_;
   bool initialized_ = false;
@@ -1210,6 +1291,8 @@ class AsioNetworkTransport : public NetworkTransport {
   std::unique_ptr<asio::ip::tcp::acceptor> acceptor_;
   RpcRequestHandler request_handler_;
   GroupRequestHandler group_request_handler_;
+  AuthenticatedRpcRequestHandler authenticated_request_handler_;
+  AuthenticatedGroupRequestHandler authenticated_group_request_handler_;
   ConnectionCallback connection_callback_;
   std::function<void(NodeId, int)> peer_state_callback_;
 

@@ -309,6 +309,9 @@ Status JsonProtocol::SerializeResponse(const RaftResponse& res, std::string& out
         j["success"] = client_res.success;
         j["response"] = client_res.response;
         j["error"] = client_res.error;
+        if (!client_res.error_code.empty()) {
+          j["error_code"] = client_res.error_code;
+        }
         j["last_applied_index"] = client_res.last_applied_index;
         j["leader_id"] = client_res.leader_id;
         j["leader_addr"] = client_res.leader_addr;
@@ -408,11 +411,15 @@ Status JsonProtocol::DeserializeResponse(const std::string& input, RaftResponse&
 
         ClientResponse& client_res = static_cast<ClientResponse&>(res);
         client_res.success = j["success"];
+        client_res.error_code.clear();
         if (j.contains("response")) {
           client_res.response = j["response"];
         }
         if (j.contains("error")) {
           client_res.error = j["error"];
+        }
+        if (j.contains("error_code")) {
+          client_res.error_code = j["error_code"];
         }
         if (j.contains("last_applied_index")) {
           client_res.last_applied_index = j["last_applied_index"];

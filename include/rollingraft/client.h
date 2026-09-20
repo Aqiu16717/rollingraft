@@ -75,6 +75,16 @@ class ClientResult {
  * Configuration options for Client.
  */
 struct ClientOptions {
+  /** Enable TLS for high-level client requests. */
+  bool tls_enabled = false;
+
+  /** Client certificate and key used for client mTLS authentication. */
+  std::string tls_cert_file;
+  std::string tls_key_file;
+
+  /** Node CA bundle used to verify the contacted Raft node. */
+  std::string tls_ca_file;
+
   /** Maximum retry attempts. */
   int max_retries = 3;
 

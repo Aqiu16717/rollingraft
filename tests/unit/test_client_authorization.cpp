@@ -1,4 +1,5 @@
 #include "client_authorization.h"
+#include "json_protocol.h"
 
 #include <gtest/gtest.h>
 
@@ -50,6 +51,25 @@ TEST(ClientAuthorizationPolicyTest, ClassifiesOnlyRaftProtocolMessagesAsRaft) {
   EXPECT_TRUE(IsRaftProtocolRequest(RaftMessageType::KPreVoteRequest));
   EXPECT_TRUE(IsRaftProtocolRequest(RaftMessageType::KReadIndexRequest));
   EXPECT_FALSE(IsRaftProtocolRequest(RaftMessageType::KClientRequest));
+}
+
+TEST(ClientAuthorizationPolicyTest, ResponseErrorCodeRoundTripsAndOlderResponsesRemainValid) {
+  JsonProtocol protocol;
+  ClientResponse response;
+  response.success = false;
+  response.error = "Client identity is not authorized";
+  response.error_code = "PERMISSION_DENIED";
+
+  std::string serialized;
+  ASSERT_TRUE(protocol.SerializeResponse(response, serialized).ok());
+  ClientResponse parsed;
+  ASSERT_TRUE(protocol.DeserializeResponse(serialized, parsed).ok());
+  EXPECT_EQ(parsed.error_code, "PERMISSION_DENIED");
+
+  ASSERT_TRUE(protocol.DeserializeResponse(
+                  R"({"type":7,"success":false,"error":"legacy failure"})", parsed)
+                  .ok());
+  EXPECT_TRUE(parsed.error_code.empty());
 }
 
 }  // namespace rollingraft

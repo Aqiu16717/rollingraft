@@ -19,6 +19,10 @@ RetryPolicy::RetryPolicy(int max_retries, std::chrono::milliseconds initial_dela
       backoff_multiplier_(backoff_multiplier) {}
 
 bool RetryPolicy::IsRetryableError(const Status& error) {
+  if (error.IsUnauthenticated() || error.IsPermissionDenied()) {
+    return false;
+  }
+
   // NotLeader is retryable (we'll redirect to the correct leader)
   if (error.IsNotLeader()) {
     return true;

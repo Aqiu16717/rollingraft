@@ -1,15 +1,13 @@
 #include "client_authorization.h"
 #include "json_protocol.h"
-
 #include <gtest/gtest.h>
 
 namespace rollingraft {
 namespace {
 
 RpcRequestContext ClientContext(std::string identity) {
-  return RpcRequestContext{.peer = {.kind = RpcPeerKind::CLIENT,
-                                    .node_id = -1,
-                                    .client_identity = std::move(identity)}};
+  return RpcRequestContext{
+      .peer = {.kind = RpcPeerKind::CLIENT, .node_id = -1, .client_identity = std::move(identity)}};
 }
 
 }  // namespace
@@ -66,9 +64,9 @@ TEST(ClientAuthorizationPolicyTest, ResponseErrorCodeRoundTripsAndOlderResponses
   ASSERT_TRUE(protocol.DeserializeResponse(serialized, parsed).ok());
   EXPECT_EQ(parsed.error_code, "PERMISSION_DENIED");
 
-  ASSERT_TRUE(protocol.DeserializeResponse(
-                  R"({"type":7,"success":false,"error":"legacy failure"})", parsed)
-                  .ok());
+  ASSERT_TRUE(
+      protocol.DeserializeResponse(R"({"type":7,"success":false,"error":"legacy failure"})", parsed)
+          .ok());
   EXPECT_TRUE(parsed.error_code.empty());
 }
 

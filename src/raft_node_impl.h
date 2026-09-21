@@ -32,8 +32,8 @@
 #include "rollingraft/timer_service.h"
 #include "rollingraft/types.h"
 
-#include "metrics_http_server.h"
 #include "client_authorization.h"
+#include "metrics_http_server.h"
 #include "raft_group.h"
 #include "shared_node_infra.h"
 

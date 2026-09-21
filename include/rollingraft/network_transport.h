@@ -13,8 +13,8 @@
 #include <functional>
 #include <string>
 
-#include <rollingraft/status.h>
 #include <rollingraft/rpc_peer_identity.h>
+#include <rollingraft/status.h>
 #include <rollingraft/types.h>
 
 namespace rollingraft {
@@ -60,10 +60,9 @@ using AuthenticatedRpcRequestHandler = std::function<void(
     const RpcRequestContext& context, const std::string& request_data, std::string& response_data)>;
 
 /** Group-scoped inbound RPC handler with its authenticated peer context. */
-using AuthenticatedGroupRequestHandler = std::function<void(const RpcRequestContext& context,
-                                                            uint64_t group_id,
-                                                            const std::string& request_data,
-                                                            std::string& response_data)>;
+using AuthenticatedGroupRequestHandler =
+    std::function<void(const RpcRequestContext& context, uint64_t group_id,
+                       const std::string& request_data, std::string& response_data)>;
 
 /**
  * Callback for connection state changes.

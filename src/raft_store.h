@@ -106,8 +106,8 @@ class RaftStore {
    */
   void OnIncomingRpc(NodeId from, uint64_t group_id, const std::string& data,
                      std::string& response);
-  void OnIncomingRpc(const RpcRequestContext& context, uint64_t group_id,
-                     const std::string& data, std::string& response);
+  void OnIncomingRpc(const RpcRequestContext& context, uint64_t group_id, const std::string& data,
+                     std::string& response);
 
  private:
   RaftNodeConfig MakeGroupConfig(uint64_t group_id, const RaftGroupOptions& options) const;

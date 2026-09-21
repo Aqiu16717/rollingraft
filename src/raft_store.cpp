@@ -80,16 +80,16 @@ Status RaftStore::Initialize() {
   infra_->network_ =
       config_.network_factory
           ? config_.network_factory()
-          : (config_.tls_enabled ? CreateAsioNetworkTransport(TlsConfig{
-                                       .enabled = true,
-                                       .cert_file = config_.tls_cert_file,
-                                       .key_file = config_.tls_key_file,
-                                       .ca_file = config_.tls_ca_file,
-                                       .mutual_auth = config_.tls_mutual_auth,
-                                       .node_id = config_.node_id,
-                                       .allowed_cns = config_.tls_allowed_peer_identities,
-                                       .client_auth_enabled = config_.client_auth_enabled,
-                                       .client_ca_file = config_.client_ca_file})
+          : (config_.tls_enabled ? CreateAsioNetworkTransport(
+                                       TlsConfig{.enabled = true,
+                                                 .cert_file = config_.tls_cert_file,
+                                                 .key_file = config_.tls_key_file,
+                                                 .ca_file = config_.tls_ca_file,
+                                                 .mutual_auth = config_.tls_mutual_auth,
+                                                 .node_id = config_.node_id,
+                                                 .allowed_cns = config_.tls_allowed_peer_identities,
+                                                 .client_auth_enabled = config_.client_auth_enabled,
+                                                 .client_ca_file = config_.client_ca_file})
                                  : CreateDefaultNetworkTransport());
   infra_->timer_ = config_.timer_factory ? config_.timer_factory() : TimerService::CreateDefault();
   infra_->protocol_ =
@@ -152,7 +152,7 @@ Status RaftStore::Start() {
       OnIncomingRpc(context, 0, data, response);
     };
     status = infra_->network_->InitializeAuthenticated(config_.listen_addr,
-                                                        authenticated_legacy_handler);
+                                                       authenticated_legacy_handler);
   } else {
     status = infra_->network_->Initialize(config_.listen_addr, legacy_handler);
   }

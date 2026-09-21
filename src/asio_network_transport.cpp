@@ -124,7 +124,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     }
 
     if (identity.kind != RpcPeerKind::NODE) {
-      return Status::Error("TLS_IDENTITY_MISSING", "Peer certificate has no rollingraft-node URI SAN");
+      return Status::Error("TLS_IDENTITY_MISSING",
+                           "Peer certificate has no rollingraft-node URI SAN");
     }
     NodeId authenticated_id = identity.node_id;
 

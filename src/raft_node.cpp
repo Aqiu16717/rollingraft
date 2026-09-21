@@ -1,6 +1,6 @@
-#include "rollingraft/tls_config.h"
-
 #include <unordered_set>
+
+#include "rollingraft/tls_config.h"
 
 #include "asio_timer_service.h"
 #include "json_protocol.h"

@@ -184,7 +184,8 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   if (manage_network_) {
     // 2. Initialize network layer
-    if (group_->config_.client_auth_enabled && !infra_->network_->SupportsAuthenticatedPeerIdentity()) {
+    if (group_->config_.client_auth_enabled &&
+        !infra_->network_->SupportsAuthenticatedPeerIdentity()) {
       state_ = NodeState::kInitialized;
       return Status::Error("CONFIG_INVALID",
                            "client authentication requires authenticated transport support");
@@ -199,7 +200,7 @@ Status RaftNode::RaftNodeImpl::Start() {
         HandleIncomingRpc(context, req, resp);
       };
       status = infra_->network_->InitializeAuthenticated(group_->config_.listen_addr,
-                                                          authenticated_handler);
+                                                         authenticated_handler);
     } else {
       status = infra_->network_->Initialize(group_->config_.listen_addr, handler);
     }

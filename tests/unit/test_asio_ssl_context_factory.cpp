@@ -126,7 +126,8 @@ TEST_F(AsioSslContextFactoryTest, ExtractCertificatePeerIdentity_ClientUriSan) {
   EXPECT_EQ(identity.client_identity, "writer");
 }
 
-TEST_F(AsioSslContextFactoryTest, ExtractCertificatePeerIdentity_RejectsAmbiguousOrMalformedUriSan) {
+TEST_F(AsioSslContextFactoryTest,
+       ExtractCertificatePeerIdentity_RejectsAmbiguousOrMalformedUriSan) {
   for (const char* certificate_name : {"mixed.crt", "duplicate_client.crt", "invalid_client.crt"}) {
     auto certificate = LoadCertificate(node_certs_dir_ + certificate_name);
     ASSERT_NE(certificate, nullptr) << certificate_name;

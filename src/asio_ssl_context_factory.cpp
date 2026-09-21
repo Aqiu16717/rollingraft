@@ -32,6 +32,16 @@ Status AsioSslContextFactory::CreateServerContext(asio::ssl::context& out_ctx) c
     if (!status.ok()) {
       return status;
     }
+    if (config_.client_auth_enabled) {
+      if (config_.client_ca_file.empty()) {
+        return Status::Error("TLS_CLIENT_CA_REQUIRED",
+                             "Client CA file required for client authentication");
+      }
+      status = LoadClientCaBundle(out_ctx);
+      if (!status.ok()) {
+        return status;
+      }
+    }
   } else {
     out_ctx.set_verify_mode(asio::ssl::verify_none);
   }
@@ -97,6 +107,16 @@ Status AsioSslContextFactory::LoadCaBundle(asio::ssl::context& ctx) const {
   } catch (const std::exception& e) {
     return Status::Error("TLS_CA_LOAD_FAILED",
                          "Failed to load CA bundle: " + std::string(e.what()));
+  }
+  return Status::OK();
+}
+
+Status AsioSslContextFactory::LoadClientCaBundle(asio::ssl::context& ctx) const {
+  try {
+    ctx.load_verify_file(config_.client_ca_file);
+  } catch (const std::exception& e) {
+    return Status::Error("TLS_CLIENT_CA_LOAD_FAILED",
+                         "Failed to load client CA bundle: " + std::string(e.what()));
   }
   return Status::OK();
 }

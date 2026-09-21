@@ -178,6 +178,43 @@ TEST_F(RaftNodeConfigValidateTest, MutualTlsRequiresTlsAndCa) {
   EXPECT_TRUE(config.Validate().ok());
 }
 
+TEST_F(RaftNodeConfigValidateTest, ClientAuthRequiresMutualTlsClientCaAndRules) {
+  auto config = MakeValidConfig();
+  config.client_auth_enabled = true;
+
+  auto status = config.Validate();
+  ASSERT_FALSE(status.ok());
+  EXPECT_NE(status.ToString().find("client authentication"), std::string::npos);
+
+  config.tls_enabled = true;
+  config.tls_mutual_auth = true;
+  config.tls_cert_file = "/tmp/node.crt";
+  config.tls_key_file = "/tmp/node.key";
+  config.tls_ca_file = "/tmp/node-ca.crt";
+  config.client_ca_file = "/tmp/client-ca.crt";
+  config.client_authorizations = {{"writer", ClientPermission::READ_WRITE}};
+
+  EXPECT_TRUE(config.Validate().ok());
+}
+
+TEST_F(RaftNodeConfigValidateTest, ClientAuthRejectsDuplicateOrInvalidAclIdentity) {
+  auto config = MakeValidConfig();
+  config.client_auth_enabled = true;
+  config.tls_enabled = true;
+  config.tls_mutual_auth = true;
+  config.tls_cert_file = "/tmp/node.crt";
+  config.tls_key_file = "/tmp/node.key";
+  config.tls_ca_file = "/tmp/node-ca.crt";
+  config.client_ca_file = "/tmp/client-ca.crt";
+
+  config.client_authorizations = {{"writer", ClientPermission::READ_WRITE},
+                                  {"writer", ClientPermission::READ_ONLY}};
+  EXPECT_FALSE(config.Validate().ok());
+
+  config.client_authorizations = {{"writer/admin", ClientPermission::READ_WRITE}};
+  EXPECT_FALSE(config.Validate().ok());
+}
+
 TEST_F(RaftNodeConfigValidateTest, TlsDisabledIgnoresCertFields) {
   auto config = MakeValidConfig();
   config.tls_enabled = false;

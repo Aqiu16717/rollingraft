@@ -41,6 +41,9 @@ struct RaftStoreConfig {
   std::string tls_ca_file;
   bool tls_mutual_auth = false;
   std::vector<std::string> tls_allowed_peer_identities;
+  bool client_auth_enabled = false;
+  std::string client_ca_file;
+  std::vector<ClientAuthorizationRule> client_authorizations;
 
   // Node-level transport write coalescing shared by every hosted group.
   bool transport_batching_enabled = true;
@@ -103,6 +106,8 @@ class RaftStore {
    */
   void OnIncomingRpc(NodeId from, uint64_t group_id, const std::string& data,
                      std::string& response);
+  void OnIncomingRpc(const RpcRequestContext& context, uint64_t group_id,
+                     const std::string& data, std::string& response);
 
  private:
   RaftNodeConfig MakeGroupConfig(uint64_t group_id, const RaftGroupOptions& options) const;

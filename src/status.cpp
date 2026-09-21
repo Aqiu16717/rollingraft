@@ -77,6 +77,12 @@ std::string Status::ToString() const {
       case Code::kNotLeader:
         type = "NotLeader: ";
         break;
+      case Code::kUnauthenticated:
+        type = "UNAUTHENTICATED: ";
+        break;
+      case Code::kPermissionDenied:
+        type = "PERMISSION_DENIED: ";
+        break;
       default:
         std::snprintf(tmp, sizeof(tmp), "Unknown code(%d): ", static_cast<int>(code()));
         type = tmp;
@@ -128,6 +134,10 @@ std::string Status::CodeName() const {
       return "Error";
     case Code::kNotLeader:
       return "NotLeader";
+    case Code::kUnauthenticated:
+      return "UNAUTHENTICATED";
+    case Code::kPermissionDenied:
+      return "PERMISSION_DENIED";
     default:
       return "Unknown";
   }

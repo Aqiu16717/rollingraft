@@ -78,6 +78,16 @@ TEST(ClientResultTest, ErrorMessage_OnError_ReturnsString) {
   EXPECT_NE(msg.find("something went wrong"), std::string::npos);
 }
 
+TEST(ClientResultTest, AuthenticationStatusCodes_AreDistinctAndStable) {
+  auto unauthenticated = Status::Unauthenticated("client certificate missing");
+  auto permission_denied = Status::PermissionDenied("reader cannot execute writes");
+
+  EXPECT_TRUE(unauthenticated.IsUnauthenticated());
+  EXPECT_FALSE(unauthenticated.IsPermissionDenied());
+  EXPECT_TRUE(permission_denied.IsPermissionDenied());
+  EXPECT_FALSE(permission_denied.IsUnauthenticated());
+}
+
 // ========== Move Semantics Tests ==========
 
 TEST(ClientResultTest, MoveConstructor_TransfersSuccess) {

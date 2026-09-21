@@ -17,6 +17,7 @@ RaftNode::RaftNodeImpl::RaftNodeImpl(const RaftNodeConfig& config,
     : group_(std::make_shared<RaftGroup>(group_id, config, std::move(state_machine))),
       infra_(std::move(infra)),
       persister_(std::move(persister)),
+      client_authorization_(config.client_authorizations),
       manage_network_(manage_network) {
   if (!infra_) {
     throw std::invalid_argument("SharedNodeInfra cannot be null");
@@ -183,10 +184,25 @@ Status RaftNode::RaftNodeImpl::Start() {
 
   if (manage_network_) {
     // 2. Initialize network layer
+    if (group_->config_.client_auth_enabled && !infra_->network_->SupportsAuthenticatedPeerIdentity()) {
+      state_ = NodeState::kInitialized;
+      return Status::Error("CONFIG_INVALID",
+                           "client authentication requires authenticated transport support");
+    }
     auto handler = [this](NodeId from, const std::string& req, std::string& resp) {
       HandleIncomingRpc(from, req, resp);
     };
-    auto status = infra_->network_->Initialize(group_->config_.listen_addr, handler);
+    Status status;
+    if (group_->config_.client_auth_enabled) {
+      auto authenticated_handler = [this](const RpcRequestContext& context, const std::string& req,
+                                          std::string& resp) {
+        HandleIncomingRpc(context, req, resp);
+      };
+      status = infra_->network_->InitializeAuthenticated(group_->config_.listen_addr,
+                                                          authenticated_handler);
+    } else {
+      status = infra_->network_->Initialize(group_->config_.listen_addr, handler);
+    }
     if (!status.ok()) {
       if (persister_) {
         persister_->Close();

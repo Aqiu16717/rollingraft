@@ -103,6 +103,18 @@ TEST_F(ClientTest, Options_CustomTimeout) {
   (void)client;
 }
 
+TEST_F(ClientTest, TlsEnabledWithoutClientCertificateReturnsConfigError) {
+  ClientOptions options;
+  options.tls_enabled = true;
+  options.tls_ca_file = "/tmp/node-ca.crt";
+
+  Client client(servers_, options);
+  auto result = client.Execute("write", std::chrono::milliseconds(10));
+
+  ASSERT_TRUE(result.has_error());
+  EXPECT_NE(result.error().GetMessage().find("CONFIG_INVALID"), std::string::npos);
+}
+
 TEST_F(ClientTest, Options_LeaderCacheTTL) {
   ClientOptions options;
   options.leader_cache_ttl = std::chrono::milliseconds(500);

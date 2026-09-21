@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <stdexcept>
+#include <unordered_set>
 
 #include "rollingraft/logger.h"
 #include "rollingraft/tls_config.h"
@@ -15,6 +16,7 @@
 #include "json_protocol.h"
 #include "multi_raft_persister.h"
 #include "nlohmann/json.hpp"
+#include "tls_identity.h"
 
 namespace rollingraft {
 
@@ -22,6 +24,28 @@ namespace rollingraft {
 // asio_network_transport.cpp).
 std::unique_ptr<NetworkTransport> CreateDefaultNetworkTransport();
 std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(const TlsConfig& tls_config);
+
+namespace {
+
+Status ValidateClientAuthConfig(const RaftStoreConfig& config) {
+  if (!config.client_auth_enabled) {
+    return Status::OK();
+  }
+  if (!config.tls_enabled || !config.tls_mutual_auth || config.client_ca_file.empty() ||
+      config.client_authorizations.empty()) {
+    return Status::Error("CONFIG_INVALID",
+                         "client authentication requires mTLS, client CA, and rules");
+  }
+  std::unordered_set<std::string> identities;
+  for (const auto& rule : config.client_authorizations) {
+    if (!IsValidClientIdentity(rule.identity) || !identities.insert(rule.identity).second) {
+      return Status::Error("CONFIG_INVALID", "client authorization identities must be unique");
+    }
+  }
+  return Status::OK();
+}
+
+}  // namespace
 
 RaftStore::RaftStore(const RaftStoreConfig& config)
     : config_(config), transport_batching_enabled_(config.transport_batching_enabled) {
@@ -43,6 +67,10 @@ RaftStore::~RaftStore() {
 }
 
 Status RaftStore::Initialize() {
+  auto config_status = ValidateClientAuthConfig(config_);
+  if (!config_status.ok()) {
+    return config_status;
+  }
   bool expected = false;
   if (!initialized_.compare_exchange_strong(expected, true)) {
     return Status::Error("Already initialized");
@@ -59,7 +87,9 @@ Status RaftStore::Initialize() {
                                        .ca_file = config_.tls_ca_file,
                                        .mutual_auth = config_.tls_mutual_auth,
                                        .node_id = config_.node_id,
-                                       .allowed_cns = config_.tls_allowed_peer_identities})
+                                       .allowed_cns = config_.tls_allowed_peer_identities,
+                                       .client_auth_enabled = config_.client_auth_enabled,
+                                       .client_ca_file = config_.client_ca_file})
                                  : CreateDefaultNetworkTransport());
   infra_->timer_ = config_.timer_factory ? config_.timer_factory() : TimerService::CreateDefault();
   infra_->protocol_ =
@@ -105,7 +135,27 @@ Status RaftStore::Start() {
     err["message"] = "Use group_id > 0 for multi-raft routing";
     response = err.dump();
   };
-  auto status = infra_->network_->Initialize(config_.listen_addr, legacy_handler);
+  if (config_.client_auth_enabled && !infra_->network_->SupportsAuthenticatedPeerIdentity()) {
+    running_.store(false, std::memory_order_release);
+    return Status::Error("CONFIG_INVALID",
+                         "client authentication requires authenticated transport support");
+  }
+  Status status;
+  if (config_.client_auth_enabled) {
+    auto authenticated_handler = [this](const RpcRequestContext& context, uint64_t group_id,
+                                        const std::string& data, std::string& response) {
+      OnIncomingRpc(context, group_id, data, response);
+    };
+    infra_->network_->SetAuthenticatedGroupRequestHandler(authenticated_handler);
+    auto authenticated_legacy_handler = [this](const RpcRequestContext& context,
+                                               const std::string& data, std::string& response) {
+      OnIncomingRpc(context, 0, data, response);
+    };
+    status = infra_->network_->InitializeAuthenticated(config_.listen_addr,
+                                                        authenticated_legacy_handler);
+  } else {
+    status = infra_->network_->Initialize(config_.listen_addr, legacy_handler);
+  }
   if (!status.ok()) {
     running_.store(false, std::memory_order_release);
     return status;
@@ -320,6 +370,12 @@ std::vector<uint64_t> RaftStore::ListGroups() const {
 
 void RaftStore::OnIncomingRpc(NodeId from, uint64_t group_id, const std::string& data,
                               std::string& response) {
+  RpcRequestContext context{.peer = {.kind = RpcPeerKind::NODE, .node_id = from}};
+  OnIncomingRpc(context, group_id, data, response);
+}
+
+void RaftStore::OnIncomingRpc(const RpcRequestContext& context, uint64_t group_id,
+                              const std::string& data, std::string& response) {
   if (group_id == 0) {
     nlohmann::json err;
     err["error"] = "GROUP_NOT_FOUND";
@@ -345,7 +401,7 @@ void RaftStore::OnIncomingRpc(NodeId from, uint64_t group_id, const std::string&
     return;
   }
 
-  group->HandleIncomingRpc(from, data, response);
+  group->HandleIncomingRpc(context, data, response);
 }
 
 void RaftStore::RegisterStoreProviders() {
@@ -598,6 +654,9 @@ RaftNodeConfig RaftStore::MakeGroupConfig(uint64_t group_id,
   config.tls_ca_file = config_.tls_ca_file;
   config.tls_mutual_auth = config_.tls_mutual_auth;
   config.tls_allowed_peer_identities = config_.tls_allowed_peer_identities;
+  config.client_auth_enabled = config_.client_auth_enabled;
+  config.client_ca_file = config_.client_ca_file;
+  config.client_authorizations = config_.client_authorizations;
   config.transport_batching_enabled = transport_batching_enabled_.load(std::memory_order_acquire);
 
   return config;

@@ -20,6 +20,7 @@
 #include "client/connection_pool.h"
 #include "client/leader_tracker.h"
 #include "client/retry_policy.h"
+#include "tls_identity.h"
 
 namespace rollingraft {
 
@@ -67,6 +68,18 @@ class Client::Impl {
         connection_pool_(options.connect_timeout),
         seq_counter_(0),
         shutdown_(false) {
+    if (options_.tls_enabled) {
+      if (options_.tls_cert_file.empty() || options_.tls_key_file.empty() ||
+          options_.tls_ca_file.empty()) {
+        initialization_error_ =
+            Status::Error("CONFIG_INVALID", "TLS client requires certificate, key, and node CA");
+      } else {
+        auto status = ValidateCertificateClientIdentity(options_.tls_cert_file);
+        if (!status.ok()) {
+          initialization_error_ = Status::Error("CONFIG_INVALID", status.GetMessage());
+        }
+      }
+    }
     // Start worker threads for async operations
     size_t num_workers = std::min(size_t(4), size_t(std::thread::hardware_concurrency()));
     if (num_workers < 1) {
@@ -151,6 +164,7 @@ class Client::Impl {
   RetryPolicy retry_policy_;
   ConnectionPool connection_pool_;
   std::atomic<uint64_t> seq_counter_;
+  std::optional<Status> initialization_error_;
 
   // Async operation tracking
   std::atomic<bool> shutdown_;
@@ -170,6 +184,9 @@ ClientResult Client::Impl::Query(const std::string& query, std::chrono::millisec
 
 ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
                                      std::chrono::milliseconds timeout) {
+  if (initialization_error_) {
+    return ClientResult(*initialization_error_);
+  }
   // Build request
   ClientRequest req;
   req.command = command;
@@ -184,6 +201,9 @@ ClientResult Client::Impl::DoExecute(const std::string& command, bool read_only,
   if (auto leader = leader_tracker_.GetLeader()) {
     auto result = TryExecuteOnServer(*leader, req, timeout);
     if (result.ok()) {
+      return result;
+    }
+    if (result.has_error() && !RetryPolicy::IsRetryableError(result.error())) {
       return result;
     }
     // If failed, clear leader and retry
@@ -266,6 +286,13 @@ ClientResult Client::Impl::TryExecuteOnServer(const std::string& server, const C
 
   if (resp.success) {
     return ClientResult(resp.response);
+  }
+
+  if (resp.error_code == "UNAUTHENTICATED") {
+    return ClientResult(Status::Unauthenticated(resp.error));
+  }
+  if (resp.error_code == "PERMISSION_DENIED") {
+    return ClientResult(Status::PermissionDenied(resp.error));
   }
 
   // Command failed on server

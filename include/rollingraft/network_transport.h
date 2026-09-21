@@ -14,6 +14,7 @@
 #include <string>
 
 #include <rollingraft/status.h>
+#include <rollingraft/rpc_peer_identity.h>
 #include <rollingraft/types.h>
 
 namespace rollingraft {
@@ -48,6 +49,21 @@ using RpcRequestHandler =
  */
 using GroupRequestHandler = std::function<void(
     NodeId from, uint64_t group_id, const std::string& request_data, std::string& response_data)>;
+
+/** Immutable authentication context captured for an inbound RPC. */
+struct RpcRequestContext {
+  RpcPeerIdentity peer;
+};
+
+/** Handler for an inbound RPC with its authenticated peer context. */
+using AuthenticatedRpcRequestHandler = std::function<void(
+    const RpcRequestContext& context, const std::string& request_data, std::string& response_data)>;
+
+/** Group-scoped inbound RPC handler with its authenticated peer context. */
+using AuthenticatedGroupRequestHandler = std::function<void(const RpcRequestContext& context,
+                                                            uint64_t group_id,
+                                                            const std::string& request_data,
+                                                            std::string& response_data)>;
 
 /**
  * Callback for connection state changes.
@@ -85,6 +101,20 @@ class NetworkTransport {
   virtual Status Initialize(const NodeAddr& listen_addr, RpcRequestHandler handler) = 0;
 
   /**
+   * Initialize transport dispatch that carries a TLS-authenticated peer identity.
+   * Implementations without authenticated identity support retain legacy behavior.
+   */
+  virtual Status InitializeAuthenticated(const NodeAddr& listen_addr,
+                                         AuthenticatedRpcRequestHandler handler) {
+    (void)listen_addr;
+    (void)handler;
+    return Status::Error("UNSUPPORTED", "Transport does not support authenticated peer identity");
+  }
+
+  /** Return whether this transport can provide an authenticated peer identity. */
+  virtual bool SupportsAuthenticatedPeerIdentity() const { return false; }
+
+  /**
    * Set connection state callback (optional).
    *
    * Called when peer connections are established or closed.
@@ -116,6 +146,11 @@ class NetworkTransport {
    * @param handler Function to call for group-scoped RPCs
    */
   virtual void SetGroupRequestHandler(GroupRequestHandler handler) { (void)handler; }
+
+  /** Register a group-scoped handler with authenticated peer identity. */
+  virtual void SetAuthenticatedGroupRequestHandler(AuthenticatedGroupRequestHandler handler) {
+    (void)handler;
+  }
 
   /**
    * Enable or disable write coalescing (batching) for outbound messages.

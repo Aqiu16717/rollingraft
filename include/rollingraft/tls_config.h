@@ -31,6 +31,11 @@ struct TlsConfig {
   // Empty = allow any valid rollingraft-node identity signed by the CA.
   std::vector<std::string> allowed_cns;
 
+  // Enable application client certificate authentication on the shared
+  // listener and trust client certificates signed by this CA bundle.
+  bool client_auth_enabled = false;
+  std::string client_ca_file;
+
   // TLS handshake timeout
   uint32_t handshake_timeout_ms = 5000;
 

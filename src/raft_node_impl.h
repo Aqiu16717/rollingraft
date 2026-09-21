@@ -33,6 +33,7 @@
 #include "rollingraft/types.h"
 
 #include "metrics_http_server.h"
+#include "client_authorization.h"
 #include "raft_group.h"
 #include "shared_node_infra.h"
 
@@ -95,6 +96,8 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
 
   // RPC entry point (public so RaftStore can route multi-raft group messages)
   void HandleIncomingRpc(NodeId from, const std::string& data, std::string& response);
+  void HandleIncomingRpc(const RpcRequestContext& context, const std::string& data,
+                         std::string& response);
 
   // Coarse-grained tick dispatched by RaftStore.  Drives group-local timeouts
   // (election, etc.) from the shared TimerService instead of one timer per
@@ -250,6 +253,7 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // Cached pointers into infra_ so existing code paths can keep using
   // network_->, timer_->, metrics_->, etc. without churn.
   NetworkTransport* network_ = nullptr;
+  ClientAuthorizationPolicy client_authorization_;
   TimerService* timer_ = nullptr;
   Protocol* protocol_ = nullptr;
   MetricsRegistry* metrics_ = nullptr;

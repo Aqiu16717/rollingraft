@@ -4,6 +4,7 @@
 #include <thread>
 #include <vector>
 
+#include "rollingraft/client.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/network_transport.h"
 #include "rollingraft/persister.h"
@@ -155,6 +156,67 @@ class Cluster3NodesTest : public ::testing::Test {
       EXPECT_TRUE(start_status.ok())
           << "Failed to start TLS node " << (i + 1) << ": " << start_status.ToString();
     }
+  }
+
+  void StartClientAuthCluster() {
+    auto ports = AllocateEphemeralPorts(3);
+    addrs_ = FormatAddrs(ports);
+
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    for (int i = 0; i < 3; ++i) {
+      auto config = MakeMutualTlsConfig(i + 1, addrs_[i], addrs_);
+      config.client_auth_enabled = true;
+      config.client_ca_file = certs_dir + "client_ca.crt";
+      config.client_authorizations = {{"reader", ClientPermission::READ_ONLY},
+                                      {"writer", ClientPermission::READ_WRITE}};
+      auto sm = std::make_shared<MockStateMachine>();
+      state_machines_.push_back(sm);
+
+      nodes_.push_back(std::make_unique<RaftNode>(config, sm));
+      ASSERT_TRUE(nodes_[i]->Start().ok());
+    }
+  }
+
+  ClientOptions WriterClientOptions() const {
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    ClientOptions options;
+    options.tls_enabled = true;
+    options.tls_cert_file = certs_dir + "writer.crt";
+    options.tls_key_file = certs_dir + "writer.key";
+    options.tls_ca_file = certs_dir + "node_ca.crt";
+    return options;
+  }
+
+  ClientOptions ReaderClientOptions() const {
+    auto options = WriterClientOptions();
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    options.tls_cert_file = certs_dir + "reader.crt";
+    options.tls_key_file = certs_dir + "reader.key";
+    return options;
+  }
+
+  ClientOptions UnknownClientOptions() const {
+    auto options = WriterClientOptions();
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    options.tls_cert_file = certs_dir + "unknown.crt";
+    options.tls_key_file = certs_dir + "unknown.key";
+    return options;
   }
 
   RaftNode* GetLeader(int timeout_sec = 15) {
@@ -402,6 +464,38 @@ TEST_F(Cluster3NodesTest, NoSplitBrain) {
 }
 
 // ========== TLS Cluster Tests ==========
+
+TEST_F(Cluster3NodesTest, ClientMtlsWriterCanExecute) {
+  StartClientAuthCluster();
+  WaitForLeader();
+
+  Client writer(addrs_, WriterClientOptions());
+  auto result = writer.Execute("client_mtls_write", std::chrono::seconds(3));
+
+  ASSERT_TRUE(result.ok()) << result.error_message();
+}
+
+TEST_F(Cluster3NodesTest, ClientMtlsReaderCannotExecute) {
+  StartClientAuthCluster();
+  WaitForLeader();
+
+  Client reader(addrs_, ReaderClientOptions());
+  auto result = reader.Execute("client_mtls_write", std::chrono::seconds(3));
+
+  ASSERT_TRUE(result.has_error());
+  EXPECT_TRUE(result.error().IsPermissionDenied()) << result.error_message();
+}
+
+TEST_F(Cluster3NodesTest, ClientMtlsUnknownIdentityIsDenied) {
+  StartClientAuthCluster();
+  WaitForLeader();
+
+  Client unknown(addrs_, UnknownClientOptions());
+  auto result = unknown.Query("client_mtls_query", std::chrono::seconds(3));
+
+  ASSERT_TRUE(result.has_error());
+  EXPECT_TRUE(result.error().IsPermissionDenied()) << result.error_message();
+}
 
 TEST_F(Cluster3NodesTest, TlsLeaderElection) {
   StartTlsCluster();

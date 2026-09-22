@@ -115,6 +115,25 @@ TEST_F(ClientTest, TlsEnabledWithoutClientCertificateReturnsConfigError) {
   EXPECT_NE(result.error().GetMessage().find("CONFIG_INVALID"), std::string::npos);
 }
 
+TEST_F(ClientTest, TlsEnabledWithMissingKeyReturnsConfigErrorBeforeNetworkCall) {
+#ifdef NODE_TEST_CERTS_DIR
+  const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+  const std::string certs_dir = "../generated-node-certs/";
+#endif
+  ClientOptions options;
+  options.tls_enabled = true;
+  options.tls_cert_file = certs_dir + "writer.crt";
+  options.tls_key_file = "/tmp/missing-client.key";
+  options.tls_ca_file = certs_dir + "node_ca.crt";
+
+  Client client(servers_, options);
+  auto result = client.Execute("write", std::chrono::milliseconds(10));
+
+  ASSERT_TRUE(result.has_error());
+  EXPECT_NE(result.error().GetMessage().find("CONFIG_INVALID"), std::string::npos);
+}
+
 TEST_F(ClientTest, Options_LeaderCacheTTL) {
   ClientOptions options;
   options.leader_cache_ttl = std::chrono::milliseconds(500);

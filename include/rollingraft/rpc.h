@@ -22,6 +22,8 @@
 
 namespace rollingraft {
 
+struct ClientOptions;
+
 /** RPC message type identifiers. */
 enum class RaftMessageType : int8_t {
   KInvalid = -1,
@@ -343,6 +345,10 @@ struct ReadIndexResponse : public RaftResponse {
  */
 Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse& resp,
                std::chrono::milliseconds timeout = std::chrono::seconds(5));
+
+/** Synchronous client RPC with optional mTLS configured through ClientOptions. */
+Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse& resp,
+               std::chrono::milliseconds timeout, const ClientOptions& options);
 
 Status RpcCall(const std::string& addr, const ReadIndexRequest& req, ReadIndexResponse& resp,
                std::chrono::milliseconds timeout = std::chrono::seconds(5));

@@ -155,6 +155,13 @@ TEST_F(RetryPolicyTest, IsRetryableError_GenericError_ReturnsFalse) {
   EXPECT_FALSE(RetryPolicy::IsRetryableError(error));
 }
 
+TEST_F(RetryPolicyTest, IsRetryableError_AuthenticationAndAuthorizationReturnFalse) {
+  EXPECT_FALSE(
+      RetryPolicy::IsRetryableError(Status::Unauthenticated("client certificate missing")));
+  EXPECT_FALSE(
+      RetryPolicy::IsRetryableError(Status::PermissionDenied("client identity is not allowed")));
+}
+
 TEST_F(RetryPolicyTest, IsRetryableError_OK_ReturnsFalse) {
   Status ok = Status::OK();
   EXPECT_FALSE(RetryPolicy::IsRetryableError(ok));

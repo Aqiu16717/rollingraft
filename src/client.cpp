@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <fstream>
 #include <queue>
 #include <random>
 #include <thread>
@@ -23,6 +24,15 @@
 #include "tls_identity.h"
 
 namespace rollingraft {
+
+namespace {
+
+bool IsReadableFile(const std::string& path) {
+  std::ifstream file(path);
+  return file.good();
+}
+
+}  // namespace
 
 // ========== ClientResult ==========
 
@@ -77,6 +87,10 @@ class Client::Impl {
         auto status = ValidateCertificateClientIdentity(options_.tls_cert_file);
         if (!status.ok()) {
           initialization_error_ = Status::Error("CONFIG_INVALID", status.GetMessage());
+        } else if (!IsReadableFile(options_.tls_key_file) ||
+                   !IsReadableFile(options_.tls_ca_file)) {
+          initialization_error_ =
+              Status::Error("CONFIG_INVALID", "TLS client key and node CA files must be readable");
         }
       }
     }
@@ -278,7 +292,7 @@ ClientResult Client::Impl::TryExecuteOnServer(const std::string& server, const C
                                               std::chrono::milliseconds timeout) {
   // Use RpcCall (synchronous) with configurable timeout
   ClientResponse resp;
-  auto status = RpcCall(server, req, resp, timeout);
+  auto status = RpcCall(server, req, resp, timeout, options_);
 
   if (!status.ok()) {
     return ClientResult(status);

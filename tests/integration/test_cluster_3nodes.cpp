@@ -219,6 +219,18 @@ class Cluster3NodesTest : public ::testing::Test {
     return options;
   }
 
+  ClientOptions RogueClientOptions() const {
+    auto options = WriterClientOptions();
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    options.tls_cert_file = certs_dir + "rogue_client.crt";
+    options.tls_key_file = certs_dir + "rogue_client.key";
+    return options;
+  }
+
   RaftNode* GetLeader(int timeout_sec = 15) {
     auto start = std::chrono::steady_clock::now();
     while (
@@ -495,6 +507,34 @@ TEST_F(Cluster3NodesTest, ClientMtlsUnknownIdentityIsDenied) {
 
   ASSERT_TRUE(result.has_error());
   EXPECT_TRUE(result.error().IsPermissionDenied()) << result.error_message();
+}
+
+TEST_F(Cluster3NodesTest, ClientMtlsWrongCaCannotConnect) {
+  StartClientAuthCluster();
+  WaitForLeader();
+
+  Client rogue(addrs_, RogueClientOptions());
+  auto result = rogue.Query("client_mtls_query", std::chrono::seconds(3));
+
+  EXPECT_TRUE(result.has_error());
+}
+
+TEST_F(Cluster3NodesTest, ClientMtlsNodeCertificateIsRejectedBeforeConnection) {
+  StartClientAuthCluster();
+#ifdef NODE_TEST_CERTS_DIR
+  const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+  const std::string certs_dir = "../generated-node-certs/";
+#endif
+  auto options = WriterClientOptions();
+  options.tls_cert_file = certs_dir + "node1.crt";
+  options.tls_key_file = certs_dir + "node1.key";
+  Client node_client(addrs_, options);
+
+  auto result = node_client.Query("client_mtls_query", std::chrono::seconds(3));
+
+  ASSERT_TRUE(result.has_error());
+  EXPECT_NE(result.error().GetMessage().find("CONFIG_INVALID"), std::string::npos);
 }
 
 TEST_F(Cluster3NodesTest, TlsLeaderElection) {

@@ -16,7 +16,7 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 - **Easy Integration** - Header-only public interface, just link and use
 - **Pluggable Architecture** - Customize network transport, persistent storage, timers, and protocol
 - **Built-in Components** - TCP transport, LevelDB persistence, ASIO timers, JSON protocol
-- **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, and connection pooling
+- **High-Level Client Library** - Built-in client with automatic leader discovery, retry logic, connection pooling, and optional client mTLS
 - **Raft Features**:
   - Leader election with randomized timeouts
   - Log replication with batching (`ProposeBatch` API)
@@ -26,7 +26,7 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
   - ReadIndex for linearizable reads
   - Fine-grained locking per manager (election / log / snapshot / membership / applier)
 - **Observability**: Built-in Prometheus-style metrics with HTTP `/metrics` endpoint
-- **Transport Security**: TLS encryption and optional node-identity mTLS using URI SANs
+- **Transport Security**: TLS, node-identity mTLS, and opt-in client mTLS with static read/write authorization
 
 ## Current Status
 
@@ -41,9 +41,9 @@ A modern C++ implementation of the [Raft consensus algorithm](https://raft.githu
 | Log Compaction | ✅ Implemented | `TruncatePrefix` with retention buffer |
 | Performance Tests | ✅ Implemented | Throughput / latency / failover benchmarks |
 | Metrics | ✅ Implemented | Prometheus HTTP `/metrics` endpoint |
+| Client mTLS Authorization | ✅ Implemented | Separate client CA, exact read/write ACLs, and group-aware client routing |
 
 **Known Limitations:**
-- Client requests are not yet bound to an authenticated application identity
 - Disk-failure/slow-disk chaos injection and long-running soak coverage are incomplete
 - Not battle-tested in production environments
 
@@ -320,6 +320,38 @@ client.ExecuteAsync("add 10", [](rollingraft::ClientResult result) {
 - Configurable timeouts and retry policies
 - Thread-safe for concurrent use
 
+#### Client mTLS and authorization
+
+Direct application access is disabled by default. To enable it, configure node
+mTLS plus a separate client CA and exact authorization rules on every node:
+
+```cpp
+config.tls_enabled = true;
+config.tls_mutual_auth = true;
+config.tls_cert_file = "/run/secrets/node-1.crt";
+config.tls_key_file = "/run/secrets/node-1.key";
+config.tls_ca_file = "/run/secrets/node-ca.crt";
+config.client_auth_enabled = true;
+config.client_ca_file = "/run/secrets/client-ca.crt";
+config.client_authorizations = {
+    {"analytics", rollingraft::ClientPermission::READ_ONLY},
+    {"writer-service", rollingraft::ClientPermission::READ_WRITE},
+};
+
+rollingraft::ClientOptions secure_options;
+secure_options.tls_enabled = true;
+secure_options.tls_cert_file = "/run/secrets/writer-service.crt";
+secure_options.tls_key_file = "/run/secrets/writer-service.key";
+secure_options.tls_ca_file = "/run/secrets/node-ca.crt";
+secure_options.group_id = 42;  // Leave at zero for a single RaftNode.
+```
+
+Client certificates require one `rollingraft-client:<identity>` URI SAN. The
+identity must match an exact rule; there is no wildcard or default allow rule.
+`READ_ONLY` clients may query but cannot execute commands. Client certificates
+cannot send Raft protocol requests, and authentication or authorization errors
+are not retried.
+
 ### 6. Low-Level Client RPC
 
 For direct RPC without the client library:
@@ -414,6 +446,9 @@ Each process hosts groups 1 and 2; see `example/multi_raft/multi_raft_client.cpp
 for the matching client. Integration coverage lives in
 `tests/integration/test_multi_raft_2groups.cpp`.
 
+For high-level client access to a specific group, set `ClientOptions::group_id`.
+The default value `0` preserves the legacy single-group route.
+
 ## Configuration Reference
 
 | Option | Default | Description |
@@ -431,6 +466,9 @@ for the matching client. Integration coverage lives in
 | `metrics_enabled` | false | Enable Prometheus metrics endpoint |
 | `metrics_addr` | `""` | Metrics HTTP listen address (e.g. "0.0.0.0:9090") |
 | `rpc_timeout_ms` | 1000 | RPC call timeout |
+| `client_auth_enabled` | false | Require authenticated application client certificates |
+| `client_ca_file` | `""` | CA bundle trusted for application client certificates |
+| `client_authorizations` | empty | Exact client identity rules with `READ_ONLY` or `READ_WRITE` |
 
 ## API Reference
 
@@ -595,7 +633,8 @@ ctest --output-on-failure
 ./build/tests/unit_tests --gtest_filter="RaftElection*"
 ```
 
-**Test Coverage:** 170 unit tests + 9 integration tests
+**Test Coverage:** 420 CTest cases, including unit, integration, deterministic,
+TLS, client authorization, and multi-Raft coverage.
 - Raft core: 81 tests (election, log replication, snapshots, membership, batch propose)
 - Client library: 80 tests (result handling, leader tracking, retry policy, connection pool, client)
 - Metrics: 6 tests (counter, gauge, histogram, registry)

@@ -4,6 +4,8 @@
 #include <thread>
 #include <vector>
 
+#include <asio.hpp>
+
 #include "rollingraft/client.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/network_transport.h"
@@ -13,6 +15,8 @@
 
 #include "ephemeral_port.h"
 #include "mock/mock_state_machine.h"
+#include <arpa/inet.h>
+#include <asio/ssl.hpp>
 #include <gtest/gtest.h>
 
 using namespace rollingraft;
@@ -20,6 +24,42 @@ using namespace rollingraft;
 namespace rollingraft {
 std::unique_ptr<NetworkTransport> CreateAsioNetworkTransport(const TlsConfig& tls_config);
 }
+
+namespace {
+
+Status SendRawClientTlsRequest(const std::string& addr, const std::string& cert_file,
+                               const std::string& key_file, const std::string& ca_file,
+                               const std::string& request) {
+  try {
+    auto colon = addr.rfind(':');
+    if (colon == std::string::npos) {
+      return Status::Error("invalid address");
+    }
+    asio::io_context io_context;
+    asio::ip::tcp::resolver resolver(io_context);
+    auto endpoints = resolver.resolve(addr.substr(0, colon), addr.substr(colon + 1));
+    asio::ssl::context tls_context(asio::ssl::context::tls_client);
+    tls_context.set_verify_mode(asio::ssl::verify_peer);
+    tls_context.load_verify_file(ca_file);
+    tls_context.use_certificate_chain_file(cert_file);
+    tls_context.use_private_key_file(key_file, asio::ssl::context::pem);
+
+    asio::ssl::stream<asio::ip::tcp::socket> stream(io_context, tls_context);
+    asio::connect(stream.next_layer(), endpoints);
+    stream.handshake(asio::ssl::stream_base::client);
+    uint32_t request_length = htonl(static_cast<uint32_t>(request.size()));
+    asio::write(stream, asio::buffer(&request_length, sizeof(request_length)));
+    asio::write(stream, asio::buffer(request));
+
+    uint32_t response_length = 0;
+    asio::read(stream, asio::buffer(&response_length, sizeof(response_length)));
+    return Status::Error("Raft request unexpectedly received a response");
+  } catch (const std::exception& e) {
+    return Status::Error(e.what());
+  }
+}
+
+}  // namespace
 
 /**
  * 3-node cluster integration tests.
@@ -535,6 +575,32 @@ TEST_F(Cluster3NodesTest, ClientMtlsNodeCertificateIsRejectedBeforeConnection) {
 
   ASSERT_TRUE(result.has_error());
   EXPECT_NE(result.error().GetMessage().find("CONFIG_INVALID"), std::string::npos);
+}
+
+TEST_F(Cluster3NodesTest, ClientMtlsCertificateCannotIssueRaftRpc) {
+  auto ports = AllocateEphemeralPorts(1);
+  addrs_ = FormatAddrs(ports);
+#ifdef NODE_TEST_CERTS_DIR
+  const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+  const std::string certs_dir = "../generated-node-certs/";
+#endif
+  auto config = MakeMutualTlsConfig(1, addrs_[0], {addrs_[0]});
+  config.client_auth_enabled = true;
+  config.client_ca_file = certs_dir + "client_ca.crt";
+  config.client_authorizations = {{"writer", ClientPermission::READ_WRITE}};
+  auto state_machine = std::make_shared<MockStateMachine>();
+  nodes_.push_back(std::make_unique<RaftNode>(config, state_machine));
+  ASSERT_TRUE(nodes_[0]->Start().ok());
+
+  const std::string request =
+      R"({"correlation_id":7,"group_id":0,"type":0,"term":99,"candidate_id":2,"last_log_index":0,"last_log_term":0})";
+  auto status =
+      SendRawClientTlsRequest(addrs_[0], certs_dir + "writer.crt", certs_dir + "writer.key",
+                              certs_dir + "node_ca.crt", request);
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_LT(nodes_[0]->CurrentTerm(), 99);
 }
 
 TEST_F(Cluster3NodesTest, TlsLeaderElection) {

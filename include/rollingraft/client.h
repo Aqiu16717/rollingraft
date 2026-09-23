@@ -85,6 +85,9 @@ struct ClientOptions {
   /** Node CA bundle used to verify the contacted Raft node. */
   std::string tls_ca_file;
 
+  /** Target Raft group. Zero preserves legacy single-group routing. */
+  uint64_t group_id = 0;
+
   /** Maximum retry attempts. */
   int max_retries = 3;
 

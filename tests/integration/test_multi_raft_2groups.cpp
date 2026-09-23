@@ -4,6 +4,7 @@
 #include <thread>
 #include <vector>
 
+#include "rollingraft/client.h"
 #include "rollingraft/logger.h"
 #include "rollingraft/raft_node.h"
 
@@ -62,7 +63,7 @@ class MultiRaft2GroupsTest : public ::testing::Test {
     }
   }
 
-  void StartCluster() {
+  void StartCluster(bool client_auth_enabled = false) {
     // Use process-scoped fixed ports to avoid cross-talk when ctest runs
     // multiple integration test processes concurrently.  Each process gets a
     // block of 10 ports so neighbouring pids do not overlap.
@@ -77,6 +78,24 @@ class MultiRaft2GroupsTest : public ::testing::Test {
       store_config.node_id = i + 1;
       store_config.listen_addr = addrs_[i];
       store_config.data_dir = data_dirs_[i];
+      if (client_auth_enabled) {
+#ifdef NODE_TEST_CERTS_DIR
+        const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+        const std::string certs_dir = "../generated-node-certs/";
+#endif
+        store_config.tls_enabled = true;
+        store_config.tls_mutual_auth = true;
+        store_config.tls_cert_file = certs_dir + "node" + std::to_string(i + 1) + ".crt";
+        store_config.tls_key_file = certs_dir + "node" + std::to_string(i + 1) + ".key";
+        store_config.tls_ca_file = certs_dir + "node_ca.crt";
+        store_config.tls_allowed_peer_identities = {"rollingraft-node:1", "rollingraft-node:2",
+                                                    "rollingraft-node:3"};
+        store_config.client_auth_enabled = true;
+        store_config.client_ca_file = certs_dir + "client_ca.crt";
+        store_config.client_authorizations = {{"reader", ClientPermission::READ_ONLY},
+                                              {"writer", ClientPermission::READ_WRITE}};
+      }
       for (size_t j = 0; j < addrs_.size(); ++j) {
         if (j != static_cast<size_t>(i)) {
           store_config.peers.push_back(addrs_[j]);
@@ -141,6 +160,21 @@ class MultiRaft2GroupsTest : public ::testing::Test {
   void WaitForLeader(uint64_t group_id, int timeout_sec = 15) {
     ASSERT_NE(GetLeader(group_id, timeout_sec), nullptr)
         << "No leader elected for group " << group_id;
+  }
+
+  ClientOptions ClientOptionsFor(const std::string& identity, uint64_t group_id) const {
+#ifdef NODE_TEST_CERTS_DIR
+    const std::string certs_dir = NODE_TEST_CERTS_DIR;
+#else
+    const std::string certs_dir = "../generated-node-certs/";
+#endif
+    ClientOptions options;
+    options.tls_enabled = true;
+    options.tls_cert_file = certs_dir + identity + ".crt";
+    options.tls_key_file = certs_dir + identity + ".key";
+    options.tls_ca_file = certs_dir + "node_ca.crt";
+    options.group_id = group_id;
+    return options;
   }
 
   void StopStores() {
@@ -217,6 +251,26 @@ TEST_F(MultiRaft2GroupsTest, BothGroupsElectIndependentLeaders) {
 
   EXPECT_EQ(CountLeaders(1), 1) << "Group 1 should have exactly one leader";
   EXPECT_EQ(CountLeaders(2), 1) << "Group 2 should have exactly one leader";
+}
+
+TEST_F(MultiRaft2GroupsTest, ClientMtlsAuthorizationAppliesToEveryGroup) {
+  StartCluster(true);
+  WaitForLeader(1);
+  WaitForLeader(2);
+
+  Client writer_group_one(addrs_, ClientOptionsFor("writer", 1));
+  Client writer_group_two(addrs_, ClientOptionsFor("writer", 2));
+  EXPECT_TRUE(writer_group_one.Execute("writer-group-one", std::chrono::seconds(3)).ok());
+  EXPECT_TRUE(writer_group_two.Execute("writer-group-two", std::chrono::seconds(3)).ok());
+
+  Client reader_group_one(addrs_, ClientOptionsFor("reader", 1));
+  Client reader_group_two(addrs_, ClientOptionsFor("reader", 2));
+  auto denied_one = reader_group_one.Execute("reader-group-one", std::chrono::seconds(3));
+  auto denied_two = reader_group_two.Execute("reader-group-two", std::chrono::seconds(3));
+  ASSERT_TRUE(denied_one.has_error());
+  ASSERT_TRUE(denied_two.has_error());
+  EXPECT_TRUE(denied_one.error().IsPermissionDenied());
+  EXPECT_TRUE(denied_two.error().IsPermissionDenied());
 }
 
 TEST_F(MultiRaft2GroupsTest, GroupsHaveSameTermAfterElection) {

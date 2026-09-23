@@ -39,10 +39,15 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
   - Raft RPC sender claims must match the authenticated certificate identity
   - Election and replication still require Raft membership
 
-- [ ] **Client Identity Authentication and Authorization**
+- [x] **Client Identity Authentication and Authorization**
   - `client_id` remains a caller-supplied deduplication key, not an identity
-  - Define authenticated client credentials and read/write authorization policy
-  - Keep client credentials distinct from node certificates
+  - Client mTLS uses `rollingraft-client:<identity>` and a client CA distinct
+    from the node CA
+  - Static exact-match `READ_ONLY` / `READ_WRITE` policy is enforced before
+    client handlers for every hosted group
+  - Client certificates cannot issue Raft protocol requests; auth failures are
+    terminal and not retried
+  - Future work: certificate revocation, dynamic ACLs, and group-scoped policy
 
 ### 🟠 Critical (performance/availability degradation under load)
 
@@ -97,10 +102,9 @@ Current status: **v0.1.0 — suitable for learning and prototyping, NOT producti
 
 Priority order based on gap analysis above:
 
-1. **Client Identity Authentication and Authorization** — close the remaining security blocker
-2. **Disk-Failure and Slow-Disk Injection** — validate persistence failure behavior
-3. **24h Multi-Raft Soak Harness** — expose lifecycle and election churn defects
-4. **Production Operations Hardening** — backup/restore drills and upgrade testing
+1. **Disk-Failure and Slow-Disk Injection** — validate persistence failure behavior
+2. **24h Multi-Raft Soak Harness** — expose lifecycle and election churn defects
+3. **Production Operations Hardening** — backup/restore drills and upgrade testing
 
 ---
 

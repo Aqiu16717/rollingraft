@@ -41,6 +41,9 @@
       URI SAN `rollingraft-node:<node_id>`.
 - [ ] `tls_allowed_peer_identities` is empty only when the cluster CA is
       restricted to issuing RollingRaft node certificates.
+- [ ] If application clients connect directly, `client_auth_enabled = true`,
+      `client_ca_file` is a distinct client CA, and every allowed client has
+      one exact `READ_ONLY` or `READ_WRITE` rule.
 
 ### 1.3 At Startup
 
@@ -308,6 +311,13 @@ Only certain parameters can be updated at runtime. See [public-api-guide.md Sect
   `tls_ca_file`; setting a CA file alone does not enable mTLS.
 - Issue each node a unique URI SAN `rollingraft-node:<node_id>` and rotate the
   optional identity allowlist together with membership changes.
+- For direct application access, enable `client_auth_enabled` only with node
+  mTLS enabled. Use a separate `client_ca_file`; do not issue client and node
+  certificates from the same CA.
+- Issue each client one URI SAN `rollingraft-client:<identity>` and configure
+  an exact static authorization rule. There is no wildcard or fallback rule.
+- Keep client private keys in a secrets manager with service-user-only access.
+  A client certificate is not valid for Raft protocol traffic.
 - Restrict metrics port access to monitoring infrastructure (not public internet).
 - Do not expose Raft port outside the cluster network.
 
@@ -316,6 +326,9 @@ Only certain parameters can be updated at runtime. See [public-api-guide.md Sect
 - Set a strong `admin_token` (≥ 32 random characters).
 - Store `admin_token` in a secrets manager, not in config files.
 - Rotate `admin_token` periodically by restarting nodes with new token.
+- Treat `UNAUTHENTICATED` and `PERMISSION_DENIED` client errors as credential
+  or policy failures, not transient transport failures; fix the certificate or
+  configured authorization rule before retrying.
 
 ### 5.3 Filesystem
 

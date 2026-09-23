@@ -380,6 +380,9 @@ class CounterMachine : public rollingraft::StateMachine {
 | `tls_ca_file` | "" | CA certificate path |
 | `tls_mutual_auth` | false | Require CA-verified peer certificates with a node URI SAN |
 | `tls_allowed_peer_identities` | empty | Optional exact URI SAN allowlist |
+| `client_auth_enabled` | false | Enable certificate authentication for application clients |
+| `client_ca_file` | "" | CA bundle trusted only for application client certificates |
+| `client_authorizations` | empty | Exact client identity to `READ_ONLY` or `READ_WRITE` rules |
 | `admin_token` | "" | Bearer token for admin API endpoints |
 
 With `tls_mutual_auth = true`, every node certificate must contain exactly one
@@ -389,10 +392,13 @@ the authenticated identity is also checked against the expected outbound peer
 and the sender ID claimed by RequestVote, PreVote, AppendEntries, and
 InstallSnapshot RPCs.
 
-The current high-level `Client` does not present a node certificate. A strict
-mTLS Raft endpoint therefore accepts authenticated node traffic only; expose a
-separate application gateway or keep client access disabled until client
-credentials and authorization are configured by a future release.
+Application client authentication is opt-in and shares the listener with Raft
+traffic. It requires TLS, node mTLS, a separate client CA, and at least one
+exact authorization rule. Client certificates must contain exactly one URI SAN
+of the form `rollingraft-client:<identity>`. A client certificate can issue
+only client requests; it cannot issue Raft protocol requests. `READ_ONLY`
+clients may query but cannot execute commands; `READ_WRITE` clients may do
+both. There is no wildcard or default allow rule.
 
 ```cpp
 config.tls_enabled = true;
@@ -403,6 +409,12 @@ config.tls_ca_file = "/run/secrets/cluster-ca.crt";
 config.tls_allowed_peer_identities = {
     "rollingraft-node:2",
     "rollingraft-node:3",
+};
+config.client_auth_enabled = true;
+config.client_ca_file = "/run/secrets/client-ca.crt";
+config.client_authorizations = {
+    {"analytics", rollingraft::ClientPermission::READ_ONLY},
+    {"writer-service", rollingraft::ClientPermission::READ_WRITE},
 };
 ```
 
@@ -502,6 +514,25 @@ client.ExecuteAsync("inc", [](rollingraft::ClientResult result) {
 | `leader_cache_ttl` | 30000ms | How long to cache leader address |
 | `client_id` | 0 | Client ID for deduplication (0 = auto-generate) |
 | `max_async_queue_size` | 10000 | Max async task queue (0 = unlimited) |
+| `tls_enabled` | false | Enable TLS for high-level client requests |
+| `tls_cert_file` | "" | Application client certificate with a client URI SAN |
+| `tls_key_file` | "" | Private key for `tls_cert_file` |
+| `tls_ca_file` | "" | Node CA bundle used to verify the contacted Raft node |
+| `group_id` | 0 | Target group; use a non-zero group ID with `RaftStore` |
+
+For client mTLS, configure a client certificate and key issued by the client
+CA, plus the node CA used to verify the contacted server:
+
+```cpp
+options.tls_enabled = true;
+options.tls_cert_file = "/run/secrets/writer-service.crt";
+options.tls_key_file = "/run/secrets/writer-service.key";
+options.tls_ca_file = "/run/secrets/node-ca.crt";
+options.group_id = 42;  // Leave at zero for a single RaftNode.
+```
+
+Authentication and authorization failures are terminal for a request: the
+client does not retry `UNAUTHENTICATED` or `PERMISSION_DENIED` responses.
 
 ---
 

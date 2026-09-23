@@ -27,13 +27,14 @@
 namespace rollingraft {
 
 // Helper to serialize ClientRequest to JSON
-static std::string SerializeClientRequest(const ClientRequest& req) {
+static std::string SerializeClientRequest(const ClientRequest& req, uint64_t group_id = 0) {
   nlohmann::json j;
   j["type"] = static_cast<int>(RaftMessageType::KClientRequest);
   j["command"] = req.command;
   j["client_id"] = req.client_id;
   j["seq"] = req.seq;
   j["read_only"] = req.read_only;
+  j["group_id"] = group_id;
   return j.dump();
 }
 
@@ -253,7 +254,7 @@ Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse
 
 Status RpcCall(const std::string& addr, const ClientRequest& req, ClientResponse& resp,
                std::chrono::milliseconds timeout, const ClientOptions& options) {
-  std::string request_data = SerializeClientRequest(req);
+  std::string request_data = SerializeClientRequest(req, options.group_id);
   std::string response_data;
   auto status = options.tls_enabled
                     ? DoTlsRpcCall(addr, request_data, response_data, timeout, options)

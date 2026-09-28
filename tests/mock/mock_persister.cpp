@@ -1,11 +1,14 @@
 #include "mock_persister.h"
 
+#include <thread>
+
 namespace rollingraft {
 
 Status MockPersister::Open(const std::string& dir) {
   (void)dir;
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   return Status::OK();
 }
@@ -13,8 +16,9 @@ Status MockPersister::Open(const std::string& dir) {
 void MockPersister::Close() {}
 
 Status MockPersister::SaveState(const PersistentState& state) {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   state_ = state;
@@ -28,8 +32,9 @@ Status MockPersister::LoadState(PersistentState& state) {
 }
 
 Status MockPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& entry : entries) {
@@ -40,8 +45,17 @@ Status MockPersister::AppendEntries(const std::vector<RaftLogEntry>& entries) {
 }
 
 Status MockPersister::Sync() {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
+  }
+  std::chrono::milliseconds delay;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    delay = sync_delay_;
+  }
+  if (delay.count() > 0) {
+    std::this_thread::sleep_for(delay);
   }
   std::lock_guard<std::mutex> lock(mutex_);
   ++sync_count_;
@@ -71,8 +85,9 @@ Status MockPersister::GetEntry(uint64_t index, RaftLogEntry& entry) {
 }
 
 Status MockPersister::TruncateSuffix(uint64_t from_index) {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto it = logs_.begin(); it != logs_.end();) {
@@ -86,8 +101,9 @@ Status MockPersister::TruncateSuffix(uint64_t from_index) {
 }
 
 Status MockPersister::TruncatePrefix(uint64_t before_index) {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto it = logs_.begin(); it != logs_.end();) {
@@ -111,8 +127,9 @@ std::pair<uint64_t, uint64_t> MockPersister::GetLastLogInfo() {
 
 Status MockPersister::SaveSnapshot(const std::string& snapshot_data, uint64_t last_index,
                                    uint64_t last_term) {
-  if (CheckFailure()) {
-    return Status::Error(failure_msg_);
+  auto failure_status = GetFailureStatus();
+  if (!failure_status.ok()) {
+    return failure_status;
   }
   std::lock_guard<std::mutex> lock(mutex_);
   snapshot_data_ = snapshot_data;
@@ -138,9 +155,20 @@ bool MockPersister::HasSnapshot() const {
   return !snapshot_data_.empty();
 }
 
-void MockPersister::InjectFailure(const std::string& error_msg) { failure_msg_ = error_msg; }
+void MockPersister::InjectFailure(const std::string& error_msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  failure_msg_ = error_msg;
+}
 
-void MockPersister::ClearFailure() { failure_msg_.clear(); }
+void MockPersister::ClearFailure() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  failure_msg_.clear();
+}
+
+void MockPersister::SetSyncDelay(std::chrono::milliseconds delay) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  sync_delay_ = delay;
+}
 
 size_t MockPersister::EntryCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -156,6 +184,12 @@ void MockPersister::Reset() {
   sync_count_ = 0;
 }
 
-bool MockPersister::CheckFailure() { return !failure_msg_.empty(); }
+Status MockPersister::GetFailureStatus() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (failure_msg_.empty()) {
+    return Status::OK();
+  }
+  return Status::Error(failure_msg_);
+}
 
 }  // namespace rollingraft

@@ -125,7 +125,10 @@ class RaftNode::RaftNodeImpl : public std::enable_shared_from_this<RaftNodeImpl>
   // State transitions (must hold group_->election_mtx_ when calling)
   void BecomeFollowerLocked(Term term);
   void BecomeFollowerWithReplicationLocked(Term term);
-  void BecomeFollowerLockedImpl(Term term, bool replication_lock_held);
+  // A failed disk cannot durably record a role transition. This path leaves
+  // the node unavailable until it is restarted after storage recovery.
+  void BecomeFollowerAfterDiskFailureLocked(Term term);
+  void BecomeFollowerLockedImpl(Term term, bool replication_lock_held, bool persist_state);
   void BecomeCandidateLocked();
   void BecomeLeaderLocked();
 

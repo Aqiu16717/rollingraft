@@ -180,6 +180,18 @@ TEST_F(LogPersisterTest, AppendSyncWaitsForFlush) {
   EXPECT_EQ(mock_persister_ptr_->EntryCount(), 1);
 }
 
+TEST_F(LogPersisterTest, AppendSyncWaitsForInjectedSyncDelay) {
+  persister_->Start();
+  mock_persister_ptr_->SetSyncDelay(std::chrono::milliseconds(40));
+
+  auto start = std::chrono::steady_clock::now();
+  auto status = persister_->AppendSync(MakeEntry(1, 1, "cmd"));
+  auto elapsed = std::chrono::steady_clock::now() - start;
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_GE(elapsed, std::chrono::milliseconds(40));
+}
+
 TEST_F(LogPersisterTest, AppendSyncReturnsErrorOnFailure) {
   persister_->Start();
 

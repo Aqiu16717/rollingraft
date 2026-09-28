@@ -4,14 +4,19 @@
 using namespace rollingraft;
 
 void RaftNode::RaftNodeImpl::BecomeFollowerLocked(Term term) {
-  BecomeFollowerLockedImpl(term, false);
+  BecomeFollowerLockedImpl(term, false, true);
 }
 
 void RaftNode::RaftNodeImpl::BecomeFollowerWithReplicationLocked(Term term) {
-  BecomeFollowerLockedImpl(term, true);
+  BecomeFollowerLockedImpl(term, true, true);
 }
 
-void RaftNode::RaftNodeImpl::BecomeFollowerLockedImpl(Term term, bool replication_lock_held) {
+void RaftNode::RaftNodeImpl::BecomeFollowerAfterDiskFailureLocked(Term term) {
+  BecomeFollowerLockedImpl(term, false, false);
+}
+
+void RaftNode::RaftNodeImpl::BecomeFollowerLockedImpl(Term term, bool replication_lock_held,
+                                                      bool persist_state) {
   RaftNodeRole old_role = group_->role_;
 
   group_->role_ = RaftNodeRole::FOLLOWER;
@@ -47,11 +52,15 @@ void RaftNode::RaftNodeImpl::BecomeFollowerLockedImpl(Term term, bool replicatio
     group_->snapshot_sends_.clear();
   }
 
-  // Reset and start election timer
-  ResetElectionTimerLocked();
+  // A node with failed persistence must not re-elect itself before a restart.
+  if (persist_state) {
+    ResetElectionTimerLocked();
+  } else {
+    CancelElectionTimerLocked();
+  }
 
   // Persist state
-  if (persister_) {
+  if (persist_state && persister_) {
     auto persist_status = persister_->SaveState(CurrentPersistentStateLocked());
     if (!persist_status.ok()) {
       LOG_ERROR("Node {} failed to persist state when becoming Follower: {} — aborting",

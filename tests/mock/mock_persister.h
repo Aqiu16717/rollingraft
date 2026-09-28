@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <string>
@@ -55,6 +56,9 @@ class MockPersister : public Persister {
    */
   void ClearFailure();
 
+  /** Delay Sync() calls for deterministic slow-persistence tests. */
+  void SetSyncDelay(std::chrono::milliseconds delay);
+
   /**
    * Get number of entries in storage.
    */
@@ -76,7 +80,7 @@ class MockPersister : public Persister {
   void Reset();
 
  private:
-  bool CheckFailure();
+  Status GetFailureStatus() const;
 
   std::map<uint64_t, RaftLogEntry> logs_;
   PersistentState state_{0, -1};
@@ -86,6 +90,7 @@ class MockPersister : public Persister {
   mutable std::mutex mutex_;
 
   std::string failure_msg_;
+  std::chrono::milliseconds sync_delay_{0};
   size_t write_count_ = 0;
   size_t sync_count_ = 0;
 };

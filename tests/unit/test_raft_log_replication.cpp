@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -197,6 +198,65 @@ TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
   for (const auto& result : batch_results) {
     EXPECT_TRUE(result.success);
   }
+}
+
+TEST_F(RaftLogReplicationTest, Leader_StepsDownWithoutApplyingWhenPersistenceFails) {
+  auto persister = std::make_unique<MockPersister>();
+  auto* persister_ptr = persister.get();
+
+  auto config = MakeConfig(10, {});
+  config.election_timeout_ms = 50;
+  config.heartbeat_interval_ms = 20;
+  config.data_dir = "/tmp";
+  config.persister_factory = [&persister]() {
+    return std::unique_ptr<Persister>(persister.release());
+  };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  auto stepped_down = std::make_shared<std::atomic<bool>>(false);
+  node_->SetRoleChangeCallback([stepped_down](RaftNodeRole role, Term /*term*/) {
+    if (role == RaftNodeRole::FOLLOWER) {
+      *stepped_down = true;
+    }
+  });
+  ASSERT_TRUE(node_->Start().ok());
+
+  auto start = std::chrono::steady_clock::now();
+  while (!node_->IsLeader() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_TRUE(node_->IsLeader()) << "Node should be leader before failure injection";
+
+  persister_ptr->InjectFailure("injected disk failure");
+  auto callback_called = std::make_shared<std::atomic<bool>>(false);
+  auto callback_result = std::make_shared<ApplyResult>();
+  auto status = node_->Propose("must_not_apply",
+                               [callback_called, callback_result](const ApplyResult& result) {
+                                 *callback_result = result;
+                                 *callback_called = true;
+                               });
+  ASSERT_TRUE(status.ok()) << status.ToString();
+
+  start = std::chrono::steady_clock::now();
+  while (node_->IsLeader() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  start = std::chrono::steady_clock::now();
+  while (!callback_called->load() &&
+         std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  EXPECT_FALSE(node_->IsLeader());
+  EXPECT_TRUE(stepped_down->load());
+  EXPECT_TRUE(callback_called->load());
+  EXPECT_FALSE(callback_result->success);
+  EXPECT_NE(callback_result->error_message.find("injected disk failure"), std::string::npos);
+  EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+  EXPECT_FALSE(node_->Propose("must_be_rejected", [](const ApplyResult&) {}).ok());
+
+  // Let shutdown drain the failed entry instead of retaining a retrying flush.
+  persister_ptr->ClearFailure();
 }
 
 // Note: Full log replication testing requires:

@@ -977,14 +977,30 @@ void RaftNode::RaftNodeImpl::OnLogEntryPersisted(Index index, Status status) {
   if (!status.ok()) {
     LOG_WARN("Node {} log persistence failed for index {}: {}", group_->server_id_, index,
              status.ToString());
-    if (log_persister_ && !log_persister_->IsHealthy()) {
-      // Disk failure: step down. Runs on persister thread with no locks held,
-      // so acquiring group_->election_mtx_ is safe.
+    // The failed flush callback is authoritative. LogPersister may be retrying
+    // concurrently, so its transient health flag cannot safely gate step-down.
+    {
       std::lock_guard<std::mutex> lock_e(group_->election_mtx_);
       if (group_->role_ == RaftNodeRole::LEADER) {
         LOG_ERROR("Node {} stepping down due to disk failure", group_->server_id_);
-        BecomeFollowerLocked(group_->current_term_);
+        BecomeFollowerAfterDiskFailureLocked(group_->current_term_);
       }
+    }
+
+    std::function<void(const ApplyResult&)> callback;
+    {
+      std::lock_guard<std::mutex> lock_r(group_->replication_mtx_);
+      auto proposal = group_->pending_proposals_.find(index);
+      if (proposal != group_->pending_proposals_.end()) {
+        callback = std::move(proposal->second.callback);
+        group_->pending_proposals_.erase(proposal);
+      }
+    }
+    if (callback) {
+      ApplyResult result;
+      result.success = false;
+      result.error_message = status.GetMessage();
+      callback(result);
     }
     return;
   }

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,8 @@ enum class ClientPermission { READ_ONLY, READ_WRITE };
 struct ClientAuthorizationRule {
   std::string identity;
   ClientPermission permission = ClientPermission::READ_ONLY;
+  /** Allowed groups; absent allows all groups, an empty list denies all. */
+  std::optional<std::vector<uint64_t>> allowed_groups = std::nullopt;
 };
 
 struct RaftNodeConfig {

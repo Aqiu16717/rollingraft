@@ -27,6 +27,38 @@ TEST(ClientAuthorizationPolicyTest, ReadOnlyIdentityRejectsWrite) {
   EXPECT_TRUE(status.IsPermissionDenied());
 }
 
+TEST(ClientAuthorizationPolicyTest, ScopedIdentityRejectsOtherGroups) {
+  ClientAuthorizationRule rule{"writer", ClientPermission::READ_WRITE};
+  rule.allowed_groups = std::vector<uint64_t>{1, 7};
+  ClientAuthorizationPolicy policy({rule});
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("writer"), false, 1).ok());
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("writer"), true, 7).ok());
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("writer"), true, 2).IsPermissionDenied());
+  EXPECT_TRUE(
+      policy.AuthorizeClientRequest(ClientContext("writer"), false, 0).IsPermissionDenied());
+}
+
+TEST(ClientAuthorizationPolicyTest, EmptyScopeDeniesAllGroups) {
+  ClientAuthorizationRule rule{"reader", ClientPermission::READ_ONLY};
+  rule.allowed_groups = std::vector<uint64_t>{};
+  ClientAuthorizationPolicy policy({rule});
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("reader"), true, 1).IsPermissionDenied());
+}
+
+TEST(ClientAuthorizationPolicyTest, UnscopedIdentityPreservesAllGroupAccess) {
+  ClientAuthorizationPolicy policy({{"writer", ClientPermission::READ_WRITE}});
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("writer"), false, 42).ok());
+}
+
+TEST(ClientAuthorizationPolicyTest, ScopedReaderStillCannotWrite) {
+  ClientAuthorizationRule rule{"reader", ClientPermission::READ_ONLY};
+  rule.allowed_groups = std::vector<uint64_t>{1};
+  ClientAuthorizationPolicy policy({rule});
+  EXPECT_TRUE(policy.AuthorizeClientRequest(ClientContext("reader"), true, 1).ok());
+  EXPECT_TRUE(
+      policy.AuthorizeClientRequest(ClientContext("reader"), false, 1).IsPermissionDenied());
+}
+
 TEST(ClientAuthorizationPolicyTest, UnknownIdentityIsPermissionDenied) {
   ClientAuthorizationPolicy policy({{"writer", ClientPermission::READ_WRITE}});
 

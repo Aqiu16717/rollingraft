@@ -418,6 +418,20 @@ config.client_authorizations = {
 };
 ```
 
+Each client rule also accepts an optional `allowed_groups` list:
+
+```cpp
+rollingraft::ClientAuthorizationRule writer{
+    "writer-service", rollingraft::ClientPermission::READ_WRITE};
+writer.allowed_groups = std::vector<uint64_t>{42};
+config.client_authorizations = {writer};
+```
+
+An absent list preserves access to all groups. An explicitly empty list denies
+all groups. Group zero is the legacy single-node API path and must be listed
+explicitly when a scope is configured. Group permission checks use the hosted
+group and still enforce the rule's read/write permission.
+
 The allowlist is static configuration. Update it alongside planned membership
 changes. Leaving it empty accepts any correctly formed node identity signed by
 the configured CA; Raft membership checks still prevent unknown identities

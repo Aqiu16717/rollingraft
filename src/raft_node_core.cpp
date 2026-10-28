@@ -110,13 +110,22 @@ Status RaftNode::RaftNodeImpl::Start() {
       uint64_t snapshot_index = 0;
       uint64_t snapshot_term = 0;
       std::string snapshot_data;
-      auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index, snapshot_term);
+      // Snapshots may be stored as chunks by SaveSnapshotStream. The streaming
+      // reader also supports legacy snapshots stored as one value.
+      auto status = persister_->LoadSnapshotStream(
+          [&snapshot_data](const std::string& chunk) { snapshot_data.append(chunk); },
+          snapshot_index, snapshot_term);
       if (status.ok() && !snapshot_data.empty()) {
         std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(), snapshot_data.end());
         if (group_->state_machine_->Restore(snapshot_bytes)) {
           group_->last_snapshot_index_ = snapshot_index;
           group_->last_snapshot_term_ = snapshot_term;
           group_->log_.SetStartIndex(snapshot_index + 1);
+          // The restored prefix is already applied; never enqueue compacted
+          // entries when the first post-restart commit advances.
+          group_->commit_index_ = snapshot_index;
+          group_->last_applied_.store(snapshot_index, std::memory_order_release);
+          group_->last_enqueued_ = snapshot_index;
           LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index, snapshot_term);
         } else {
           LOG_ERROR("Failed to restore snapshot from persister");

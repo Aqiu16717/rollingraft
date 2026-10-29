@@ -1,5 +1,6 @@
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -59,6 +60,9 @@ class MultiRaft2GroupsTest : public ::testing::Test {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     for (const auto& dir : data_dirs_) {
+      std::filesystem::remove_all(dir);
+    }
+    for (const auto& dir : extra_data_dirs_) {
       std::filesystem::remove_all(dir);
     }
   }
@@ -238,6 +242,7 @@ class MultiRaft2GroupsTest : public ::testing::Test {
   }
 
   std::vector<std::string> data_dirs_;
+  std::vector<std::string> extra_data_dirs_;
   std::vector<std::string> addrs_;
   std::vector<std::unique_ptr<RaftStore>> stores_;
   std::unordered_map<uint64_t, std::vector<std::shared_ptr<MockStateMachine>>> state_machines_;
@@ -620,4 +625,78 @@ TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {
       << "Group 1 term should not regress after restart";
   EXPECT_GE(stores_[0]->GetGroup(2)->CurrentTerm(), term2_before)
       << "Group 2 term should not regress after restart";
+}
+
+TEST_F(MultiRaft2GroupsTest, OfflineBackupRestoresBothGroups) {
+  StartCluster();
+  ASSERT_FALSE(HasFatalFailure());
+
+  std::unordered_map<uint64_t, std::vector<std::string>> expected;
+  auto wait_for_commands = [&]() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (std::chrono::steady_clock::now() < deadline) {
+      bool complete = true;
+      for (const auto& [group_id, commands] : expected) {
+        for (const auto& sm : state_machines_.at(group_id)) {
+          complete = complete && sm->GetAppliedCommands() == commands;
+        }
+      }
+      if (complete) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+  };
+  auto write_commands = [&](const std::string& phase) {
+    for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
+      auto* leader = GetLeader(group_id);
+      ASSERT_NE(leader, nullptr);
+      const auto command = "group_" + std::to_string(group_id) + "_" + phase;
+      auto applied = std::make_shared<std::promise<bool>>();
+      auto result = applied->get_future();
+      ASSERT_TRUE(
+          leader
+              ->Propose(command,
+                        [applied](const ApplyResult& value) { applied->set_value(value.success); })
+              .ok());
+      ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+      ASSERT_TRUE(result.get());
+      expected[group_id].push_back(command);
+    }
+  };
+
+  write_commands("before_snapshot");
+  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_TRUE(wait_for_commands());
+  for (uint64_t group_id = 1; group_id <= 2; ++group_id) {
+    auto* leader = GetLeader(group_id);
+    ASSERT_NE(leader, nullptr);
+    ASSERT_TRUE(leader->TriggerSnapshot().ok());
+  }
+  write_commands("after_snapshot");
+  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_TRUE(wait_for_commands());
+
+  // Only closed stores may be copied. Keep node identities paired with their
+  // directories, and restore into different paths so the originals cannot
+  // accidentally satisfy the recovery assertions.
+  StopStores();
+  const auto original_dirs = data_dirs_;
+  extra_data_dirs_ = original_dirs;
+  std::vector<std::string> restored_dirs;
+  // Register both generations for cleanup even if copying fails midway.
+  for (size_t i = 0; i < original_dirs.size(); ++i) {
+    const auto restored = original_dirs[i] + "_restored";
+    data_dirs_.push_back(restored);
+    restored_dirs.push_back(restored);
+    std::filesystem::copy(original_dirs[i], restored, std::filesystem::copy_options::recursive);
+  }
+  data_dirs_ = restored_dirs;
+  RestartCluster();
+  ASSERT_FALSE(HasFatalFailure());
+  // A new proposal commits the recovered log tail in the new election term.
+  write_commands("after_restore");
+  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_TRUE(wait_for_commands()) << "Both groups must recover exact, isolated command histories";
 }

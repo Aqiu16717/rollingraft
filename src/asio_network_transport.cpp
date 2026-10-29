@@ -431,6 +431,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
     AuthenticatedRpcRequestHandler authenticated_request_handler;
     AuthenticatedGroupRequestHandler authenticated_group_request_handler;
     RpcRequestContext peer_context;
+    size_t pending_count = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       request_handler = request_handler_;
@@ -438,11 +439,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       authenticated_request_handler = authenticated_request_handler_;
       authenticated_group_request_handler = authenticated_group_request_handler_;
       peer_context = peer_context_;
+      pending_count = pending_callbacks_.size();
     }
 
     LOG_INFO("HandleMessage: peer_id={}, has_handler={}, pending_callbacks={}", peer_id_,
-             (request_handler || authenticated_request_handler ? "yes" : "no"),
-             pending_callbacks_.size());
+             (request_handler || authenticated_request_handler ? "yes" : "no"), pending_count);
 
     if (request_handler || authenticated_request_handler) {
       // This is a server connection, handle request
@@ -500,7 +501,13 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
       });
     } else {
       // This is a client connection, handle response by correlation_id
-      auto callback = ExtractCallbackLocked(body_buffer_);
+      RpcResponseCallback callback;
+      {
+        // Send inserts on the peer strand while responses arrive on this
+        // connection's strand. Both must protect the shared callback table.
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback = ExtractCallbackLocked(body_buffer_);
+      }
       if (callback) {
         callback(body_buffer_, true, "");
       }

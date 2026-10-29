@@ -110,21 +110,38 @@ Status RaftNode::RaftNodeImpl::Start() {
       uint64_t snapshot_index = 0;
       uint64_t snapshot_term = 0;
       std::string snapshot_data;
-      auto status = persister_->LoadSnapshot(snapshot_data, snapshot_index, snapshot_term);
+      // Snapshots may be stored as chunks by SaveSnapshotStream. The streaming
+      // reader also supports legacy snapshots stored as one value.
+      auto status = persister_->LoadSnapshotStream(
+          [&snapshot_data](const std::string& chunk) { snapshot_data.append(chunk); },
+          snapshot_index, snapshot_term);
       if (status.ok() && !snapshot_data.empty()) {
         std::vector<uint8_t> snapshot_bytes(snapshot_data.begin(), snapshot_data.end());
         if (group_->state_machine_->Restore(snapshot_bytes)) {
           group_->last_snapshot_index_ = snapshot_index;
           group_->last_snapshot_term_ = snapshot_term;
           group_->log_.SetStartIndex(snapshot_index + 1);
+          // The restored prefix is already applied; never enqueue compacted
+          // entries when the first post-restart commit advances.
+          group_->commit_index_ = snapshot_index;
+          group_->last_applied_.store(snapshot_index, std::memory_order_release);
+          group_->last_enqueued_ = snapshot_index;
           LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index, snapshot_term);
         } else {
           LOG_ERROR("Failed to restore snapshot from persister");
-          // Continue without snapshot — log entries may be able to rebuild
-          // state, but this is a degraded path.
+          persister_->Close();
+          state_ = NodeState::kInitialized;
+          return Status::Error("Failed to restore snapshot from persister");
         }
       } else {
-        LOG_WARN("Snapshot exists but could not be loaded: {}", status.GetMessage());
+        // Compaction may have deleted the snapshot's log prefix. Continuing
+        // without that state can neither rebuild the application nor replay
+        // the remaining log safely.
+        const auto reason = status.ok() ? "snapshot data is empty" : status.GetMessage();
+        LOG_ERROR("Snapshot exists but could not be loaded: {}", reason);
+        persister_->Close();
+        state_ = NodeState::kInitialized;
+        return Status::Error("Failed to load snapshot: " + reason);
       }
     }
 

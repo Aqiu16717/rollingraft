@@ -342,6 +342,28 @@ Only certain parameters can be updated at runtime. See [public-api-guide.md Sect
 - For hot backup, use snapshot + WAL copying, but be aware this is not officially supported.
 - Test restore procedures in a staging environment quarterly.
 
+For a coordinated offline multi-Raft recovery drill:
+
+1. Stop application writes and wait for committed commands to be applied on
+   every node in each hosted group. Record a business-level verification value
+   per group (for example, a record count and digest).
+2. Optionally trigger snapshots on the group leaders, then stop every store
+   cleanly. Copy each node's complete `data_dir` to a separate backup location;
+   retain its node ID, group membership, and compatible configuration separately.
+3. Restore each directory to a fresh location paired with its original node ID.
+   Use an isolated network: restored nodes must not contact the original cluster.
+   Keep the original directories intact until validation completes.
+4. Start the stores and recreate the same groups with fresh application state
+   machines. Wait for elections, then verify each group's restored business
+   state and a new committed write. Check every replica, not only the leader.
+
+`MultiRaft2GroupsTest.OfflineBackupRestoresBothGroups` exercises this path with
+three stores and two groups, including leader snapshots, subsequent log entries,
+directory copies, and writes after recovery. This is a coordinated offline
+drill; it does not establish online backup consistency or recovery from an
+arbitrary single-node backup. Application state outside `data_dir` and TLS keys
+need their own protected backup and recovery procedure.
+
 ---
 
 ## Quick Reference Card

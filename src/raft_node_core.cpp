@@ -129,11 +129,19 @@ Status RaftNode::RaftNodeImpl::Start() {
           LOG_INFO("Restored snapshot: index={}, term={}", snapshot_index, snapshot_term);
         } else {
           LOG_ERROR("Failed to restore snapshot from persister");
-          // Continue without snapshot — log entries may be able to rebuild
-          // state, but this is a degraded path.
+          persister_->Close();
+          state_ = NodeState::kInitialized;
+          return Status::Error("Failed to restore snapshot from persister");
         }
       } else {
-        LOG_WARN("Snapshot exists but could not be loaded: {}", status.GetMessage());
+        // Compaction may have deleted the snapshot's log prefix. Continuing
+        // without that state can neither rebuild the application nor replay
+        // the remaining log safely.
+        const auto reason = status.ok() ? "snapshot data is empty" : status.GetMessage();
+        LOG_ERROR("Snapshot exists but could not be loaded: {}", reason);
+        persister_->Close();
+        state_ = NodeState::kInitialized;
+        return Status::Error("Failed to load snapshot: " + reason);
       }
     }
 

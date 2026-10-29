@@ -10,6 +10,22 @@
 
 using namespace rollingraft;
 
+namespace {
+class UnreadableSnapshotPersister : public MockPersister {
+ public:
+  bool HasSnapshot() const override { return true; }
+  Status LoadSnapshotStream(const std::function<void(const std::string&)>&, uint64_t&,
+                            uint64_t&) override {
+    return Status::Error("injected snapshot read failure");
+  }
+};
+
+class RejectSnapshotStateMachine : public MockStateMachine {
+ public:
+  bool Restore(const std::vector<uint8_t>&) override { return false; }
+};
+}  // namespace
+
 /**
  * Snapshot transfer tests.
  *
@@ -59,6 +75,28 @@ TEST_F(SnapshotTransferTest, StateMachine_CreateSnapshotCalled) {
   // when snapshot threshold is reached
   auto snapshot = sm_->CreateSnapshot();
   EXPECT_NE(snapshot, nullptr);
+}
+
+TEST_F(SnapshotTransferTest, Start_UnreadableSnapshot_ReturnsError) {
+  auto config = MakeConfig(1, {2, 3});
+  config.persister_factory = [] { return std::make_unique<UnreadableSnapshotPersister>(); };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  auto status = node_->Start();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.GetMessage().find("snapshot"), std::string::npos);
+}
+
+TEST_F(SnapshotTransferTest, Start_RejectedSnapshot_ReturnsError) {
+  auto config = MakeConfig(1, {2, 3});
+  config.persister_factory = [] {
+    auto persister = std::make_unique<MockPersister>();
+    persister->SaveSnapshot("5:restored\n", 5, 1);
+    return persister;
+  };
+  node_ = std::make_unique<RaftNode>(config, std::make_shared<RejectSnapshotStateMachine>());
+  auto status = node_->Start();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.GetMessage().find("snapshot"), std::string::npos);
 }
 
 TEST_F(SnapshotTransferTest, StateMachine_SnapshotMetadata) {

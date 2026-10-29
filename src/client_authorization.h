@@ -16,10 +16,11 @@ class ClientAuthorizationPolicy {
   explicit ClientAuthorizationPolicy(const std::vector<ClientAuthorizationRule>& rules);
 
   /** Authorize one client request; read_only distinguishes queries from writes. */
-  Status AuthorizeClientRequest(const RpcRequestContext& context, bool read_only) const;
+  Status AuthorizeClientRequest(const RpcRequestContext& context, bool read_only,
+                                uint64_t group_id = 0) const;
 
  private:
-  std::unordered_map<std::string, ClientPermission> rules_;
+  std::unordered_map<std::string, ClientAuthorizationRule> rules_;
 };
 
 /** Return whether a message type belongs to the node-to-node Raft protocol. */

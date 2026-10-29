@@ -130,7 +130,8 @@ void RaftNode::RaftNodeImpl::HandleIncomingRpc(const RpcRequestContext& context,
         resp.correlation_id_ = req.correlation_id_;
         resp.group_id = req.group_id;
         if (group_->config_.client_auth_enabled) {
-          status = client_authorization_.AuthorizeClientRequest(context, req.read_only);
+          status = client_authorization_.AuthorizeClientRequest(context, req.read_only,
+                                                                group_->group_id_);
           if (!status.ok()) {
             resp.success = false;
             resp.error = status.GetMessage();

@@ -67,7 +67,7 @@ class MultiRaft2GroupsTest : public ::testing::Test {
     }
   }
 
-  void StartCluster(bool client_auth_enabled = false) {
+  void StartCluster(bool client_auth_enabled = false, bool scoped_client = false) {
     // Use process-scoped fixed ports to avoid cross-talk when ctest runs
     // multiple integration test processes concurrently.  Each process gets a
     // block of 10 ports so neighbouring pids do not overlap.
@@ -99,6 +99,9 @@ class MultiRaft2GroupsTest : public ::testing::Test {
         store_config.client_ca_file = certs_dir + "client_ca.crt";
         store_config.client_authorizations = {{"reader", ClientPermission::READ_ONLY},
                                               {"writer", ClientPermission::READ_WRITE}};
+        if (scoped_client) {
+          store_config.client_authorizations[1].allowed_groups = std::vector<uint64_t>{1};
+        }
       }
       for (size_t j = 0; j < addrs_.size(); ++j) {
         if (j != static_cast<size_t>(i)) {
@@ -276,6 +279,18 @@ TEST_F(MultiRaft2GroupsTest, ClientMtlsAuthorizationAppliesToEveryGroup) {
   ASSERT_TRUE(denied_two.has_error());
   EXPECT_TRUE(denied_one.error().IsPermissionDenied());
   EXPECT_TRUE(denied_two.error().IsPermissionDenied());
+}
+
+TEST_F(MultiRaft2GroupsTest, ScopedClientCannotWriteAnotherGroup) {
+  StartCluster(true, true);
+  WaitForLeader(1);
+  WaitForLeader(2);
+  Client allowed(addrs_, ClientOptionsFor("writer", 1));
+  Client denied(addrs_, ClientOptionsFor("writer", 2));
+  EXPECT_TRUE(allowed.Execute("allowed-command", std::chrono::seconds(3)).ok());
+  auto result = denied.Execute("denied-command", std::chrono::seconds(3));
+  ASSERT_TRUE(result.has_error());
+  EXPECT_TRUE(result.error().IsPermissionDenied());
 }
 
 TEST_F(MultiRaft2GroupsTest, GroupsHaveSameTermAfterElection) {

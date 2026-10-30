@@ -24,6 +24,22 @@ class RejectSnapshotStateMachine : public MockStateMachine {
  public:
   bool Restore(const std::vector<uint8_t>&) override { return false; }
 };
+
+class EmptySnapshotPersister : public MockPersister {
+ public:
+  explicit EmptySnapshotPersister(std::shared_ptr<bool> closed) : closed_(closed) {}
+  bool HasSnapshot() const override { return true; }
+  Status LoadSnapshotStream(const std::function<void(const std::string&)>&, uint64_t& index,
+                            uint64_t& term) override {
+    index = 5;
+    term = 1;
+    return Status::OK();
+  }
+  void Close() override { *closed_ = true; }
+
+ private:
+  std::shared_ptr<bool> closed_;
+};
 }  // namespace
 
 /**
@@ -97,6 +113,21 @@ TEST_F(SnapshotTransferTest, Start_RejectedSnapshot_ReturnsError) {
   auto status = node_->Start();
   EXPECT_FALSE(status.ok());
   EXPECT_NE(status.GetMessage().find("snapshot"), std::string::npos);
+}
+
+TEST_F(SnapshotTransferTest, Start_EmptySnapshot_ClosesPersisterAndReturnsError) {
+  auto config = MakeConfig(1, {2, 3});
+  auto closed = std::make_shared<bool>(false);
+  config.persister_factory = [closed] { return std::make_unique<EmptySnapshotPersister>(closed); };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+
+  // A successful read with metadata but no payload cannot rebuild a compacted
+  // prefix. Startup must reject it just as it rejects an explicit read error.
+  auto status = node_->Start();
+  EXPECT_FALSE(status.ok());
+  EXPECT_NE(status.GetMessage().find("snapshot data is empty"), std::string::npos);
+  EXPECT_TRUE(*closed);
+  EXPECT_TRUE(sm_->GetAppliedCommands().empty());
 }
 
 TEST_F(SnapshotTransferTest, StateMachine_SnapshotMetadata) {

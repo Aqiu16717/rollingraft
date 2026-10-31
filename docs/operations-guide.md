@@ -338,6 +338,21 @@ Only certain parameters can be updated at runtime. See [public-api-guide.md Sect
 
 ### 5.4 Backup
 
+To record and check an already-created offline backup (Python 3.9+):
+
+```bash
+python3 scripts/backup_manifest.py create backup/node1 backup/node1.manifest.json
+python3 scripts/backup_manifest.py verify backup/node1 backup/node1.manifest.json
+```
+
+Stop the node before copying its data and keep the backup directory immutable
+while creating or checking the manifest. The tool detects changed, missing and
+extra regular files, rejects symlinks/special files, and never overwrites an
+existing manifest. Store the manifest outside the backup directory. Protect it
+alongside the backup: it contains relative filenames and hashes and must not be
+published. This checks file contents, not Raft consistency, permissions or
+ownership; it is not an online backup or cryptographic authenticity mechanism.
+
 - Backup `data_dir` regularly. A consistent backup requires the node to be stopped.
 - For hot backup, use snapshot + WAL copying, but be aware this is not officially supported.
 - Test restore procedures in a staging environment quarterly.

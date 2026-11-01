@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -57,6 +58,20 @@ class BackupManifestTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "missing=1"):
             backup.verify(self.root, self.manifest)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX named pipes")
+    def test_special_file_rejected_without_blocking_or_partial_manifest(self):
+        os.mkfifo(self.root / "pipe")
+        # Opening a FIFO as a regular file would hang without a writer. Bound
+        # the CLI process so a regression fails instead of stalling the suite.
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "create", str(self.root), str(self.manifest)],
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(b"non-regular file", result.stderr)
+        self.assertFalse(self.manifest.exists())
 
     def test_cli_exit_status(self):
         args = [sys.executable, str(SCRIPT)]

@@ -11,6 +11,21 @@
 using namespace rollingraft;
 
 namespace {
+class UnreadableStatePersister : public MockPersister {
+ public:
+  explicit UnreadableStatePersister(std::shared_ptr<int> closes) : closes_(std::move(closes)) {}
+  Status LoadState(PersistentState&) override {
+    return Status::Corruption("injected persistent state read failure");
+  }
+  void Close() override {
+    ++*closes_;
+    MockPersister::Close();
+  }
+
+ private:
+  std::shared_ptr<int> closes_;
+};
+
 class UnreadableSnapshotPersister : public MockPersister {
  public:
   bool HasSnapshot() const override { return true; }
@@ -75,6 +90,21 @@ TEST_F(SnapshotTransferTest, StateMachine_CreateSnapshotCalled) {
   // when snapshot threshold is reached
   auto snapshot = sm_->CreateSnapshot();
   EXPECT_NE(snapshot, nullptr);
+}
+
+TEST_F(SnapshotTransferTest, Start_UnreadablePersistentState_ClosesAndReturnsError) {
+  auto closes = std::make_shared<int>(0);
+  auto config = MakeConfig(1, {2, 3});
+  config.persister_factory = [closes] {
+    return std::make_unique<UnreadableStatePersister>(closes);
+  };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  for (int attempt = 1; attempt <= 2; ++attempt) {
+    auto status = node_->Start();
+    EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+    EXPECT_EQ(*closes, attempt);
+    EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+  }
 }
 
 TEST_F(SnapshotTransferTest, Start_UnreadableSnapshot_ReturnsError) {

@@ -88,7 +88,11 @@ Status RaftNode::RaftNodeImpl::Start() {
 
     // Restore persistent state
     PersistentState state;
-    if (persister_->LoadState(state).ok()) {
+    if (auto state_status = persister_->LoadState(state); !state_status.ok()) {
+      persister_->Close();
+      state_ = NodeState::kInitialized;
+      return state_status;
+    } else {
       group_->current_term_ = state.current_term;
       group_->voted_for_ = state.voted_for;
       // Restore committed cluster membership. Absent in state written by

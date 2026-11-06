@@ -92,7 +92,7 @@ class StatePersister {
   void DeleteSnapshotDataLocked();
   void DeleteSnapshotDataLocked(leveldb::WriteBatch* batch);
   void DeleteSnapshotTempDataLocked();
-  void LoadStateFromDB();
+  Status LoadStateFromDB();
 
   mutable std::recursive_mutex mutex_;
   std::unique_ptr<leveldb::DB> db_;

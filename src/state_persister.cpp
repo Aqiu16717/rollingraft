@@ -183,9 +183,11 @@ Status StatePersister::Open(const std::string& data_dir) {
   }
 
   db_.reset(db_ptr);
-  LoadStateFromDB();
-
-  return Status::OK();
+  auto state_status = LoadStateFromDB();
+  if (!state_status.ok()) {
+    db_.reset();
+  }
+  return state_status;
 }
 
 void StatePersister::Close() {
@@ -560,18 +562,32 @@ void StatePersister::DeleteSnapshotTempDataLocked() {
   }
 }
 
-void StatePersister::LoadStateFromDB() {
+Status StatePersister::LoadStateFromDB() {
   cached_state_ = PersistentState{};
 
+  leveldb::ReadOptions options;
+  options.verify_checksums = true;
   std::string term_value;
-  leveldb::Status s = db_->Get(leveldb::ReadOptions(), kStateTermKey, &term_value);
-  if (s.ok() && term_value.size() == sizeof(Term)) {
+  leveldb::Status s = db_->Get(options, kStateTermKey, &term_value);
+  if (!s.ok() && !s.IsNotFound()) {
+    return Status::Error("Failed to read persisted Raft term", s.ToString());
+  }
+  if (s.ok()) {
+    if (term_value.size() != sizeof(Term)) {
+      return Status::Corruption("Invalid persisted Raft term size");
+    }
     std::memcpy(&cached_state_.current_term, term_value.data(), sizeof(cached_state_.current_term));
   }
 
   std::string voted_value;
-  s = db_->Get(leveldb::ReadOptions(), kStateVotedForKey, &voted_value);
-  if (s.ok() && voted_value.size() == sizeof(NodeId)) {
+  s = db_->Get(options, kStateVotedForKey, &voted_value);
+  if (!s.ok() && !s.IsNotFound()) {
+    return Status::Error("Failed to read persisted Raft vote", s.ToString());
+  }
+  if (s.ok()) {
+    if (voted_value.size() != sizeof(NodeId)) {
+      return Status::Corruption("Invalid persisted Raft vote size");
+    }
     std::memcpy(&cached_state_.voted_for, voted_value.data(), sizeof(cached_state_.voted_for));
   }
 
@@ -590,6 +606,7 @@ void StatePersister::LoadStateFromDB() {
       LOG_WARN("Failed to parse persisted cluster config, ignoring: {}", e.what());
     }
   }
+  return Status::OK();
 }
 
 }  // namespace rollingraft

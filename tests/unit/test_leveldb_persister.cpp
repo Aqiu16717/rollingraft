@@ -5,10 +5,12 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 
 #include "rollingraft/persister.h"
 
 #include <gtest/gtest.h>
+#include <leveldb/db.h>
 
 using namespace rollingraft;
 
@@ -185,6 +187,39 @@ TEST_F(LevelDBPersisterTest, StatePersistence) {
   ASSERT_TRUE(persister_->LoadState(loaded).ok());
   EXPECT_EQ(loaded.current_term, 42);
   EXPECT_EQ(loaded.voted_for, 5);
+}
+
+TEST_F(LevelDBPersisterTest, OpenRejectsMalformedStateAndAllowsRetry) {
+  for (const char* key : {"state:term", "state:voted_for"}) {
+    SCOPED_TRACE(key);
+    PersistentState previous;
+    previous.current_term = 42;
+    previous.voted_for = 5;
+    ASSERT_TRUE(persister_->SaveState(previous).ok());
+    persister_->Close();
+
+    leveldb::DB* raw_db = nullptr;
+    ASSERT_TRUE(leveldb::DB::Open(leveldb::Options{}, test_dir_, &raw_db).ok());
+    std::unique_ptr<leveldb::DB> db(raw_db);
+    ASSERT_TRUE(db->Put(leveldb::WriteOptions{}, key, "bad").ok());
+    db.reset();
+
+    auto status = persister_->Open(test_dir_);
+    ASSERT_TRUE(status.IsCorruption()) << status.ToString();
+
+    // A failed Open must release the database lock before a retry.
+    ASSERT_TRUE(leveldb::DB::Open(leveldb::Options{}, test_dir_, &raw_db).ok());
+    db.reset(raw_db);
+    ASSERT_TRUE(db->Delete(leveldb::WriteOptions{}, "state:term").ok());
+    ASSERT_TRUE(db->Delete(leveldb::WriteOptions{}, "state:voted_for").ok());
+    db.reset();
+
+    ASSERT_TRUE(persister_->Open(test_dir_).ok());
+    PersistentState loaded;
+    ASSERT_TRUE(persister_->LoadState(loaded).ok());
+    EXPECT_EQ(loaded.current_term, PersistentState{}.current_term);
+    EXPECT_EQ(loaded.voted_for, PersistentState{}.voted_for);
+  }
 }
 
 TEST_F(LevelDBPersisterTest, TruncateSuffix) {

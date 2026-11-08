@@ -222,6 +222,27 @@ TEST_F(LevelDBPersisterTest, OpenRejectsMalformedStateAndAllowsRetry) {
   }
 }
 
+TEST_F(LevelDBPersisterTest, OpenRejectsMalformedMembershipAndAllowsRetry) {
+  for (const char* value : {"not json", R"({"nodes":"invalid"})"}) {
+    SCOPED_TRACE(value);
+    persister_->Close();
+    leveldb::DB* raw_db = nullptr;
+    ASSERT_TRUE(leveldb::DB::Open(leveldb::Options{}, test_dir_, &raw_db).ok());
+    std::unique_ptr<leveldb::DB> db(raw_db);
+    ASSERT_TRUE(db->Put(leveldb::WriteOptions{}, "state:cluster_config", value).ok());
+    db.reset();
+
+    auto status = persister_->Open(test_dir_);
+    ASSERT_TRUE(status.IsCorruption()) << status.ToString();
+
+    ASSERT_TRUE(leveldb::DB::Open(leveldb::Options{}, test_dir_, &raw_db).ok());
+    db.reset(raw_db);
+    ASSERT_TRUE(db->Delete(leveldb::WriteOptions{}, "state:cluster_config").ok());
+    db.reset();
+    ASSERT_TRUE(persister_->Open(test_dir_).ok());
+  }
+}
+
 TEST_F(LevelDBPersisterTest, TruncateSuffix) {
   std::vector<RaftLogEntry> entries;
   for (int i = 1; i <= 5; ++i) {

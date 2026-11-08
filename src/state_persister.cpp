@@ -183,9 +183,11 @@ Status StatePersister::Open(const std::string& data_dir) {
   }
 
   db_.reset(db_ptr);
-  LoadStateFromDB();
-
-  return Status::OK();
+  auto state_status = LoadStateFromDB();
+  if (!state_status.ok()) {
+    db_.reset();
+  }
+  return state_status;
 }
 
 void StatePersister::Close() {
@@ -560,24 +562,41 @@ void StatePersister::DeleteSnapshotTempDataLocked() {
   }
 }
 
-void StatePersister::LoadStateFromDB() {
+Status StatePersister::LoadStateFromDB() {
   cached_state_ = PersistentState{};
 
+  leveldb::ReadOptions options;
+  options.verify_checksums = true;
   std::string term_value;
-  leveldb::Status s = db_->Get(leveldb::ReadOptions(), kStateTermKey, &term_value);
-  if (s.ok() && term_value.size() == sizeof(Term)) {
+  leveldb::Status s = db_->Get(options, kStateTermKey, &term_value);
+  if (!s.ok() && !s.IsNotFound()) {
+    return Status::Error("Failed to read persisted Raft term", s.ToString());
+  }
+  if (s.ok()) {
+    if (term_value.size() != sizeof(Term)) {
+      return Status::Corruption("Invalid persisted Raft term size");
+    }
     std::memcpy(&cached_state_.current_term, term_value.data(), sizeof(cached_state_.current_term));
   }
 
   std::string voted_value;
-  s = db_->Get(leveldb::ReadOptions(), kStateVotedForKey, &voted_value);
-  if (s.ok() && voted_value.size() == sizeof(NodeId)) {
+  s = db_->Get(options, kStateVotedForKey, &voted_value);
+  if (!s.ok() && !s.IsNotFound()) {
+    return Status::Error("Failed to read persisted Raft vote", s.ToString());
+  }
+  if (s.ok()) {
+    if (voted_value.size() != sizeof(NodeId)) {
+      return Status::Corruption("Invalid persisted Raft vote size");
+    }
     std::memcpy(&cached_state_.voted_for, voted_value.data(), sizeof(cached_state_.voted_for));
   }
 
   // Cluster membership (absent in state written by older versions).
   std::string cluster_value;
-  s = db_->Get(leveldb::ReadOptions(), kStateClusterConfigKey, &cluster_value);
+  s = db_->Get(options, kStateClusterConfigKey, &cluster_value);
+  if (!s.ok() && !s.IsNotFound()) {
+    return Status::Error("Failed to read persisted cluster config", s.ToString());
+  }
   if (s.ok()) {
     try {
       auto j = nlohmann::json::parse(cluster_value);
@@ -586,10 +605,11 @@ void StatePersister::LoadStateFromDB() {
       cached_state_.cluster_learners = j.value("learners", std::vector<NodeId>{});
       cached_state_.cluster_version = j.value("version", uint64_t{0});
       cached_state_.cluster_is_joint = j.value("is_joint", false);
-    } catch (const std::exception& e) {
-      LOG_WARN("Failed to parse persisted cluster config, ignoring: {}", e.what());
+    } catch (const std::exception&) {
+      return Status::Corruption("Invalid persisted cluster config");
     }
   }
+  return Status::OK();
 }
 
 }  // namespace rollingraft

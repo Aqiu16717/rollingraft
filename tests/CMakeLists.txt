@@ -1,5 +1,13 @@
 enable_testing()
 
+find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME tools.BackupManifest
+    COMMAND ${Python3_EXECUTABLE} -B -m unittest discover
+      -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p test_backup_manifest.py
+  )
+endif()
+
 find_program(OPENSSL_EXECUTABLE openssl REQUIRED)
 set(NODE_TEST_CERTS_DIR "${CMAKE_BINARY_DIR}/generated-node-certs")
 set(NODE_TEST_CERTS_STAMP "${NODE_TEST_CERTS_DIR}/.stamp")

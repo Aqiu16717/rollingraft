@@ -222,6 +222,30 @@ TEST_F(LevelDBPersisterTest, OpenRejectsMalformedStateAndAllowsRetry) {
   }
 }
 
+TEST_F(LevelDBPersisterTest, OpenRejectsIncompleteElectionState) {
+  for (const char* key : {"state:term", "state:voted_for"}) {
+    SCOPED_TRACE(key);
+    PersistentState previous;
+    previous.current_term = 42;
+    previous.voted_for = 5;
+    ASSERT_TRUE(persister_->SaveState(previous).ok());
+    persister_->Close();
+
+    leveldb::DB* raw_db = nullptr;
+    ASSERT_TRUE(leveldb::DB::Open(leveldb::Options{}, test_dir_, &raw_db).ok());
+    std::unique_ptr<leveldb::DB> db(raw_db);
+    ASSERT_TRUE(db->Delete(leveldb::WriteOptions{}, key).ok());
+    db.reset();
+
+    auto status = persister_->Open(test_dir_);
+    EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+    persister_->Close();
+    ASSERT_TRUE(persister_->Open(test_dir_).IsCorruption());
+    std::filesystem::remove_all(test_dir_);
+    ASSERT_TRUE(persister_->Open(test_dir_).ok());
+  }
+}
+
 TEST_F(LevelDBPersisterTest, OpenRejectsMalformedMembershipAndAllowsRetry) {
   for (const char* value : {"not json", R"({"nodes":"invalid"})"}) {
     SCOPED_TRACE(value);

@@ -169,7 +169,14 @@ Status RaftNode::RaftNodeImpl::Start() {
     // Restore log entries from disk.
     // Use the log's current first index (which may have been set by snapshot
     // restore above) to avoid loading entries already covered by snapshot.
-    auto restored_entries = log_persister_->Restore(group_->log_.GetFirstIndex());
+    std::vector<RaftLogEntry> restored_entries;
+    auto restore_status = log_persister_->Restore(group_->log_.GetFirstIndex(), restored_entries);
+    if (!restore_status.ok()) {
+      log_persister_->Stop();
+      persister_->Close();
+      state_ = NodeState::kInitialized;
+      return restore_status;
+    }
     if (!restored_entries.empty()) {
       // Ensure group_->log_.start_index_ matches the first restored entry's index.
       // This handles the case where TruncatePrefix deleted entries but

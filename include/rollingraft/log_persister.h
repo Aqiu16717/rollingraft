@@ -249,6 +249,15 @@ class LogPersister {
    */
   std::vector<RaftLogEntry> Restore(uint64_t start_index);
 
+  /**
+   * Restore entries with an explicit error status.
+   *
+   * @param start_index First index to restore
+   * @param entries Output entries, cleared on failure
+   * @return Status::OK() only after every batch has been read
+   */
+  Status Restore(uint64_t start_index, std::vector<RaftLogEntry>& entries);
+
   /** Get the number of pending entries in the buffer. */
   size_t GetPendingCount() const;
 

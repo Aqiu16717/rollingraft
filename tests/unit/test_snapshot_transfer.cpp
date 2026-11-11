@@ -26,6 +26,22 @@ class UnreadableStatePersister : public MockPersister {
   std::shared_ptr<int> closes_;
 };
 
+class UnreadableLogPersister : public MockPersister {
+ public:
+  explicit UnreadableLogPersister(std::shared_ptr<int> closes) : closes_(std::move(closes)) {}
+  std::pair<uint64_t, uint64_t> GetLastLogInfo() override { return {1, 1}; }
+  Status GetEntries(uint64_t, uint64_t, std::vector<RaftLogEntry>*) override {
+    return Status::Corruption("injected log read failure");
+  }
+  void Close() override {
+    ++*closes_;
+    MockPersister::Close();
+  }
+
+ private:
+  std::shared_ptr<int> closes_;
+};
+
 class UnreadableSnapshotPersister : public MockPersister {
  public:
   bool HasSnapshot() const override { return true; }
@@ -98,6 +114,19 @@ TEST_F(SnapshotTransferTest, Start_UnreadablePersistentState_ClosesAndReturnsErr
   config.persister_factory = [closes] {
     return std::make_unique<UnreadableStatePersister>(closes);
   };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  for (int attempt = 1; attempt <= 2; ++attempt) {
+    auto status = node_->Start();
+    EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+    EXPECT_EQ(*closes, attempt);
+    EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+  }
+}
+
+TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndReturnsError) {
+  auto closes = std::make_shared<int>(0);
+  auto config = MakeConfig(1, {2, 3});
+  config.persister_factory = [closes] { return std::make_unique<UnreadableLogPersister>(closes); };
   node_ = std::make_unique<RaftNode>(config, sm_);
   for (int attempt = 1; attempt <= 2; ++attempt) {
     auto status = node_->Start();

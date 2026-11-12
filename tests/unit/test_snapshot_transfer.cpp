@@ -28,10 +28,13 @@ class UnreadableStatePersister : public MockPersister {
 
 class UnreadableLogPersister : public MockPersister {
  public:
-  explicit UnreadableLogPersister(std::shared_ptr<int> closes) : closes_(std::move(closes)) {}
-  std::pair<uint64_t, uint64_t> GetLastLogInfo() override { return {1, 1}; }
-  Status GetEntries(uint64_t, uint64_t, std::vector<RaftLogEntry>*) override {
-    return Status::Corruption("injected log read failure");
+  UnreadableLogPersister(std::shared_ptr<int> closes, std::shared_ptr<bool> readable)
+      : closes_(std::move(closes)), readable_(std::move(readable)) {}
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override {
+    if (!*readable_) {
+      return Status::Corruption("injected log read failure");
+    }
+    return MockPersister::GetEntries(start, end, out);
   }
   void Close() override {
     ++*closes_;
@@ -40,6 +43,7 @@ class UnreadableLogPersister : public MockPersister {
 
  private:
   std::shared_ptr<int> closes_;
+  std::shared_ptr<bool> readable_;
 };
 
 class UnreadableSnapshotPersister : public MockPersister {
@@ -123,10 +127,15 @@ TEST_F(SnapshotTransferTest, Start_UnreadablePersistentState_ClosesAndReturnsErr
   }
 }
 
-TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndReturnsError) {
+TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndCanRetry) {
   auto closes = std::make_shared<int>(0);
+  auto readable = std::make_shared<bool>(false);
   auto config = MakeConfig(1, {2, 3});
-  config.persister_factory = [closes] { return std::make_unique<UnreadableLogPersister>(closes); };
+  config.persister_factory = [closes, readable] {
+    auto persister = std::make_unique<UnreadableLogPersister>(closes, readable);
+    EXPECT_TRUE(persister->AppendEntries({RaftLogEntry(1, 1, "persisted")}).ok());
+    return persister;
+  };
   node_ = std::make_unique<RaftNode>(config, sm_);
   for (int attempt = 1; attempt <= 2; ++attempt) {
     auto status = node_->Start();
@@ -134,6 +143,12 @@ TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndReturnsError) {
     EXPECT_EQ(*closes, attempt);
     EXPECT_TRUE(sm_->GetAppliedCommands().empty());
   }
+
+  *readable = true;
+  const auto status = node_->Start();
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  EXPECT_EQ(*closes, 2);
+  EXPECT_TRUE(sm_->GetAppliedCommands().empty());
 }
 
 TEST_F(SnapshotTransferTest, Start_UnreadableSnapshot_ReturnsError) {

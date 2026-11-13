@@ -109,6 +109,12 @@ TEST_F(LogPersisterTest, RestoreDiscardsPartialEntriesOnReadError) {
   ASSERT_TRUE(backend->AppendEntries(entries).ok());
   LogPersister log(std::move(backend), LogPersistenceConfig{});
   EXPECT_TRUE(log.Restore(1).empty());
+
+  std::vector<RaftLogEntry> restored{MakeEntry(1, 1, "stale")};
+  const auto status = log.Restore(1, restored);
+  EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+  EXPECT_EQ(status.GetMessage(), "injected tail read failure");
+  EXPECT_TRUE(restored.empty());
 }
 
 TEST_F(LogPersisterTest, FlushSyncWaitsForEmptyBuffer) {

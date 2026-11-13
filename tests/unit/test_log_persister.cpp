@@ -91,6 +91,32 @@ TEST_F(LogPersisterTest, RestoreReturnsEntries) {
   EXPECT_EQ(restored[2].index_, 3);
 }
 
+TEST_F(LogPersisterTest, RestoreDiscardsPartialEntriesOnReadError) {
+  class FailingTailPersister : public MockPersister {
+   public:
+    Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override {
+      if (start > 1000) {
+        return Status::Corruption("injected tail read failure");
+      }
+      return MockPersister::GetEntries(start, end, out);
+    }
+  };
+  auto backend = std::make_unique<FailingTailPersister>();
+  std::vector<RaftLogEntry> entries;
+  for (uint64_t i = 1; i <= 1001; ++i) {
+    entries.push_back(MakeEntry(i, 1, "cmd"));
+  }
+  ASSERT_TRUE(backend->AppendEntries(entries).ok());
+  LogPersister log(std::move(backend), LogPersistenceConfig{});
+  EXPECT_TRUE(log.Restore(1).empty());
+
+  std::vector<RaftLogEntry> restored{MakeEntry(1, 1, "stale")};
+  const auto status = log.Restore(1, restored);
+  EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+  EXPECT_EQ(status.GetMessage(), "injected tail read failure");
+  EXPECT_TRUE(restored.empty());
+}
+
 TEST_F(LogPersisterTest, FlushSyncWaitsForEmptyBuffer) {
   persister_->Start();
 

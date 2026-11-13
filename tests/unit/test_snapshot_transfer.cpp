@@ -26,6 +26,26 @@ class UnreadableStatePersister : public MockPersister {
   std::shared_ptr<int> closes_;
 };
 
+class UnreadableLogPersister : public MockPersister {
+ public:
+  UnreadableLogPersister(std::shared_ptr<int> closes, std::shared_ptr<bool> readable)
+      : closes_(std::move(closes)), readable_(std::move(readable)) {}
+  Status GetEntries(uint64_t start, uint64_t end, std::vector<RaftLogEntry>* out) override {
+    if (!*readable_) {
+      return Status::Corruption("injected log read failure");
+    }
+    return MockPersister::GetEntries(start, end, out);
+  }
+  void Close() override {
+    ++*closes_;
+    MockPersister::Close();
+  }
+
+ private:
+  std::shared_ptr<int> closes_;
+  std::shared_ptr<bool> readable_;
+};
+
 class UnreadableSnapshotPersister : public MockPersister {
  public:
   bool HasSnapshot() const override { return true; }
@@ -105,6 +125,30 @@ TEST_F(SnapshotTransferTest, Start_UnreadablePersistentState_ClosesAndReturnsErr
     EXPECT_EQ(*closes, attempt);
     EXPECT_TRUE(sm_->GetAppliedCommands().empty());
   }
+}
+
+TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndCanRetry) {
+  auto closes = std::make_shared<int>(0);
+  auto readable = std::make_shared<bool>(false);
+  auto config = MakeConfig(1, {2, 3});
+  config.persister_factory = [closes, readable] {
+    auto persister = std::make_unique<UnreadableLogPersister>(closes, readable);
+    EXPECT_TRUE(persister->AppendEntries({RaftLogEntry(1, 1, "persisted")}).ok());
+    return persister;
+  };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  for (int attempt = 1; attempt <= 2; ++attempt) {
+    auto status = node_->Start();
+    EXPECT_TRUE(status.IsCorruption()) << status.ToString();
+    EXPECT_EQ(*closes, attempt);
+    EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+  }
+
+  *readable = true;
+  const auto status = node_->Start();
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  EXPECT_EQ(*closes, 2);
+  EXPECT_TRUE(sm_->GetAppliedCommands().empty());
 }
 
 TEST_F(SnapshotTransferTest, Start_UnreadableSnapshot_ReturnsError) {

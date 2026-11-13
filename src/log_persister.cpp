@@ -310,10 +310,17 @@ void LogPersister::TruncatePrefixAsync(uint64_t before_index, TruncateCallback c
 
 std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
   std::vector<RaftLogEntry> entries;
+  Restore(start_index, entries);
+  return entries;
+}
+
+Status LogPersister::Restore(uint64_t start_index, std::vector<RaftLogEntry>& out) {
+  out.clear();
+  std::vector<RaftLogEntry> entries;
 
   if (!persister_) {
     LOG_ERROR("Cannot restore: persister is null");
-    return entries;
+    return Status::Error("Cannot restore: persister is null");
   }
 
   // Get last log info from persister
@@ -323,7 +330,7 @@ std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
 
   if (last_index < start_index) {
     // Nothing to restore
-    return entries;
+    return Status::OK();
   }
 
   // Read entries in batches to avoid memory issues
@@ -336,14 +343,15 @@ std::vector<RaftLogEntry> LogPersister::Restore(uint64_t start_index) {
 
     if (!status.ok()) {
       LOG_ERROR("Failed to restore entries [{}-{}): {}", batch_start, batch_end, status.ToString());
-      break;
+      return status;
     }
 
     entries.insert(entries.end(), batch.begin(), batch.end());
   }
 
   LOG_INFO("Restored {} log entries from persistent storage", entries.size());
-  return entries;
+  out = std::move(entries);
+  return Status::OK();
 }
 
 Status LogPersister::Sync() {

@@ -579,10 +579,14 @@ Status StatePersister::LoadStateFromDB() {
     std::memcpy(&cached_state_.current_term, term_value.data(), sizeof(cached_state_.current_term));
   }
 
+  const bool has_term = s.ok();
   std::string voted_value;
   s = db_->Get(options, kStateVotedForKey, &voted_value);
   if (!s.ok() && !s.IsNotFound()) {
     return Status::Error("Failed to read persisted Raft vote", s.ToString());
+  }
+  if (has_term != s.ok()) {
+    return Status::Corruption("Incomplete persisted Raft term and vote");
   }
   if (s.ok()) {
     if (voted_value.size() != sizeof(NodeId)) {

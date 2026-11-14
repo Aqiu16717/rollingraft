@@ -91,6 +91,23 @@ TEST_F(LogPersisterTest, RestoreReturnsEntries) {
   EXPECT_EQ(restored[2].index_, 3);
 }
 
+TEST_F(LogPersisterTest, RestoreFromOffsetPreservesOrderAcrossBatches) {
+  std::vector<RaftLogEntry> entries;
+  for (Index index = 1; index <= 1003; ++index) {
+    entries.push_back(MakeEntry(index, 1, std::to_string(index)));
+  }
+  ASSERT_TRUE(mock_persister_ptr_->AppendEntries(entries).ok());
+
+  std::vector<RaftLogEntry> restored{MakeEntry(1, 1, "stale")};
+  const auto status = persister_->Restore(3, restored);
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  ASSERT_EQ(restored.size(), 1001U);
+  for (size_t i = 0; i < restored.size(); ++i) {
+    EXPECT_EQ(restored[i].index_, entries[i + 2].index_);
+    EXPECT_EQ(restored[i].command_, entries[i + 2].command_);
+  }
+}
+
 TEST_F(LogPersisterTest, RestoreDiscardsPartialEntriesOnReadError) {
   class FailingTailPersister : public MockPersister {
    public:

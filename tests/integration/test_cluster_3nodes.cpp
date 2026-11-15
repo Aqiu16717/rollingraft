@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -694,7 +695,26 @@ TEST_F(Cluster3NodesTest, TlsRecoversAfterLeaderCrash) {
   }
 
   ASSERT_NE(new_leader, nullptr) << "No new TLS leader elected after crash";
-  EXPECT_TRUE(new_leader->IsLeader());
+  const std::string command = "tls_post_failover";
+  const auto status = new_leader->Propose(command, [](const ApplyResult&) {});
+  ASSERT_TRUE(status.ok()) << status.ToString();
+
+  // With the old leader stopped, both survivors must replicate and apply the write.
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    if (i == leader_idx) {
+      continue;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (true) {
+      const auto commands = state_machines_[i]->GetAppliedCommands();
+      if (std::find(commands.begin(), commands.end(), command) != commands.end()) {
+        break;
+      }
+      ASSERT_LT(std::chrono::steady_clock::now(), deadline)
+          << "Surviving TLS node " << (i + 1) << " did not apply the post-failover write";
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
 }
 
 TEST_F(Cluster3NodesTest, MutualTlsAuthenticatesNodeIdentities) {

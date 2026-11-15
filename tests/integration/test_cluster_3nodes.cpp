@@ -217,7 +217,9 @@ class Cluster3NodesTest : public ::testing::Test {
       state_machines_.push_back(sm);
 
       nodes_.push_back(std::make_unique<RaftNode>(config, sm));
-      ASSERT_TRUE(nodes_[i]->Start().ok());
+      auto start_status = nodes_[i]->Start();
+      ASSERT_TRUE(start_status.ok())
+          << "Failed to start client-auth node " << (i + 1) << ": " << start_status.ToString();
     }
   }
 

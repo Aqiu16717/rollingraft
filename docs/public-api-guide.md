@@ -46,7 +46,10 @@ config.data_dir = "./data/node1";
 // 3. Create and start
 auto sm = std::make_shared<CounterMachine>();
 rollingraft::RaftNode node(config, sm);
-node.Start();
+if (const auto status = node.Start(); !status.ok()) {
+  std::cerr << "Raft startup failed: " << status.ToString() << '\n';
+  return 1;
+}
 
 // 4. Propose commands (only on leader)
 if (node.IsLeader()) {
@@ -87,6 +90,17 @@ Status Stop();    // Graceful shutdown with configurable timeout
 ```
 
 **Thread-safety:** All public methods are thread-safe. `Start()` must be called before any other operation.
+
+**Startup recovery:** Check the status returned by `Start()` before serving
+requests. If the node cannot read its persisted election state, restore its
+snapshot, or replay its log, startup returns an error before the node begins
+participating in Raft. A failed log batch returns the underlying error without
+installing a partial replay.
+
+For these recovery failures, the node releases its persistence resources and
+can retry `Start()` after the underlying problem is resolved. Preserve the
+existing data directory for diagnosis and report the returned status to the
+caller.
 
 ### Proposing Commands
 

@@ -46,7 +46,10 @@ config.data_dir = "./data/node1";
 // 3. Create and start
 auto sm = std::make_shared<CounterMachine>();
 rollingraft::RaftNode node(config, sm);
-node.Start();
+if (const auto status = node.Start(); !status.ok()) {
+  std::cerr << "Raft startup failed: " << status.ToString() << '\n';
+  return 1;
+}
 
 // 4. Propose commands (only on leader)
 if (node.IsLeader()) {

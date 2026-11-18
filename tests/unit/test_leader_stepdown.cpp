@@ -90,7 +90,8 @@ TEST_F(LeaderStepDownTest, LeaderChangeCallback_CanBeSet) {
     (void)addr;
   });
 
-  EXPECT_TRUE(node_->Start().ok());
+  const auto status = node_->Start();
+  ASSERT_TRUE(status.ok()) << status.ToString();
 
   // Callback is registered
   EXPECT_FALSE(callback_set);  // No leader change yet

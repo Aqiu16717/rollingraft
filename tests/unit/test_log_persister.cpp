@@ -104,7 +104,7 @@ TEST_F(LogPersisterTest, RestoreFromOffsetPreservesOrderAcrossBatches) {
   ASSERT_EQ(restored.size(), 1001U);
   for (size_t i = 0; i < restored.size(); ++i) {
     EXPECT_EQ(restored[i].index_, entries[i + 2].index_);
-    EXPECT_EQ(restored[i].command_, entries[i + 2].command_);
+    EXPECT_EQ(restored[i].data_, entries[i + 2].data_);
   }
 }
 

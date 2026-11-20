@@ -640,6 +640,30 @@ TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {
       << "Group 1 term should not regress after restart";
   EXPECT_GE(stores_[0]->GetGroup(2)->CurrentTerm(), term2_before)
       << "Group 2 term should not regress after restart";
+
+  for (uint64_t group_id : {1, 2}) {
+    auto* leader = GetLeader(group_id);
+    ASSERT_NE(leader, nullptr);
+    const auto command = "after_restart_group_" + std::to_string(group_id);
+    auto applied = std::make_shared<std::promise<bool>>();
+    auto result = applied->get_future();
+    ASSERT_TRUE(
+        leader
+            ->Propose(command,
+                      [applied](const ApplyResult& value) { applied->set_value(value.success); })
+            .ok());
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+    ASSERT_TRUE(result.get());
+
+    const std::vector<std::string> expected{command};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (const auto& sm : state_machines_.at(group_id)) {
+      while (sm->GetAppliedCommands() != expected && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+      EXPECT_EQ(sm->GetAppliedCommands(), expected) << "Group " << group_id;
+    }
+  }
 }
 
 TEST_F(MultiRaft2GroupsTest, OfflineBackupRestoresBothGroups) {

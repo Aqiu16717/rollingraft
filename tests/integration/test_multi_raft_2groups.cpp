@@ -624,44 +624,53 @@ TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {
   WaitForLeader(1);
   WaitForLeader(2);
 
-  // Capture term before restart to verify persistent state is restored.
-  Term term1_before = stores_[0]->GetGroup(1)->CurrentTerm();
-  Term term2_before = stores_[0]->GetGroup(2)->CurrentTerm();
+  std::unordered_map<uint64_t, std::vector<std::string>> expected;
+  for (int round = 0; round < 2; ++round) {
+    SCOPED_TRACE(round);
+    // Capture term before restart to verify persistent state is restored.
+    Term term1_before = stores_[0]->GetGroup(1)->CurrentTerm();
+    Term term2_before = stores_[0]->GetGroup(2)->CurrentTerm();
 
-  // Stop all stores, then restart from the same data directories.
-  RestartCluster();
+    // Stop all stores, then restart from the same data directories.
+    RestartCluster();
 
-  // After restart, each group should re-elect a leader.  This validates that
-  // the MultiRaftPersister preserved term/voted_for across the restart.
-  WaitForLeader(1);
-  WaitForLeader(2);
+    // After restart, each group should re-elect a leader.  This validates that
+    // the MultiRaftPersister preserved term/voted_for across the restart.
+    WaitForLeader(1);
+    WaitForLeader(2);
 
-  EXPECT_GE(stores_[0]->GetGroup(1)->CurrentTerm(), term1_before)
-      << "Group 1 term should not regress after restart";
-  EXPECT_GE(stores_[0]->GetGroup(2)->CurrentTerm(), term2_before)
-      << "Group 2 term should not regress after restart";
+    EXPECT_GE(stores_[0]->GetGroup(1)->CurrentTerm(), term1_before)
+        << "Group 1 term should not regress after restart";
+    EXPECT_GE(stores_[0]->GetGroup(2)->CurrentTerm(), term2_before)
+        << "Group 2 term should not regress after restart";
 
-  for (uint64_t group_id : {1, 2}) {
-    auto* leader = GetLeader(group_id);
-    ASSERT_NE(leader, nullptr);
-    const auto command = "after_restart_group_" + std::to_string(group_id);
-    auto applied = std::make_shared<std::promise<bool>>();
-    auto result = applied->get_future();
-    ASSERT_TRUE(
-        leader
-            ->Propose(command,
-                      [applied](const ApplyResult& value) { applied->set_value(value.success); })
-            .ok());
-    ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
-    ASSERT_TRUE(result.get());
+    for (uint64_t group_id : {1, 2}) {
+      auto* leader = GetLeader(group_id);
+      ASSERT_NE(leader, nullptr);
+      const auto command =
+          "after_restart_group_" + std::to_string(group_id) + "_round_" + std::to_string(round);
+      auto applied = std::make_shared<std::promise<bool>>();
+      auto result = applied->get_future();
+      ASSERT_TRUE(
+          leader
+              ->Propose(command,
+                        [applied](const ApplyResult& value) { applied->set_value(value.success); })
+              .ok());
+      ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+      ASSERT_TRUE(result.get());
 
-    const std::vector<std::string> expected{command};
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    for (const auto& sm : state_machines_.at(group_id)) {
-      while (sm->GetAppliedCommands() != expected && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      expected[group_id].push_back(command);
+    }
+
+    for (uint64_t group_id : {1, 2}) {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      for (const auto& sm : state_machines_.at(group_id)) {
+        while (sm->GetAppliedCommands() != expected.at(group_id) &&
+               std::chrono::steady_clock::now() < deadline) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        EXPECT_EQ(sm->GetAppliedCommands(), expected.at(group_id)) << "Group " << group_id;
       }
-      EXPECT_EQ(sm->GetAppliedCommands(), expected) << "Group " << group_id;
     }
   }
 }

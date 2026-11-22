@@ -660,6 +660,13 @@ TEST_F(MultiRaft2GroupsTest, ReElectsAfterRestart) {
       ASSERT_TRUE(result.get());
 
       expected[group_id].push_back(command);
+
+      auto read_ready = std::make_shared<std::promise<void>>();
+      auto read_result = read_ready->get_future();
+      const auto read_status = leader->ReadIndex([read_ready] { read_ready->set_value(); });
+      ASSERT_TRUE(read_status.ok()) << read_status.ToString();
+      ASSERT_EQ(read_result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+      read_result.get();
     }
 
     for (uint64_t group_id : {1, 2}) {

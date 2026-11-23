@@ -337,6 +337,51 @@ TEST_F(MultiRaft2GroupsTest, LeaderCanProposeInEachGroup) {
   }
 }
 
+TEST_F(MultiRaft2GroupsTest, BothGroupsCommitAfterOneNodeStops) {
+  StartCluster();
+  ASSERT_FALSE(HasFatalFailure());
+  auto* original_leader = GetLeader(1);
+  ASSERT_NE(original_leader, nullptr);
+  WaitForLeader(2);
+  ASSERT_FALSE(HasFatalFailure());
+
+  size_t failed_node = 0;
+  while (failed_node < stores_.size() && stores_[failed_node]->GetGroup(1) != original_leader) {
+    ++failed_node;
+  }
+  ASSERT_LT(failed_node, stores_.size());
+  ASSERT_TRUE(stores_[failed_node]->Stop().ok());
+  stores_.erase(stores_.begin() + failed_node);
+
+  for (uint64_t group_id : {1, 2}) {
+    auto* leader = GetLeader(group_id);
+    ASSERT_NE(leader, nullptr) << "Group " << group_id;
+    const auto command = "surviving_group_" + std::to_string(group_id);
+    auto applied = std::make_shared<std::promise<bool>>();
+    auto result = applied->get_future();
+    ASSERT_TRUE(
+        leader
+            ->Propose(command,
+                      [applied](const ApplyResult& value) { applied->set_value(value.success); })
+            .ok());
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+    ASSERT_TRUE(result.get());
+
+    const std::vector<std::string> expected{command};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (size_t node = 0; node < state_machines_.at(group_id).size(); ++node) {
+      if (node == failed_node) {
+        continue;
+      }
+      const auto& sm = state_machines_.at(group_id)[node];
+      while (sm->GetAppliedCommands() != expected && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+      EXPECT_EQ(sm->GetAppliedCommands(), expected) << "Group " << group_id << " node " << node;
+    }
+  }
+}
+
 TEST_F(MultiRaft2GroupsTest, MetricsEnabledWithTwoGroupsSharesOneServer) {
   // Regression test for shared-infra metrics corruption: every group used to
   // overwrite the store's shared MetricsRegistry and MetricsHttpServer, so all

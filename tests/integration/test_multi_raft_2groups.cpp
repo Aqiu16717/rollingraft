@@ -67,6 +67,20 @@ class MultiRaft2GroupsTest : public ::testing::Test {
     }
   }
 
+  RaftStoreConfig StoreConfigFor(size_t node) const {
+    RaftStoreConfig config;
+    config.node_id = node + 1;
+    config.listen_addr = addrs_[node];
+    config.data_dir = data_dirs_[node];
+    for (size_t peer = 0; peer < addrs_.size(); ++peer) {
+      if (peer != node) {
+        config.peers.push_back(addrs_[peer]);
+        config.peer_node_ids.push_back(static_cast<NodeId>(peer + 1));
+      }
+    }
+    return config;
+  }
+
   void StartCluster(bool client_auth_enabled = false, bool scoped_client = false) {
     // Use process-scoped fixed ports to avoid cross-talk when ctest runs
     // multiple integration test processes concurrently.  Each process gets a
@@ -78,10 +92,7 @@ class MultiRaft2GroupsTest : public ::testing::Test {
 
     // Start one RaftStore per physical node.
     for (int i = 0; i < 3; ++i) {
-      RaftStoreConfig store_config;
-      store_config.node_id = i + 1;
-      store_config.listen_addr = addrs_[i];
-      store_config.data_dir = data_dirs_[i];
+      auto store_config = StoreConfigFor(i);
       if (client_auth_enabled) {
 #ifdef NODE_TEST_CERTS_DIR
         const std::string certs_dir = NODE_TEST_CERTS_DIR;
@@ -103,13 +114,6 @@ class MultiRaft2GroupsTest : public ::testing::Test {
           store_config.client_authorizations[1].allowed_groups = std::vector<uint64_t>{1};
         }
       }
-      for (size_t j = 0; j < addrs_.size(); ++j) {
-        if (j != static_cast<size_t>(i)) {
-          store_config.peers.push_back(addrs_[j]);
-          store_config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
-        }
-      }
-
       auto store = std::make_unique<RaftStore>(store_config);
       auto status = store->Initialize();
       ASSERT_TRUE(status.ok()) << "RaftStore init failed: " << status.ToString();
@@ -206,18 +210,7 @@ class MultiRaft2GroupsTest : public ::testing::Test {
 
     // Recreate stores on the same addresses and data directories.
     for (int i = 0; i < 3; ++i) {
-      RaftStoreConfig store_config;
-      store_config.node_id = i + 1;
-      store_config.listen_addr = addrs_[i];
-      store_config.data_dir = data_dirs_[i];
-      for (size_t j = 0; j < addrs_.size(); ++j) {
-        if (j != static_cast<size_t>(i)) {
-          store_config.peers.push_back(addrs_[j]);
-          store_config.peer_node_ids.push_back(static_cast<NodeId>(j + 1));
-        }
-      }
-
-      auto store = std::make_unique<RaftStore>(store_config);
+      auto store = std::make_unique<RaftStore>(StoreConfigFor(i));
       auto status = store->Initialize();
       ASSERT_TRUE(status.ok()) << "RaftStore restart init failed: " << status.ToString();
       status = store->Start();
@@ -334,6 +327,81 @@ TEST_F(MultiRaft2GroupsTest, LeaderCanProposeInEachGroup) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     EXPECT_TRUE(completed) << "Group " << group_id << " command was not committed";
+  }
+}
+
+TEST_F(MultiRaft2GroupsTest, BothGroupsCatchUpAfterOneNodeRestarts) {
+  StartCluster();
+  ASSERT_FALSE(HasFatalFailure());
+  auto* original_leader = GetLeader(1);
+  ASSERT_NE(original_leader, nullptr);
+  WaitForLeader(2);
+  ASSERT_FALSE(HasFatalFailure());
+
+  size_t failed_node = 0;
+  while (failed_node < stores_.size() && stores_[failed_node]->GetGroup(1) != original_leader) {
+    ++failed_node;
+  }
+  ASSERT_LT(failed_node, stores_.size());
+  ASSERT_TRUE(stores_[failed_node]->Stop().ok());
+  stores_.erase(stores_.begin() + failed_node);
+
+  for (uint64_t group_id : {1, 2}) {
+    auto* leader = GetLeader(group_id);
+    ASSERT_NE(leader, nullptr) << "Group " << group_id;
+    const auto command = "surviving_group_" + std::to_string(group_id);
+    auto applied = std::make_shared<std::promise<bool>>();
+    auto result = applied->get_future();
+    ASSERT_TRUE(
+        leader
+            ->Propose(command,
+                      [applied](const ApplyResult& value) { applied->set_value(value.success); })
+            .ok());
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+    ASSERT_TRUE(result.get());
+
+    const std::vector<std::string> expected{command};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (size_t node = 0; node < state_machines_.at(group_id).size(); ++node) {
+      if (node == failed_node) {
+        continue;
+      }
+      const auto& sm = state_machines_.at(group_id)[node];
+      while (sm->GetAppliedCommands() != expected && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+      EXPECT_EQ(sm->GetAppliedCommands(), expected) << "Group " << group_id << " node " << node;
+    }
+  }
+
+  // Rejoin the stopped node after both groups have committed during its absence.
+  auto restarted_store = std::make_unique<RaftStore>(StoreConfigFor(failed_node));
+  auto status = restarted_store->Initialize();
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  status = restarted_store->Start();
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  auto* restarted_node = restarted_store.get();
+  stores_.insert(stores_.begin() + failed_node, std::move(restarted_store));
+
+  for (uint64_t group_id : {1, 2}) {
+    RaftGroupOptions options;
+    options.group_id = group_id;
+    options.election_timeout_ms = 300;
+    options.heartbeat_interval_ms = 50;
+    auto sm = std::make_shared<MockStateMachine>();
+    status = restarted_node->CreateGroup(group_id, options, sm);
+    ASSERT_TRUE(status.ok()) << "Group " << group_id << ": " << status.ToString();
+    state_machines_.at(group_id)[failed_node] = std::move(sm);
+  }
+
+  for (uint64_t group_id : {1, 2}) {
+    const std::vector<std::string> expected{"surviving_group_" + std::to_string(group_id)};
+    const auto& sm = state_machines_.at(group_id)[failed_node];
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (sm->GetAppliedCommands() != expected && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_EQ(sm->GetAppliedCommands(), expected) << "Restarted node group " << group_id;
   }
 }
 

@@ -1,5 +1,7 @@
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <future>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -198,6 +200,67 @@ TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
   for (const auto& result : batch_results) {
     EXPECT_TRUE(result.success);
   }
+}
+
+TEST_F(RaftLogReplicationTest, Leader_WaitsForSyncBeforeApplyingProposal) {
+  class BlockingPersister : public MockPersister {
+   public:
+    explicit BlockingPersister(std::shared_future<void> release) : release_(std::move(release)) {}
+
+    Status Sync() override {
+      RaftLogEntry entry;
+      if (GetEntry(GetLastLogInfo().first, entry).ok() && entry.data_ == "slow_sync" &&
+          !blocked_.exchange(true)) {
+        sync_started.set_value();
+        if (release_.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+          return Status::Error("Timed out waiting to release test sync");
+        }
+      }
+      return MockPersister::Sync();
+    }
+
+    std::promise<void> sync_started;
+
+   private:
+    std::shared_future<void> release_;
+    std::atomic<bool> blocked_{false};
+  };
+
+  std::promise<void> release_sync;
+  auto persister = std::make_unique<BlockingPersister>(release_sync.get_future().share());
+  auto sync_started = persister->sync_started.get_future();
+  auto config = MakeConfig(10, {});
+  config.election_timeout_ms = 50;
+  config.heartbeat_interval_ms = 20;
+  config.data_dir = std::filesystem::temp_directory_path().string();
+  config.persister_factory = [&persister]() {
+    return std::unique_ptr<Persister>(persister.release());
+  };
+  node_ = std::make_unique<RaftNode>(config, sm_);
+  ASSERT_TRUE(node_->Start().ok());
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!node_->IsLeader() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_TRUE(node_->IsLeader());
+
+  auto applied = std::make_shared<std::promise<bool>>();
+  auto applied_result = applied->get_future();
+  ASSERT_TRUE(
+      node_
+          ->Propose("slow_sync",
+                    [applied](const ApplyResult& result) { applied->set_value(result.success); })
+          .ok());
+  ASSERT_EQ(sync_started.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(applied_result.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+  EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+
+  release_sync.set_value();
+  ASSERT_EQ(applied_result.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_TRUE(applied_result.get());
+  EXPECT_TRUE(node_->IsLeader());
+  EXPECT_EQ(sm_->GetAppliedCommands(), std::vector<std::string>{"slow_sync"});
 }
 
 TEST_F(RaftLogReplicationTest, Leader_StepsDownWithoutApplyingWhenPersistenceFails) {

@@ -202,14 +202,19 @@ TEST_F(RaftLogReplicationTest, Leader_ProposeBatch_SingleNode) {
   }
 }
 
-TEST_F(RaftLogReplicationTest, Leader_WaitsForSyncBeforeApplyingProposal) {
+enum class ProposalKind { SINGLE, BATCH };
+
+class RaftProposalDurabilityTest : public RaftLogReplicationTest,
+                                   public ::testing::WithParamInterface<ProposalKind> {};
+
+TEST_P(RaftProposalDurabilityTest, Leader_WaitsForSyncBeforeApplying) {
   class BlockingPersister : public MockPersister {
    public:
     explicit BlockingPersister(std::shared_future<void> release) : release_(std::move(release)) {}
 
     Status Sync() override {
       RaftLogEntry entry;
-      if (GetEntry(GetLastLogInfo().first, entry).ok() && entry.data_ == "slow_sync" &&
+      if (GetEntry(GetLastLogInfo().first, entry).ok() && entry.data_.starts_with("slow_sync_") &&
           !blocked_.exchange(true)) {
         sync_started.set_value();
         if (release_.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
@@ -245,23 +250,43 @@ TEST_F(RaftLogReplicationTest, Leader_WaitsForSyncBeforeApplyingProposal) {
   }
   ASSERT_TRUE(node_->IsLeader());
 
-  auto applied = std::make_shared<std::promise<bool>>();
+  std::vector<std::string> commands{"slow_sync_first"};
+  auto applied = std::make_shared<std::promise<std::vector<ApplyResult>>>();
   auto applied_result = applied->get_future();
-  ASSERT_TRUE(
-      node_
-          ->Propose("slow_sync",
-                    [applied](const ApplyResult& result) { applied->set_value(result.success); })
-          .ok());
+  Status status;
+  if (GetParam() == ProposalKind::SINGLE) {
+    status = node_->Propose(commands.front(),
+                            [applied](const ApplyResult& result) { applied->set_value({result}); });
+  } else {
+    commands.push_back("slow_sync_second");
+    status = node_->ProposeBatch(commands, [applied](const std::vector<ApplyResult>& results) {
+      applied->set_value(results);
+    });
+  }
+  ASSERT_TRUE(status.ok()) << status.ToString();
   ASSERT_EQ(sync_started.wait_for(std::chrono::seconds(5)), std::future_status::ready);
   EXPECT_EQ(applied_result.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
   EXPECT_TRUE(sm_->GetAppliedCommands().empty());
 
   release_sync.set_value();
   ASSERT_EQ(applied_result.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-  EXPECT_TRUE(applied_result.get());
+  const auto results = applied_result.get();
+  ASSERT_EQ(results.size(), commands.size());
+  for (size_t i = 0; i < results.size(); ++i) {
+    EXPECT_TRUE(results[i].success) << results[i].error_message;
+    if (i > 0) {
+      EXPECT_EQ(results[i].applied_index, results[i - 1].applied_index + 1);
+    }
+  }
   EXPECT_TRUE(node_->IsLeader());
-  EXPECT_EQ(sm_->GetAppliedCommands(), std::vector<std::string>{"slow_sync"});
+  EXPECT_EQ(sm_->GetAppliedCommands(), commands);
 }
+
+INSTANTIATE_TEST_SUITE_P(SingleAndBatch, RaftProposalDurabilityTest,
+                         ::testing::Values(ProposalKind::SINGLE, ProposalKind::BATCH),
+                         [](const ::testing::TestParamInfo<ProposalKind>& info) {
+                           return info.param == ProposalKind::SINGLE ? "Single" : "Batch";
+                         });
 
 TEST_F(RaftLogReplicationTest, Leader_StepsDownWithoutApplyingWhenPersistenceFails) {
   auto persister = std::make_unique<MockPersister>();

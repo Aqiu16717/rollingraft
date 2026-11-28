@@ -46,13 +46,32 @@ class UnreadableLogPersister : public MockPersister {
   std::shared_ptr<bool> readable_;
 };
 
-class UnreadableSnapshotPersister : public MockPersister {
+class SnapshotReadRetryPersister : public MockPersister {
  public:
+  SnapshotReadRetryPersister(std::shared_ptr<int> closes, std::shared_ptr<bool> readable)
+      : closes_(std::move(closes)), readable_(std::move(readable)) {}
+
   bool HasSnapshot() const override { return true; }
-  Status LoadSnapshotStream(const std::function<void(const std::string&)>&, uint64_t&,
-                            uint64_t&) override {
-    return Status::Error("injected snapshot read failure");
+  Status LoadSnapshotStream(const std::function<void(const std::string&)>& on_chunk,
+                            uint64_t& last_index, uint64_t& last_term) override {
+    if (!*readable_) {
+      on_chunk("4:partial\n");
+      return Status::Error("injected snapshot read failure");
+    }
+    on_chunk("4:previous\n5:");
+    on_chunk("restored\n");
+    last_index = 5;
+    last_term = 1;
+    return Status::OK();
   }
+  void Close() override {
+    ++*closes_;
+    MockPersister::Close();
+  }
+
+ private:
+  std::shared_ptr<int> closes_;
+  std::shared_ptr<bool> readable_;
 };
 
 class RejectSnapshotStateMachine : public MockStateMachine {
@@ -151,13 +170,30 @@ TEST_F(SnapshotTransferTest, Start_UnreadableLog_ClosesAndCanRetry) {
   EXPECT_TRUE(sm_->GetAppliedCommands().empty());
 }
 
-TEST_F(SnapshotTransferTest, Start_UnreadableSnapshot_ReturnsError) {
+TEST_F(SnapshotTransferTest, Start_PartialSnapshotRead_ClosesAndCanRetry) {
+  auto closes = std::make_shared<int>(0);
+  auto readable = std::make_shared<bool>(false);
   auto config = MakeConfig(1, {2, 3});
-  config.persister_factory = [] { return std::make_unique<UnreadableSnapshotPersister>(); };
+  config.persister_factory = [closes, readable] {
+    return std::make_unique<SnapshotReadRetryPersister>(closes, readable);
+  };
   node_ = std::make_unique<RaftNode>(config, sm_);
-  auto status = node_->Start();
-  EXPECT_FALSE(status.ok());
-  EXPECT_NE(status.GetMessage().find("snapshot"), std::string::npos);
+
+  for (int attempt = 1; attempt <= 2; ++attempt) {
+    const auto status = node_->Start();
+    EXPECT_FALSE(status.ok());
+    EXPECT_NE(status.GetMessage().find("injected snapshot read failure"), std::string::npos);
+    EXPECT_EQ(*closes, attempt);
+    EXPECT_TRUE(sm_->GetAppliedCommands().empty());
+    EXPECT_EQ(sm_->GetLastAppliedIndex(), 0);
+  }
+
+  *readable = true;
+  const auto status = node_->Start();
+  ASSERT_TRUE(status.ok()) << status.ToString();
+  EXPECT_EQ(*closes, 2);
+  EXPECT_EQ(sm_->GetAppliedCommands(), (std::vector<std::string>{"previous", "restored"}));
+  EXPECT_EQ(sm_->GetLastAppliedIndex(), 5);
 }
 
 TEST_F(SnapshotTransferTest, Start_RejectedSnapshot_ReturnsError) {
